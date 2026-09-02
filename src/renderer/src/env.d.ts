@@ -1,0 +1,20 @@
+/// <reference types="vite/client" />
+
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue'
+  const component: DefineComponent<object, object, unknown>
+  export default component
+}
+
+/** preload 暴露给渲染进程的桥接 API */
+interface KamuclBridge {
+  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+  on: (channel: string, cb: (...args: unknown[]) => void) => () => void
+  send: (channel: string, ...args: unknown[]) => void
+  getFilePath: (file: File) => string
+  platform: string
+}
+
+interface Window {
+  kamucl: KamuclBridge
+}
