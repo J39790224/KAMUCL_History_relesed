@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { errText, killGame, launchGame, listJava, openDir, removeVersion } from '../api'
-import { fmtLastPlayed, refreshInstalled, store, toast } from '../store'
+import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
+import { fmtLastPlayed, refreshAccounts, refreshInstalled, store, toast } from '../store'
 import Avatar from '../components/Avatar.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
 import banner1 from '../assets/banner1.png'
@@ -220,9 +220,21 @@ const quickActions = [
   {
     label: '导入整合包',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="m7 8 5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>',
-    act: () => toast('敬请期待')
+    act: onImportModpack
   }
 ]
+
+/** 快速操作·导入整合包：选文件后交给 App.vue 注册的全局导入确认弹窗 */
+async function onImportModpack() {
+  try {
+    const p = await selectFile()
+    if (!p) return
+    if (store.importHandler) store.importHandler(p)
+    else toast('导入功能尚未就绪，请稍后再试', 'error')
+  } catch (e) {
+    toast('整合包安装失败：' + errText(e), 'error')
+  }
+}
 
 // ---------------- 日志抽屉 ----------------
 const logOpen = ref(false)
@@ -271,6 +283,29 @@ const memoryPct = computed(() =>
 
 const accountName = computed(() => store.selectedAccount?.username ?? '冒险家')
 const isOffline = computed(() => store.selectedAccount?.type === 'offline')
+
+/** 离线模式开关：在离线/微软账号间快速切换；无目标类型账号时引导去账号页 */
+async function onToggleAccountType() {
+  const cur = store.selectedAccount
+  if (!cur) return
+  const wantType = cur.type === 'offline' ? 'microsoft' : 'offline'
+  const target = store.accounts.find((a) => a.type === wantType)
+  if (!target) {
+    toast(
+      wantType === 'microsoft' ? '还没有微软账号，请先登录' : '还没有离线账号，请先添加',
+      'info'
+    )
+    store.currentView = 'accounts'
+    return
+  }
+  try {
+    await selectAccount(target.id)
+    await refreshAccounts()
+    toast(`已切换到 ${target.username}（${wantType === 'microsoft' ? '微软正版' : '离线'}）`, 'success')
+  } catch (e) {
+    toast('切换账号失败：' + errText(e), 'error')
+  }
+}
 </script>
 
 <template>
@@ -472,8 +507,8 @@ const isOffline = computed(() => store.selectedAccount?.type === 'offline')
                 <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
               </svg>
               <span>离线模式</span>
-              <label class="switch static">
-                <input type="checkbox" :checked="isOffline" disabled />
+              <label class="switch static" title="在离线账号与微软账号之间快速切换">
+                <input type="checkbox" :checked="isOffline" @change="onToggleAccountType" />
                 <span class="switch-ui"></span>
               </label>
             </div>

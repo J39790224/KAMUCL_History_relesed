@@ -88,6 +88,12 @@ export const store = reactive({
   editMode: false,
   /** 当前选中的板块 key（对应元素 data-edit 值），空 = 未选中 */
   editTarget: '',
+  /** 通知中心：最近的 toast 记录（新→旧，上限 30 条） */
+  notices: [] as Array<{ id: number; text: string; type: ToastType; time: number }>,
+  /** 通知是否有未读（驱动铃铛红点） */
+  noticesUnread: false,
+  /** 整合包导入处理器（App.vue 注册，供任意页面触发导入确认弹窗） */
+  importHandler: null as ((filePath: string) => void) | null,
   toasts: [] as ToastItem[]
 })
 
@@ -97,10 +103,19 @@ let toastSeq = 0
 export function toast(text: string, type: ToastType = 'info') {
   const id = ++toastSeq
   store.toasts.push({ id, text, type })
+  // 同步记录到通知中心（新→旧，上限 30 条，标记未读）
+  store.notices.unshift({ id, text, type, time: Date.now() })
+  if (store.notices.length > 30) store.notices.length = 30
+  store.noticesUnread = true
   setTimeout(() => {
     const i = store.toasts.findIndex((t) => t.id === id)
     if (i >= 0) store.toasts.splice(i, 1)
   }, 3000)
+}
+
+/** 打开通知中心时调用：清除未读标记 */
+export function markNoticesRead() {
+  store.noticesUnread = false
 }
 
 // ---------------- 数据刷新 ----------------

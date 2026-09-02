@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { errText, getSettings, installModpack, onInstallDone, onLaunchLog, onLaunchState, onProgress, probeModpack, selectFile } from './api'
-import { exitEditMode, recordLastPlayed, refreshAccounts, refreshInstalled, store, toast } from './store'
+import { exitEditMode, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, store, toast } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
 import Toasts from './components/Toasts.vue'
@@ -233,6 +233,21 @@ async function onImportClick() {
   }
 }
 
+// ---------------- 通知中心 ----------------
+const noticeOpen = ref(false)
+
+function toggleNotices() {
+  noticeOpen.value = !noticeOpen.value
+  if (noticeOpen.value) markNoticesRead()
+}
+
+function fmtNoticeTime(ts: number): string {
+  const d = new Date(ts)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const today = new Date().toDateString() === d.toDateString()
+  return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
 // ---------------- 主题应用（亮 / 暗 / 自定义） ----------------
 /** 自定义主题写入的全部 inline CSS 变量（切回亮/暗时需统一清除） */
 const CUSTOM_VARS = [
@@ -367,6 +382,8 @@ const offs: Array<() => void> = []
 onMounted(async () => {
   applyTheme(store.settings?.theme, store.settings?.custom)
   window.addEventListener('keydown', onEditKeydown)
+  // 注册全局整合包导入入口（供首页快速操作等任意页面触发）
+  store.importHandler = (filePath: string) => void openModpackImport(filePath)
   offs.push(
     onProgress((e) => {
       store.progress = e
@@ -509,12 +526,12 @@ onUnmounted(() => {
             </svg>
             导入
           </button>
-          <button class="top-icon-btn" title="通知" @click="toast('暂无通知')">
+          <button class="top-icon-btn" title="通知" @click="toggleNotices">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
               <path d="M13.7 21a2 2 0 0 1-3.4 0" />
             </svg>
-            <span class="bell-dot"></span>
+            <span v-if="store.noticesUnread" class="bell-dot"></span>
           </button>
 
           <span class="top-divider"></span>
@@ -524,12 +541,38 @@ onUnmounted(() => {
               <path d="M5 12h14" />
             </svg>
           </button>
+          <button class="win-btn" title="最大化/还原" @click="win('maximize')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+          </button>
           <button class="win-btn win-close" title="关闭" @click="win('close')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M6 6l12 12M18 6 6 18" />
             </svg>
           </button>
         </div>
+
+        <!-- 通知中心下拉 -->
+        <Teleport to="body">
+          <div v-if="noticeOpen" class="notice-mask" @click="noticeOpen = false"></div>
+          <div v-if="noticeOpen" class="notice-panel">
+            <div class="notice-head">
+              <span class="notice-title">通知</span>
+              <button class="btn btn-ghost btn-sm" :disabled="!store.notices.length" @click="store.notices = []">清空</button>
+            </div>
+            <div v-if="!store.notices.length" class="notice-empty">暂无通知</div>
+            <div v-else class="notice-list">
+              <div v-for="n in store.notices" :key="n.id" class="notice-item" :class="'notice-' + n.type">
+                <span class="notice-dot"></span>
+                <div class="notice-body">
+                  <p class="notice-text">{{ n.text }}</p>
+                  <span class="notice-time">{{ fmtNoticeTime(n.time) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Teleport>
       </header>
 
       <!-- 内容区 -->
@@ -904,6 +947,83 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--accent);
   border: 1.5px solid var(--bg-2);
+}
+
+/* 通知中心面板（Teleport 到 body，fixed 定位） */
+.notice-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+}
+.notice-panel {
+  position: fixed;
+  top: 60px;
+  right: 90px;
+  width: 320px;
+  max-height: 420px;
+  z-index: 9001;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.notice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.notice-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.notice-empty {
+  padding: 36px 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.notice-list {
+  overflow-y: auto;
+}
+.notice-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.notice-item:last-child {
+  border-bottom: none;
+}
+.notice-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--accent);
+}
+.notice-success .notice-dot {
+  background: var(--ok);
+}
+.notice-error .notice-dot {
+  background: var(--danger);
+}
+.notice-body {
+  min-width: 0;
+}
+.notice-text {
+  line-height: 1.5;
+  word-break: break-all;
+}
+.notice-time {
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .top-divider {
