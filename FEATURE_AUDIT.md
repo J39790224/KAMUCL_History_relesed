@@ -27,7 +27,7 @@
 | 账号 | 多账号快速切换 | HomeView.vue:453 | 🟡 | 只能跳账号页点选，无首页下拉速切 | 账号下拉速切 |
 | 启动 | 参数拼接/classpath/natives | launch.ts 全文 | ✅ | inheritsFrom 链合并、rules 官方语义、变量全表替换、natives 解压+classpath 双保险 |
 | 启动 | 启动自愈 | launch.ts:139-160 | ✅ | 链 json/client jar/依赖库缺失自动补下 |
-| 启动 | 启动后关闭启动器 | SettingsView.vue:312 | ⛔ | **死设置**：launch.ts / main/index.ts 从未读取该值，开关无效果 | 启动后隐藏/关闭 |
+| 启动 | 启动后关闭启动器 | SettingsView.vue:312 | ✅ | 已于 0.4.2 实装（ipc.ts gameLaunch onState：running 后 1.5s 关窗；验证：开启开关后启动游戏，启动器自动关闭） | 启动后隐藏/关闭 |
 | 启动 | 日志实时查看 | HomeView.vue:344 | ✅ | 实时滚动 + 落盘 kamucl-logs/latest.log |
 | 启动 | 日志导出 | — | ⚪ | 无导出/打开日志目录入口 | 日志导出 |
 
@@ -42,7 +42,7 @@
 | 加载器 | Fabric/Quilt | loaders.ts:193-223 | ✅ | profile 直写 + maven 坐标库下载 | — |
 | 加载器 | OptiFine | — | ⚪ | 无入口 | OptiFine 安装与组合 |
 | 加载器 | 组合安装（Fabric+OptiFine 等） | — | ⚪ | 无 | 组合兼容处理 |
-| 加载器 | Fabric API 联动 | GameView.vue:357 → loaders.ts:305 | ⛔ | 功能闭环真实（Modrinth 双源+自动入 mods），**但 loaders.ts:282-353 文件编码损坏，用户可见文案全乱码** | Fabric API 推荐 |
+| 加载器 | Fabric API 联动 | GameView.vue:357 → loaders.ts:305 | ✅ | 已于 0.4.2 修复文件编码（验证：安装 Fabric 版本时勾选 Fabric API，进度文案正常中文显示） | Fabric API 推荐 |
 | Java | 扫描/匹配/自动下载 | java.ts 全文 + SettingsView 开关 | ✅ | 多路径扫描、按版本匹配（含 26.x 新命名）、Adoptium 下载解压、开关默认开 | Java 自动管理 |
 | 版本 | 多版本共存 | versions/ 目录隔离 | ✅ | — | — |
 | 版本 | 版本隔离开关 | — | ⚪ | 仅整合包实例强制隔离（_gameDir），普通版本无 UI 开关 | 版本隔离三档 |
@@ -82,7 +82,7 @@
 | 模块 | 功能 | 入口位置 | 状态 | 问题描述 | 对标 PCL |
 |---|---|---|---|---|---|
 | 工具 | 崩溃分析 | — | ⚪ | 无 crash-report 读取与建议 | 崩溃分析器 |
-| 服务器 | 服务器页 | ServersView.vue:18 | 🔴 | 纯占位「敬请期待」 | 服务器管理 |
+| 服务器 | 服务器页 | ServersView.vue | ✅ | 已于 0.4.2 实装：列表增删、SLP ping（MOTD/人数/延迟/版本）、一键进服、删除二次确认（验证：添加 mc.hypixel.net 等公共服看状态） | 服务器管理 |
 | 个性化 | 三主题+自定义+点选编辑+主题码 | Settings/EditPanel | ✅ | 含布局滑块与分享码 | 主题 |
 | 个性化 | 背景音乐/主页模块自定义 | — | ⚪ | 无 | 背景音乐/主页定制 |
 | 启动器 | 自动检查更新 | — | ⚪ | 无（版本号还硬编码 0.1.0） | 更新通道 |
@@ -99,18 +99,20 @@
 
 ## 二、横切 Bug 清单（建议阶段二最先修）
 
-| # | 位置 | 问题 | 严重度 |
-|---|---|---|---|
-| 1 | loaders.ts:282-353 | Fabric API 文案编码损坏（用户可见乱码） | 高 ⛔ |
-| 2 | SettingsView × launch.ts | closeAfterLaunch 死设置 | 高 ⛔ |
-| 3 | App.vue:22 / HomeView.vue:518 / launch.ts:284 | 版本号硬编码 0.1.0 | 中 |
-| 4 | HomeView.vue:223 | 快速操作导入整合包占位 | 中 |
-| 5 | versions.ts:401 | 整合包实例 mcVersion 语义污染 | 中 |
-| 6 | community.ts:303 | datapack 落盘目录不被 MC 加载 | 中 |
-| 7 | store.progress 单例 | 多任务安装进度互相覆盖/回跳 | 中 |
-| 8 | modpacks.ts:738 | 整合包下载不走镜像 | 低 |
-| 9 | 多处删除 | 无二次确认 | 低 |
-| 10 | AccountsView 微软登录按钮 | 无 loading 态 | 低 |
+| # | 位置 | 问题 | 严重度 | 状态 |
+|---|---|---|---|---|
+| 1 | loaders.ts:282-353 | Fabric API 文案编码损坏（用户可见乱码） | 高 ⛔ | ✅ 已修（0.4.2） |
+| 2 | SettingsView × launch.ts | closeAfterLaunch 死设置 | 高 ⛔ | ✅ 已修（0.4.2） |
+| 3 | App.vue:22 / HomeView.vue:518 / launch.ts:284 | 版本号硬编码 0.1.0 | 中 | ⏳ 待修 |
+| 4 | HomeView.vue:223 | 快速操作导入整合包占位 | 中 | ⏳ 待修 |
+| 5 | versions.ts:401 | 整合包实例 mcVersion 语义污染 | 中 | ⏳ 待修 |
+| 6 | community.ts:303 | datapack 落盘目录不被 MC 加载 | 中 | ⏳ 待修 |
+| 7 | store.progress 单例 | 多任务安装进度互相覆盖/回跳 | 中 | ⏳ 待修 |
+| 8 | modpacks.ts:738 | 整合包下载不走镜像 | 低 | ⏳ 待修 |
+| 9 | 多处删除 | 无二次确认 | 低 | 🔧 服务器页已加，其余待补 |
+| 10 | AccountsView 微软登录按钮 | 无 loading 态 | 低 | ⏳ 待修 |
+
+## 三、总体结论（更新）
 
 ## 三、总体结论
 
