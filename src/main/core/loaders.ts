@@ -279,13 +279,13 @@ export async function installLoader(
   }
 }
 
-// ---------------- Fabric API��Modrinth ����Դ��MCIM ���ھ�����ˣ� ----------------
+// ---------------- Fabric API（Modrinth 数据源，MCIM 国内镜像回退） ----------------
 
 const MODRINTH_BASES = [
   'https://api.modrinth.com/v2',
   'https://mod.mcimirror.top/modrinth/v2'
 ]
-const MODRINTH_UA = { 'User-Agent': 'KAMUCL/0.2.0 (kamucl launcher)' }
+const MODRINTH_UA = { 'User-Agent': 'KAMUCL/0.4.1 (kamucl launcher)' }
 
 interface ModrinthFile {
   url?: string
@@ -299,7 +299,7 @@ interface ModrinthVersion {
   files?: ModrinthFile[]
 }
 
-/** �� mc �汾�����ѯ����������б��������������� */
+/** 按 mc 版本缓存查询结果，避免列表与下载两次请求 */
 const fabricApiCache = new Map<string, ModrinthVersion[]>()
 
 async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersion[]> {
@@ -316,7 +316,7 @@ async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersio
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const arr = (await res.json()) as ModrinthVersion[]
-      if (!Array.isArray(arr)) throw new Error('��Ӧ��ʽ�쳣')
+      if (!Array.isArray(arr)) throw new Error('响应格式异常')
       fabricApiCache.set(mcVersion, arr)
       return arr
     } catch (e) {
@@ -326,7 +326,7 @@ async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersio
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
-/** Fabric API ���ð汾�б���������ǰ�� */
+/** Fabric API 可用版本列表（最新在前） */
 export async function listFabricApiVersions(mcVersion: string): Promise<FabricApiVersion[]> {
   const arr = await fetchFabricApiVersions(mcVersion)
   return arr
@@ -334,21 +334,21 @@ export async function listFabricApiVersions(mcVersion: string): Promise<FabricAp
     .map((v) => ({ version: v.version_number as string, date: v.date_published ?? '' }))
 }
 
-/** ����ָ���汾 Fabric API �� gameDir/mods */
+/** 下载指定版本 Fabric API 到 gameDir/mods */
 export async function installFabricApi(
   mcVersion: string,
   version: string,
   emit: ProgressEmit
 ): Promise<void> {
-  emit({ stage: 'fabric-api', progress: 0, text: `��ѯ Fabric API ${version}` })
+  emit({ stage: 'fabric-api', progress: 0, text: `查询 Fabric API ${version}` })
   const arr = await fetchFabricApiVersions(mcVersion)
   const v = arr.find((x) => x.version_number === version)
   const file = v?.files?.find((f) => f.primary) ?? v?.files?.[0]
   if (!file?.url || !file.filename) {
-    throw new Error(`δ�ҵ����� ${mcVersion} �� Fabric API ${version} �ļ�`)
+    throw new Error(`未找到适配 ${mcVersion} 的 Fabric API ${version} 文件`)
   }
   const dest = path.join(gameDir(), 'mods', file.filename)
-  emit({ stage: 'fabric-api', progress: 0.2, text: `���� Fabric API ${version}` })
+  emit({ stage: 'fabric-api', progress: 0.2, text: `下载 Fabric API ${version}` })
   await downloadFile(file.url, dest, undefined, file.hashes?.sha1, 'official')
-  emit({ stage: 'fabric-api', progress: 1, text: `Fabric API �ѷ��� mods �ļ���` })
+  emit({ stage: 'fabric-api', progress: 1, text: `Fabric API 已放入 mods 文件夹` })
 }
