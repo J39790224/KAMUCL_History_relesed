@@ -92,6 +92,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       })
   })
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
+  ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
+    versions.setIsolation(String(versionId ?? ''), isolated === true)
+  )
   ipcMain.handle(IPC.loadersList, (_e, loader: LoaderName, mcVersion: string) =>
     loaders.listLoaderVersions(loader, mcVersion)
   )

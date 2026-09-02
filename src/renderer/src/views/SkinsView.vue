@@ -11,6 +11,7 @@ import {
 } from '../api'
 import { store, toast } from '../store'
 import { renderCape, renderSkinFront } from '../skin-render'
+import SkinViewer3D from '../components/SkinViewer3D.vue'
 import type { CapeInfo, ProfileSkins, SkinHistoryEntry, SkinVariant } from '@shared/types'
 
 /** 仅微软正版账号可用 */
@@ -19,8 +20,6 @@ const isMs = computed(() => store.selectedAccount?.type === 'microsoft')
 // ---------------- 档案 ----------------
 const profile = ref<ProfileSkins | null>(null)
 const loadingProfile = ref(false)
-const currentRender = ref('')
-const renderingCurrent = ref(false)
 
 const currentSkin = computed(() => profile.value?.skins[0] ?? null)
 const currentVariant = computed<SkinVariant>(() =>
@@ -28,24 +27,10 @@ const currentVariant = computed<SkinVariant>(() =>
 )
 const capes = computed(() => profile.value?.capes ?? [])
 
-/** 渲染当前皮肤人偶（用主进程随档案返回的 dataUrl，避免直连 textures.minecraft.net；失败保留空串，模板兜底占位） */
-async function renderCurrent() {
-  const src = currentSkin.value?.dataUrl
-  currentRender.value = ''
-  if (!src) return
-  renderingCurrent.value = true
-  try {
-    currentRender.value = await renderSkinFront(src, 12)
-  } finally {
-    renderingCurrent.value = false
-  }
-}
-
 async function loadProfile() {
   loadingProfile.value = true
   try {
     profile.value = await getSkinProfile()
-    void renderCurrent()
     void renderCapes()
   } catch (e) {
     toast('获取皮肤档案失败：' + errText(e), 'error')
@@ -109,7 +94,6 @@ async function onRestore(item: SkinHistoryEntry) {
   try {
     profile.value = await uploadSkinFromHistory(item.id)
     toast('已换回历史皮肤', 'success')
-    void renderCurrent()
     void loadHistory()
   } catch (e) {
     toast('换回皮肤失败：' + errText(e), 'error')
@@ -136,7 +120,7 @@ async function onDeleteHistory(item: SkinHistoryEntry) {
 
 // ---------------- 待上传皮肤（选择 / 拖拽） ----------------
 const pending = ref<{ path: string; name: string } | null>(null)
-const pendingRender = ref('')
+const pendingDataUrl = ref('')
 const variant = ref<SkinVariant>('classic')
 const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -164,9 +148,9 @@ async function pickFile(f: File | undefined | null) {
   }
   pending.value = { path: p, name: f.name }
   try {
-    pendingRender.value = await renderSkinFront(await fileToDataUrl(f), 12)
+    pendingDataUrl.value = await fileToDataUrl(f)
   } catch {
-    pendingRender.value = ''
+    pendingDataUrl.value = ''
   }
 }
 
@@ -178,7 +162,7 @@ function onInputChange(e: Event) {
 
 function clearPending() {
   pending.value = null
-  pendingRender.value = ''
+  pendingDataUrl.value = ''
 }
 
 async function doUpload() {
@@ -188,7 +172,6 @@ async function doUpload() {
     profile.value = await uploadSkin(pending.value.path, variant.value)
     toast('皮肤上传成功', 'success')
     clearPending()
-    void renderCurrent()
     void loadHistory()
   } catch (e) {
     toast('皮肤上传失败：' + errText(e), 'error')
@@ -253,7 +236,6 @@ watch(
     historyList.value = []
     historyRenders.value = {}
     capeRenders.value = {}
-    currentRender.value = ''
     clearPending()
     if (isMs.value) loadAll()
   }
@@ -288,16 +270,21 @@ watch(
       >
         <h3 class="section-title">当前皮肤</h3>
         <div class="skin-main">
-          <!-- 左：人偶预览 -->
-          <div class="preview-box">
-            <span v-if="loadingProfile || renderingCurrent" class="spin"></span>
-            <img v-else-if="currentRender" :src="currentRender" class="skin-img" alt="当前皮肤" />
-            <div v-else class="preview-placeholder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 21v-1a8 8 0 0 1 16 0v1" />
-              </svg>
-              <span>暂无皮肤</span>
+          <!-- 左：3D 人偶预览 -->
+          <div class="preview-3d">
+            <template v-if="!loadingProfile && currentSkin?.dataUrl">
+              <SkinViewer3D :src="currentSkin.dataUrl" :variant="currentVariant" />
+              <p class="muted viewer-tip">拖动可旋转视角 · 正在播放走路动画</p>
+            </template>
+            <div v-else class="preview-3d-empty">
+              <span v-if="loadingProfile" class="spin"></span>
+              <div v-else class="preview-placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M4 21v-1a8 8 0 0 1 16 0v1" />
+                </svg>
+                <span>暂无皮肤</span>
+              </div>
             </div>
             <div v-if="dragOver" class="drag-hint">松开以选择皮肤文件</div>
           </div>
@@ -313,7 +300,9 @@ watch(
 
             <!-- 待上传文件 -->
             <div v-if="pending" class="pending-box">
-              <img v-if="pendingRender" :src="pendingRender" class="pending-img" alt="待上传皮肤" />
+              <div class="pending-viewer">
+                <SkinViewer3D v-if="pendingDataUrl" :src="pendingDataUrl" :variant="variant" />
+              </div>
               <div class="pending-meta">
                 <span class="pending-name" :title="pending.name">{{ pending.name }}</span>
                 <div class="seg">
@@ -472,22 +461,25 @@ watch(
   gap: 22px;
   align-items: flex-start;
 }
-.preview-box {
+.preview-3d {
   position: relative;
+  width: 260px;
+  flex-shrink: 0;
+}
+.preview-3d-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 168px;
-  height: 300px;
-  flex-shrink: 0;
+  height: 340px;
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
   background: var(--card-2);
   overflow: hidden;
 }
-.skin-img {
-  width: 144px;
-  image-rendering: pixelated;
+.viewer-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
 }
 .preview-placeholder {
   display: flex;
@@ -543,11 +535,10 @@ watch(
   border-radius: 12px;
   background: var(--accent-soft);
 }
-.pending-img {
-  width: 36px;
-  height: 72px;
+.pending-viewer {
+  width: 132px;
   flex-shrink: 0;
-  image-rendering: pixelated;
+  --sv3d-height: 176px;
 }
 .pending-meta {
   flex: 1;

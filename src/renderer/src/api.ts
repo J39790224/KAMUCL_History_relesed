@@ -60,6 +60,8 @@ export const getInstalled = () => invoke<InstalledVersion[]>(IPC.versionsInstall
 export const installVersion = (id: string, opts?: InstallOptions) =>
   invoke<void>(IPC.versionsInstall, id, opts)
 export const removeVersion = (id: string) => invoke<void>(IPC.versionsRemove, id)
+export const setVersionIsolation = (id: string, isolated: boolean) =>
+  invoke<void>(IPC.versionsSetIsolation, id, isolated)
 export const listLoaders = (loader: LoaderName, mc: string) =>
   invoke<string[]>(IPC.loadersList, loader, mc)
 export const listFabricApi = (mc: string) => invoke<FabricApiVersion[]>(IPC.fabricApiList, mc)

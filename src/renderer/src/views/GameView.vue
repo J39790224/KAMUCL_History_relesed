@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion } from '../api'
+import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, setVersionIsolation } from '../api'
 import { progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
@@ -209,6 +209,29 @@ async function openVersionFolder(v: InstalledVersion) {
   }
 }
 
+// ---------------- 版本隔离开关 ----------------
+const isoBusy = ref<string | null>(null)
+
+async function onToggleIsolation(v: InstalledVersion) {
+  if (isoBusy.value) return
+  isoBusy.value = v.id
+  const next = !v.isolated
+  try {
+    await setVersionIsolation(v.id, next)
+    await refreshInstalled()
+    toast(
+      next
+        ? `已为「${v.id}」开启版本隔离，共享的存档与模组已复制进版本目录`
+        : `已为「${v.id}」关闭版本隔离，将重新使用共享游戏目录`,
+      'success'
+    )
+  } catch (e) {
+    toast('切换隔离失败：' + errText(e), 'error')
+  } finally {
+    isoBusy.value = null
+  }
+}
+
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const installedLoaderText = (v: InstalledVersion) =>
   v.loader ? `${cap(v.loader)} ${v.loaderVersion ?? ''}`.trim() : '纯净版'
@@ -313,6 +336,23 @@ const installedLoaderText = (v: InstalledVersion) =>
           <span class="version-id">{{ v.id }}</span>
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
           <span class="tag" :class="v.loader ? 'tag-gold' : ''">{{ installedLoaderText(v) }}</span>
+          <span v-if="v.isolated" class="tag">已隔离</span>
+          <label
+            v-if="!v.modpackName"
+            class="iso-switch"
+            :title="v.isolated ? '版本隔离已开启：使用独立的游戏目录（存档/模组/配置）。点击关闭' : '版本隔离已关闭：与全局共享游戏目录。点击开启（将把共享数据复制进版本目录）'"
+          >
+            <span class="muted iso-label">隔离</span>
+            <span class="switch">
+              <input
+                type="checkbox"
+                :checked="!!v.isolated"
+                :disabled="isoBusy === v.id"
+                @change="onToggleIsolation(v)"
+              />
+              <span class="switch-ui"></span>
+            </span>
+          </label>
           <button
             class="icon-btn installed-folder"
             :title="`打开 ${v.id} 的版本文件夹`"
@@ -580,8 +620,24 @@ const installedLoaderText = (v: InstalledVersion) =>
 .installed-row:last-child {
   border-bottom: none;
 }
+/* 版本隔离开关 */
+.iso-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  cursor: pointer;
+}
+.iso-label {
+  font-size: 12px;
+}
+.iso-switch + .installed-folder,
+.iso-switch ~ .installed-folder {
+  margin-left: 0;
+}
 .installed-folder {
   margin-left: auto;
+}
 }
 .installed-remove {
   flex-shrink: 0;

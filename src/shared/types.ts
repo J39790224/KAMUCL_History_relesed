@@ -42,6 +42,8 @@ export interface InstalledVersion {
   /** 整合包实例：来源整合包名称/版本（非整合包安装时为空） */
   modpackName?: string
   modpackVersion?: string
+  /** 版本隔离：独立的 mods/存档/配置目录（versions/<id>/ 作为游戏目录） */
+  isolated?: boolean
 }
 
 export type LoaderName = 'forge' | 'fabric' | 'quilt' | 'neoforge'
@@ -203,6 +205,7 @@ export const IPC = {
   versionsInstalled: 'versions:installed', // () => InstalledVersion[]
   versionsInstall: 'versions:install', // (versionId: string, opts?: InstallOptions) => void
   versionsRemove: 'versions:remove', // (versionId: string) => void
+  versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
   fabricApiList: 'loaders:fabricApi', // (mcVersion: string) => FabricApiVersion[]
 
