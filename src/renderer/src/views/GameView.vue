@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion } from '../api'
 import { progressOverall, refreshInstalled, store, toast } from '../store'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
   FabricApiVersion,
   InstallOptions,
@@ -177,7 +178,27 @@ async function confirmInstall() {
 }
 
 // ---------------- 已安装区 ----------------
-const removingId = ref<string | null>(null)
+const removeModal = reactive({
+  open: false,
+  target: null as InstalledVersion | null,
+  busy: false
+})
+
+async function onConfirmRemove() {
+  const v = removeModal.target
+  if (!v || removeModal.busy) return
+  removeModal.busy = true
+  try {
+    await removeVersion(v.id)
+    await refreshInstalled()
+    removeModal.open = false
+    toast(`已删除 ${v.id}`, 'success')
+  } catch (e) {
+    toast('删除失败：' + errText(e), 'error')
+  } finally {
+    removeModal.busy = false
+  }
+}
 
 /** 打开该版本的版本文件夹（versions/<id>） */
 async function openVersionFolder(v: InstalledVersion) {
@@ -185,19 +206,6 @@ async function openVersionFolder(v: InstalledVersion) {
     await openDir('versions/' + v.id)
   } catch (e) {
     toast('打开文件夹失败：' + errText(e), 'error')
-  }
-}
-
-async function onRemove(v: InstalledVersion) {
-  removingId.value = v.id
-  try {
-    await removeVersion(v.id)
-    await refreshInstalled()
-    toast(`已删除 ${v.id}`, 'success')
-  } catch (e) {
-    toast('删除失败：' + errText(e), 'error')
-  } finally {
-    removingId.value = null
   }
 }
 
@@ -316,14 +324,23 @@ const installedLoaderText = (v: InstalledVersion) =>
           </button>
           <button
             class="btn btn-danger btn-sm installed-remove"
-            :disabled="removingId === v.id"
-            @click="onRemove(v)"
+            @click="removeModal.open = true; removeModal.target = v"
           >
-            {{ removingId === v.id ? '删除中…' : '删除' }}
+            删除
           </button>
         </div>
       </div>
     </div>
+
+    <!-- 删除版本二次确认 -->
+    <ConfirmModal
+      :open="removeModal.open"
+      title="删除版本"
+      :message="`确定要删除版本「${removeModal.target?.id}」吗？该版本的游戏文件将被移除（共享的依赖库与资源会保留），此操作不可恢复。`"
+      :busy="removeModal.busy"
+      @cancel="removeModal.open = false"
+      @confirm="onConfirmRemove"
+    />
 
     <!-- 安装模态框 -->
     <Teleport to="body">

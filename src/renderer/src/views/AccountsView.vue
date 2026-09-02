@@ -49,16 +49,21 @@ async function onAddOffline() {
 const ms = reactive({
   open: false,
   waiting: false,
+  starting: false,
   info: null as MsDeviceCodeInfo | null
 })
 
 async function beginMsLogin() {
+  if (ms.starting) return
+  ms.starting = true
   try {
     ms.info = await msBeginLogin()
     ms.open = true
     ms.waiting = true
   } catch (e) {
     toast('无法开始微软登录：' + errText(e), 'error')
+  } finally {
+    ms.starting = false
   }
 }
 
@@ -174,11 +179,12 @@ async function onRemove(acc: Account) {
         >
           {{ adding ? '添加中…' : '添加离线账号' }}
         </button>
-        <button class="btn btn-ghost ms-btn" @click="beginMsLogin">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+        <button class="btn btn-ghost ms-btn" :disabled="ms.starting" @click="beginMsLogin">
+          <span v-if="ms.starting" class="spin"></span>
+          <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
             <path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z" />
           </svg>
-          微软登录
+          {{ ms.starting ? '正在获取登录码…' : '微软登录' }}
         </button>
       </div>
     </div>

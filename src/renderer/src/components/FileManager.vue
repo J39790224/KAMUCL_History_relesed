@@ -3,9 +3,10 @@
  * 通用文件管理视图：模组 / 资源包 / 光影包共用。
  * 通过 IPC fs:list / fs:remove / app:openDir 管理游戏目录下的子目录。
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { errText, listFs, openDir, removeFs } from '../api'
 import { toast } from '../store'
+import ConfirmModal from './ConfirmModal.vue'
 import type { FsEntry } from '@shared/types'
 
 const props = defineProps<{
@@ -24,7 +25,6 @@ const props = defineProps<{
 const entries = ref<FsEntry[]>([])
 const loading = ref(true)
 const loadError = ref('')
-const removingName = ref<string | null>(null)
 const opening = ref(false)
 
 async function load() {
@@ -52,15 +52,25 @@ async function onOpenDir() {
   }
 }
 
-async function onRemove(entry: FsEntry) {
-  removingName.value = entry.name
+const delModal = reactive({ open: false, target: null as FsEntry | null, busy: false })
+
+function onRemove(entry: FsEntry) {
+  delModal.open = true
+  delModal.target = entry
+}
+
+async function onConfirmRemove() {
+  const entry = delModal.target
+  if (!entry || delModal.busy) return
+  delModal.busy = true
   try {
     entries.value = await removeFs(props.rel, entry.name)
+    delModal.open = false
     toast(`已删除 ${entry.name}`, 'success')
   } catch (e) {
     toast('删除失败：' + errText(e), 'error')
   } finally {
-    removingName.value = null
+    delModal.busy = false
   }
 }
 
@@ -132,16 +142,20 @@ const fmtDate = (ts: number) => {
           <span class="fm-name" :title="e.name">{{ e.name }}</span>
           <span class="muted fm-meta">{{ e.isDir ? '文件夹' : fmtSize(e.size) }}</span>
           <span class="muted fm-meta fm-date">{{ fmtDate(e.mtime) }}</span>
-          <button
-            class="btn btn-danger btn-sm fm-remove"
-            :disabled="removingName === e.name"
-            @click="onRemove(e)"
-          >
-            {{ removingName === e.name ? '删除中…' : '删除' }}
-          </button>
+          <button class="btn btn-danger btn-sm fm-remove" @click="onRemove(e)">删除</button>
         </div>
       </div>
     </div>
+
+    <!-- 删除文件二次确认 -->
+    <ConfirmModal
+      :open="delModal.open"
+      title="删除文件"
+      :message="`确定要删除「${delModal.target?.name}」吗？此操作不可恢复。`"
+      :busy="delModal.busy"
+      @cancel="delModal.open = false"
+      @confirm="onConfirmRemove"
+    />
   </div>
 </template>
 

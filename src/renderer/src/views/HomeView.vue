@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
 import { fmtLastPlayed, progressOverall, refreshAccounts, refreshInstalled, store, toast } from '../store'
 import Avatar from '../components/Avatar.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
 import banner1 from '../assets/banner1.png'
 import banner2 from '../assets/banner2.png'
@@ -166,7 +167,11 @@ function openCardMenu(e: MouseEvent, id: string) {
   cardMenu.id = id
 }
 
-const removingId = ref<string | null>(null)
+const removeModal = reactive({
+  open: false,
+  target: null as InstalledVersion | null,
+  busy: false
+})
 
 /** 打开该版本的版本文件夹（versions/<id>） */
 async function openVersionFolder(id: string) {
@@ -178,17 +183,26 @@ async function openVersionFolder(id: string) {
   }
 }
 
-async function removeRecent(v: InstalledVersion) {
+/** ⋯菜单·删除：弹二次确认框 */
+function removeRecent(v: InstalledVersion) {
   cardMenu.id = ''
-  removingId.value = v.id
+  removeModal.open = true
+  removeModal.target = v
+}
+
+async function onConfirmRemove() {
+  const v = removeModal.target
+  if (!v || removeModal.busy) return
+  removeModal.busy = true
   try {
     await removeVersion(v.id)
     await refreshInstalled()
+    removeModal.open = false
     toast(`已删除 ${v.id}`, 'success')
   } catch (e) {
     toast('删除失败：' + errText(e), 'error')
   } finally {
-    removingId.value = null
+    removeModal.busy = false
   }
 }
 
@@ -614,6 +628,16 @@ async function onToggleAccountType() {
         </button>
       </div>
     </Teleport>
+
+    <!-- 删除版本二次确认 -->
+    <ConfirmModal
+      :open="removeModal.open"
+      title="删除版本"
+      :message="`确定要删除版本「${removeModal.target?.id}」吗？该版本的游戏文件将被移除（共享的依赖库与资源会保留），此操作不可恢复。`"
+      :busy="removeModal.busy"
+      @cancel="removeModal.open = false"
+      @confirm="onConfirmRemove"
+    />
   </div>
 </template>
 
