@@ -25,6 +25,7 @@ import * as versions from './core/versions'
 import * as loaders from './core/loaders'
 import * as java from './core/java'
 import * as launch from './core/launch'
+import * as servers from './core/servers'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -154,7 +155,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送
-  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string) => {
+  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string) => {
     sendState({ status: 'launching', text: '正在准备启动…' })
     void launch
       .launch(
@@ -167,11 +168,22 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
           if (s.status === 'running' && settings.getSettings().closeAfterLaunch) {
             setTimeout(() => getWin()?.close(), 1500)
           }
-        }
+        },
+        serverAddress ? String(serverAddress) : undefined
       )
       .catch((err) => sendState({ status: 'error', text: errText(err) }))
   })
   ipcMain.handle(IPC.gameKill, () => launch.killGame())
+
+  // ---------------- 服务器 ----------------
+  ipcMain.handle(IPC.serversList, () => servers.listServers())
+  ipcMain.handle(IPC.serversAdd, (_e, name: string, address: string) =>
+    servers.addServer(String(name ?? ''), String(address ?? ''))
+  )
+  ipcMain.handle(IPC.serversRemove, (_e, id: string) => servers.removeServer(String(id ?? '')))
+  ipcMain.handle(IPC.serversPing, (_e, address: string) =>
+    servers.pingServer(String(address ?? ''))
+  )
 
   // ---------------- 文件/目录 ----------------
   const safeDir = (rel: string): string => {

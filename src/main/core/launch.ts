@@ -115,7 +115,8 @@ export async function launch(
   versionId: string,
   emit: ProgressEmit,
   sendLog: SendLog,
-  onState: OnState
+  onState: OnState,
+  serverAddress?: string
 ): Promise<void> {
   const settings = getSettings()
 
@@ -336,6 +337,11 @@ export async function launch(
   } else {
     if (settings.resolution.width > 0) gameArgs.push('--width', String(settings.resolution.width))
     if (settings.resolution.height > 0) gameArgs.push('--height', String(settings.resolution.height))
+  }
+
+  // e3) 一键进服（1.20.2+ 支持 --quickPlayMultiplayer）
+  if (serverAddress) {
+    gameArgs.push('--quickPlayMultiplayer', serverAddress)
   }
 
   // g) 启动进程

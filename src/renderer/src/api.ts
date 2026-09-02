@@ -22,6 +22,8 @@ import type {
   ProgressEvent,
   ProfileSkins,
   RemoteVersion,
+  ServerEntry,
+  ServerPingResult,
   Settings,
   SkinHistoryEntry,
   SkinVariant
@@ -108,8 +110,17 @@ export const uploadSkinFromHistory = (id: string) =>
 export const getSkinAvatar = () => invoke<string | null>(IPC.skinAvatar)
 
 // ---------------- 游戏 ----------------
-export const launchGame = (id: string) => invoke<void>(IPC.gameLaunch, id)
+export const launchGame = (id: string, serverAddress?: string) =>
+  invoke<void>(IPC.gameLaunch, id, serverAddress)
 export const killGame = () => invoke<void>(IPC.gameKill)
+
+// ---------------- 服务器 ----------------
+export const listServers = () => invoke<ServerEntry[]>(IPC.serversList)
+export const addServer = (name: string, address: string) =>
+  invoke<ServerEntry[]>(IPC.serversAdd, name, address)
+export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
+export const pingServer = (address: string) =>
+  invoke<ServerPingResult>(IPC.serversPing, address)
 
 // ---------------- 文件/目录 ----------------
 /** 用系统资源管理器打开游戏目录下的子目录（'' = 游戏根目录） */

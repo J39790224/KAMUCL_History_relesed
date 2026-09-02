@@ -210,8 +210,14 @@ export const IPC = {
   javaList: 'java:list', // () => JavaInfo[]
 
   // 游戏
-  gameLaunch: 'game:launch', // (versionId: string) => void
+  gameLaunch: 'game:launch', // (versionId: string, serverAddress?: string) => void  带 serverAddress 时用 --quickPlayMultiplayer 直接进服
   gameKill: 'game:kill', // () => void
+
+  // 服务器（SLP 协议 ping）
+  serversList: 'servers:list', // () => ServerEntry[]
+  serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
+  serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
+  serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
 
   // 整合包
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
@@ -311,4 +317,21 @@ export interface ModpackInfo {
   mcVersion: string
   loader?: LoaderName
   loaderVersion?: string
+}
+
+// ---------------- 服务器 ----------------
+export interface ServerEntry {
+  id: string
+  name: string
+  address: string
+}
+
+export interface ServerPingResult {
+  online: boolean
+  /** 在线/上限，如 "12/100" */
+  players: string
+  /** MOTD 纯文本（去格式化码） */
+  motd: string
+  version: string
+  latencyMs: number
 }
