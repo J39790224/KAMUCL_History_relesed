@@ -1,4 +1,4 @@
-# KAMUCL 功能审计报告
+﻿# KAMUCL 功能审计报告
 
 > 审计时间：2026-09-03 ｜ 基线：PCL2 正式版 2.12.x + 社区版 CE
 > 状态档位：✅ 已实装且可用 ｜ 🟡 部分实现 ｜ 🔴 仅有入口 ｜ ⛔ 入口损坏 ｜ ⚪ 完全缺失
@@ -103,14 +103,14 @@
 |---|---|---|---|---|
 | 1 | loaders.ts:282-353 | Fabric API 文案编码损坏（用户可见乱码） | 高 ⛔ | ✅ 已修（0.4.2） |
 | 2 | SettingsView × launch.ts | closeAfterLaunch 死设置 | 高 ⛔ | ✅ 已修（0.4.2） |
-| 3 | App.vue:22 / HomeView.vue:518 / launch.ts:284 | 版本号硬编码 0.1.0 | 中 | ⏳ 待修 |
-| 4 | HomeView.vue:223 | 快速操作导入整合包占位 | 中 | ⏳ 待修 |
-| 5 | versions.ts:401 | 整合包实例 mcVersion 语义污染 | 中 | ⏳ 待修 |
-| 6 | community.ts:303 | datapack 落盘目录不被 MC 加载 | 中 | ⏳ 待修 |
-| 7 | store.progress 单例 | 多任务安装进度互相覆盖/回跳 | 中 | ⏳ 待修 |
-| 8 | modpacks.ts:738 | 整合包下载不走镜像 | 低 | ⏳ 待修 |
-| 9 | 多处删除 | 无二次确认 | 低 | 🔧 服务器页已加，其余待补 |
-| 10 | AccountsView 微软登录按钮 | 无 loading 态 | 低 | ⏳ 待修 |
+| 3 | App.vue / HomeView.vue / launch.ts | 版本号硬编码 0.1.0 | 中 | ✅ 已修（vite define 注入） |
+| 4 | HomeView.vue | 快速操作导入整合包占位 | 中 | ✅ 已修（接全局导入弹窗） |
+| 5 | versions.ts | 整合包实例 mcVersion 语义污染 | 中 | ✅ 已修（链底解析） |
+| 6 | community.ts | datapack 落盘目录不被 MC 加载 | 中 | ✅ 已修（唯一存档直投+提示） |
+| 7 | store.progress 单例 | 多任务安装进度互相覆盖/回跳 | 中 | ✅ 已修（整体进度单调化+速度显示） |
+| 8 | modpacks.ts | 整合包下载不走镜像 | 低 | ✅ 已修 |
+| 9 | 多处删除 | 无二次确认 | 低 | ✅ 全部加确认框（ConfirmModal） |
+| 10 | AccountsView 微软登录按钮 | 无 loading 态 | 低 | ✅ 已修 |
 
 ## 三、总体结论（更新）
 
