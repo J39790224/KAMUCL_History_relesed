@@ -388,6 +388,23 @@ export async function installVersion(
 
 // ---------------- 已安装列表 / 删除 ----------------
 
+/** 沿 inheritsFrom 链解析到最底层的原版 MC 版本 id（链断时回退为当前已知 id） */
+function resolveBaseMcId(j: VersionJson, fallback: string): string {
+  let cur = j
+  let id = j.inheritsFrom ?? j.id ?? fallback
+  let hops = 0
+  while (cur.inheritsFrom && hops++ < 8) {
+    try {
+      const parent = readVersionJson(cur.inheritsFrom)
+      id = parent.inheritsFrom ?? parent.id ?? id
+      cur = parent
+    } catch {
+      break
+    }
+  }
+  return id
+}
+
 /** 扫描 gameDir/versions/*\/，读取每个 <dir>/<dir>.json */
 export function listInstalled(): InstalledVersion[] {
   const dir = versionsDir()
@@ -400,7 +417,9 @@ export function listInstalled(): InstalledVersion[] {
       const j = readVersionJson(name)
       const item: InstalledVersion = {
         id: name,
-        mcVersion: j.inheritsFrom ?? j.id ?? name
+        // 整合包实例的 inheritsFrom 指向加载器 profile 版本（如 fabric-loader-x-mc），
+        // 需沿链解析到真实原版版本，避免污染「已安装」判定与版本筛选
+        mcVersion: resolveBaseMcId(j, name)
       }
       if (j._loader) item.loader = j._loader
       if (j._loaderVersion) item.loaderVersion = j._loaderVersion
