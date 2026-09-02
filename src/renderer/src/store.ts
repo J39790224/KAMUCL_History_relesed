@@ -173,8 +173,31 @@ export function exitEditMode() {
   store.editTarget = ''
 }
 
-/** 最后启动时间 -> 「今天 / 昨天 / x天前」，无记录返回 '—' */
-export function fmtLastPlayed(ts?: number): string {
+// ---------------- 进度平滑 ----------------
+/** 安装/启动任务的阶段顺序（用于把单阶段进度换算为单调不回退的整体进度） */
+const STAGE_ORDER = [
+  'version-json',
+  'libraries',
+  'client',
+  'assets',
+  'loader',
+  'fabric-api',
+  'repair',
+  'modpack',
+  'java',
+  'launch',
+  'done'
+]
+
+/** 把当前阶段进度换算为整体进度（0-1，阶段单调推进不回退） */
+export function progressOverall(e: ProgressEvent): number {
+  const i = STAGE_ORDER.indexOf(e.stage)
+  const idx = i < 0 ? 0 : i
+  const p = Math.max(0, Math.min(1, e.progress))
+  return Math.min(1, (idx + p) / STAGE_ORDER.length)
+}
+
+/** 最后启动时间 -> 「今天 / 昨天 / x天前」，无记录返回 '—' */export function fmtLastPlayed(ts?: number): string {
   if (!ts) return '—'
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return '—'

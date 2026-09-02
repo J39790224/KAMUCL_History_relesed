@@ -346,6 +346,29 @@ export async function communityDownload(
   } catch {
     /* 版本 json 读取失败时按全局目录处理 */
   }
+
+  // 数据包：MC 只从 saves/<世界>/datapacks 加载——唯一存档直接投入，否则落 gameDir/datapacks 并提示
+  if (target.kind === 'datapack') {
+    const savesDir = path.join(base, 'saves')
+    let worlds: string[] = []
+    try {
+      worlds = fs
+        .readdirSync(savesDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && fs.existsSync(path.join(savesDir, d.name, 'level.dat')))
+        .map((d) => d.name)
+    } catch {
+      /* 无存档目录 */
+    }
+    if (worlds.length === 1) {
+      const dest = path.join(savesDir, worlds[0], 'datapacks', fileName)
+      await downloadFile(file.url, dest, undefined, file.sha1)
+      return dest
+    }
+    const dest = path.join(base, 'datapacks', fileName)
+    await downloadFile(file.url, dest, undefined, file.sha1)
+    return `${dest}（提示：请将文件移入存档 saves/<世界>/datapacks 后生效）`
+  }
+
   const sub = KIND_SUBDIR[target.kind]
   if (!sub) throw new Error(`不支持的资源类型: ${target.kind}`)
   const dest = path.join(base, sub, fileName)

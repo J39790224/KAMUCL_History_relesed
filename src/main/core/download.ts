@@ -9,6 +9,8 @@ import { once } from 'node:events'
 
 export type MirrorPref = 'official' | 'bmclapi'
 export type ProgressFn = (done: number, total: number) => void
+/** downloadAll 的进度回调：完成数/总数/实时速度(字节每秒) */
+export type AllProgressFn = (done: number, total: number, speedBps: number) => void
 
 export interface DownloadTask {
   url: string
@@ -143,30 +145,60 @@ export async function downloadFile(
 
 /**
  * 并发下载池。
- * onProgress(doneCount, totalCount)：每完成一个文件回调一次总体进度。
+ * onProgress(doneCount, totalCount, speedBps)：每完成一个文件回调一次，
+ * 且每 500ms 额外回调一次带实时速度（滑窗统计字节增量）。
  * 任一文件最终失败则整体 reject。
  */
 export async function downloadAll(
   tasks: DownloadTask[],
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: AllProgressFn,
   concurrency = 8,
   mirror: MirrorPref = 'official'
 ): Promise<void> {
   const total = tasks.length
   if (total === 0) {
-    onProgress?.(0, 0)
+    onProgress?.(0, 0, 0)
     return
   }
   let idx = 0
   let done = 0
+  // 速度统计：累计各文件已下载字节增量
+  let bytesTotal = 0
+  let lastSampleT = Date.now()
+  let lastSampleBytes = 0
+  let speed = 0
+  const timer = setInterval(() => {
+    const now = Date.now()
+    const dt = (now - lastSampleT) / 1000
+    if (dt > 0) {
+      speed = Math.max(0, Math.round((bytesTotal - lastSampleBytes) / dt))
+      lastSampleT = now
+      lastSampleBytes = bytesTotal
+      onProgress?.(done, total, speed)
+    }
+  }, 500)
   const worker = async (): Promise<void> => {
     while (idx < tasks.length) {
       const t = tasks[idx++]
-      await downloadFile(t.url, t.dest, undefined, t.sha1, mirror)
+      let lastReceived = 0
+      await downloadFile(
+        t.url,
+        t.dest,
+        (received) => {
+          bytesTotal += received - lastReceived
+          lastReceived = received
+        },
+        t.sha1,
+        mirror
+      )
       done++
-      onProgress?.(done, total)
+      onProgress?.(done, total, speed)
     }
   }
-  const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker())
-  await Promise.all(workers)
+  try {
+    const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker())
+    await Promise.all(workers)
+  } finally {
+    clearInterval(timer)
+  }
 }

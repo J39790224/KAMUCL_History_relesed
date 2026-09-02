@@ -202,7 +202,8 @@ export async function launch(
     })
     await downloadAll(
       missingLibs,
-      (d, t) => emit({ stage: 'repair', progress: t ? d / t : 1, text: `补全依赖库 ${d}/${t}` }),
+      (d, t, speed) =>
+        emit({ stage: 'repair', progress: t ? d / t : 1, text: `补全依赖库 ${d}/${t}`, speed }),
       8,
       settings.mirror
     )

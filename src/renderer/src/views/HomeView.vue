@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
-import { fmtLastPlayed, refreshAccounts, refreshInstalled, store, toast } from '../store'
+import { fmtLastPlayed, progressOverall, refreshAccounts, refreshInstalled, store, toast } from '../store'
 import Avatar from '../components/Avatar.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
 import banner1 from '../assets/banner1.png'
@@ -83,7 +83,7 @@ const launching = computed(() => store.launchState?.status === 'launching')
 const running = computed(() => store.launchState?.status === 'running')
 
 const percent = computed(() =>
-  store.progress ? Math.round(store.progress.progress * 100) : 0
+  store.progress ? Math.round(progressOverall(store.progress) * 100) : 0
 )
 
 const launchText = computed(() => {

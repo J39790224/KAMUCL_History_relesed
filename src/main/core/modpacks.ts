@@ -10,6 +10,7 @@ import path from 'node:path'
 import AdmZip from 'adm-zip'
 import type { LoaderName, ModpackInfo, ProgressEvent } from '../../shared/types'
 import { downloadAll, type DownloadTask } from './download'
+import { getSettings } from './settings'
 import { versionDir, versionJsonPath, versionsDir } from './paths'
 import { installVersion } from './versions'
 
@@ -723,7 +724,7 @@ export async function installModpack(
     try {
       await downloadAll(
         tasks,
-        (d, t) => {
+        (d, t, speed) => {
           const doneBytes = prefixSum[d] ?? 0
           const ratio = totalBytes ? doneBytes / totalBytes : t ? d / t : 0
           emit({
@@ -731,11 +732,12 @@ export async function installModpack(
             progress: 0.1 + ratio * 0.85,
             text: totalBytes
               ? `下载整合包文件 ${d}/${t}（${fmtMB(doneBytes)}/${fmtMB(totalBytes)}）`
-              : `下载整合包文件 ${d}/${t}`
+              : `下载整合包文件 ${d}/${t}`,
+            speed
           })
         },
         8,
-        'official'
+        getSettings().mirror
       )
     } catch (e) {
       throw new Error(`整合包文件下载失败：${errText(e)}`)

@@ -211,11 +211,12 @@ export async function installLoader(
     const mirror = getSettings().mirror
     await downloadAll(
       tasks,
-      (d, t) =>
+      (d, t, speed) =>
         emit({
           stage: 'loader',
           progress: 0.1 + (t ? (d / t) * 0.9 : 0),
-          text: `${loader} 依赖库 ${d}/${t}`
+          text: `${loader} 依赖库 ${d}/${t}`,
+          speed
         }),
       8,
       mirror

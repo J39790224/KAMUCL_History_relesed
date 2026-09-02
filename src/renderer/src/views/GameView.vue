@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion } from '../api'
-import { refreshInstalled, store, toast } from '../store'
+import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion } from '../api'
+import { progressOverall, refreshInstalled, store, toast } from '../store'
 import type {
   FabricApiVersion,
   InstallOptions,
@@ -273,9 +273,12 @@ const installedLoaderText = (v: InstalledVersion) =>
           <div class="version-actions">
             <div v-if="store.installing.has(v.id) && store.progress" class="row-progress">
               <div class="row-bar">
-                <div class="row-bar-fill" :style="{ width: Math.round(store.progress.progress * 100) + '%' }"></div>
+                <div class="row-bar-fill" :style="{ width: Math.round(progressOverall(store.progress) * 100) + '%' }"></div>
               </div>
-              <span class="muted row-progress-text">{{ Math.round(store.progress.progress * 100) }}%</span>
+              <span class="muted row-progress-text">
+                {{ Math.round(progressOverall(store.progress) * 100) }}%
+                {{ store.progress.speed ? '· ' + formatSpeed(store.progress.speed) : '' }}
+              </span>
             </div>
             <span v-if="isInstalled(v)" class="tag tag-success">已安装</span>
             <button

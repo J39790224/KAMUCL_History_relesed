@@ -284,7 +284,8 @@ export async function installVanilla(versionId: string, emit: ProgressEmit): Pro
   const libTasks = libraryTasks(vj)
   await downloadAll(
     libTasks,
-    (d, t) => emit({ stage: 'libraries', progress: t ? d / t : 1, text: `依赖库 ${d}/${t}` }),
+    (d, t, speed) =>
+      emit({ stage: 'libraries', progress: t ? d / t : 1, text: `依赖库 ${d}/${t}`, speed }),
     8,
     mirror
   )
@@ -332,7 +333,8 @@ export async function installVanilla(versionId: string, emit: ProgressEmit): Pro
     }
     await downloadAll(
       tasks,
-      (d, t) => emit({ stage: 'assets', progress: t ? d / t : 1, text: `资源文件 ${d}/${t}` }),
+      (d, t, speed) =>
+        emit({ stage: 'assets', progress: t ? d / t : 1, text: `资源文件 ${d}/${t}`, speed }),
       8,
       mirror
     )
