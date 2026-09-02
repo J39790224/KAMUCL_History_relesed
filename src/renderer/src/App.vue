@@ -19,7 +19,7 @@ import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import AccountsView from './views/AccountsView.vue'
 
-const APP_VERSION = '0.1.0'
+const APP_VERSION = __APP_VERSION__
 
 const viewMap: Record<ViewName, Component> = {
   home: HomeView,

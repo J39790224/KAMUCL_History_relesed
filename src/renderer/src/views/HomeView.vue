@@ -515,7 +515,7 @@ const isOffline = computed(() => store.selectedAccount?.type === 'offline')
         <div class="sys-row">
           <span class="sys-key">启动器版本</span>
           <span class="sys-val">
-            0.1.0
+            {__APP_VERSION__}
             <svg class="sys-icon ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           </span>
         </div>

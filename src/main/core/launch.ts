@@ -4,6 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import type { LaunchState, ProgressEvent } from '../../shared/types'
 import { getSettings } from './settings'
@@ -282,7 +283,7 @@ export async function launch(
     version_type: 'KAMUCL',
     natives_directory: nativesPath,
     launcher_name: 'KAMUCL',
-    launcher_version: '0.1.0',
+    launcher_version: app.getVersion(),
     classpath,
     library_directory: librariesDir(),
     classpath_separator: path.delimiter
