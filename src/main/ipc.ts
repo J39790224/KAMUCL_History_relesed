@@ -161,7 +161,13 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         versionId,
         emit,
         (line) => send(IPC_EVENT.launchLog, line),
-        (s) => sendState(s)
+        (s) => {
+          sendState(s)
+          // 设置项生效：游戏成功进入运行状态后关闭启动器窗口
+          if (s.status === 'running' && settings.getSettings().closeAfterLaunch) {
+            setTimeout(() => getWin()?.close(), 1500)
+          }
+        }
       )
       .catch((err) => sendState({ status: 'error', text: errText(err) }))
   })
