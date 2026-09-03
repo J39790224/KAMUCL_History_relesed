@@ -216,8 +216,8 @@ async function openGameDir() {
 
 const quickActions = [
   {
-    label: '下载资源',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>',
+    label: '下载游戏',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="5.5"/><path d="M7.5 10.8v3.4M5.8 12.5h3.4"/><circle cx="15.6" cy="11.9" r="0.6" fill="currentColor" stroke="none"/><circle cx="18" cy="13.6" r="0.6" fill="currentColor" stroke="none"/></svg>',
     act: () => (store.currentView = 'game')
   },
   {
@@ -226,7 +226,12 @@ const quickActions = [
     act: openGameDir
   },
   {
-    label: '安装模组',
+    label: '下载模组',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8"/><path d="m8.5 11.5 3.5 3.5 3.5-3.5"/></svg>',
+    act: () => (store.currentView = 'community')
+  },
+  {
+    label: '管理模组',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>',
     act: () => (store.currentView = 'mods')
   },
@@ -462,19 +467,6 @@ async function onToggleAccountType() {
           </article>
         </div>
       </section>
-
-      <!-- 快速操作 -->
-      <section class="block">
-        <div class="block-head" data-edit="text">
-          <h2 class="block-title">快速操作</h2>
-        </div>
-        <div class="quick-grid">
-          <button v-for="q in quickActions" :key="q.label" class="quick-card" data-edit="card" @click="q.act">
-            <span class="quick-icon" v-html="q.icon"></span>
-            <span class="quick-label">{{ q.label }}</span>
-          </button>
-        </div>
-      </section>
     </div>
 
     <!-- ================= 右侧面板（300px） ================= -->
@@ -566,6 +558,17 @@ async function onToggleAccountType() {
             {{ __APP_VERSION__ }}
             <svg class="sys-icon ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           </span>
+        </div>
+      </section>
+
+      <!-- 快速操作（右栏空白区，首屏免滚动可达） -->
+      <section class="card side-card" data-edit="card">
+        <h3 class="side-title">快速操作</h3>
+        <div class="quick-grid quick-grid-side">
+          <button v-for="q in quickActions" :key="q.label" class="quick-card" data-edit="card" @click="q.act">
+            <span class="quick-icon" v-html="q.icon"></span>
+            <span class="quick-label">{{ q.label }}</span>
+          </button>
         </div>
       </section>
 
@@ -1068,6 +1071,16 @@ async function onToggleAccountType() {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 14px;
+}
+/* 右栏形态：两列紧凑布局 */
+.quick-grid-side {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.quick-grid-side .quick-card {
+  height: 76px;
+  gap: 6px;
+  font-size: 12.5px;
 }
 .quick-card {
   display: flex;
