@@ -32,7 +32,17 @@ import type {
 } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  return window.kamucl.invoke(channel, ...args) as Promise<T>
+  // Vue 的 reactive proxy 无法通过 Electron IPC 结构化克隆（报 An object could not be cloned）。
+  // 所有参数统一 JSON 深净化（undefined 原样保留），根治各调用点。
+  const clean = args.map((a) => {
+    if (a === undefined || a === null) return a
+    try {
+      return JSON.parse(JSON.stringify(a)) as unknown
+    } catch {
+      return a
+    }
+  })
+  return window.kamucl.invoke(channel, ...clean) as Promise<T>
 }
 
 // ---------------- 设置 ----------------

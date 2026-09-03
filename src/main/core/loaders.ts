@@ -127,27 +127,57 @@ async function pickJavaForInstaller(mcVersion: string, emit: ProgressEmit): Prom
   return await ensureJava(vj, emit)
 }
 
-/** 运行 forge/neoforge 安装器，输出并入进度 text；mirror=bmclapi 时给安装器传 --mirror 加速下载 */
+/** 运行 forge/neoforge 安装器：全量输出落盘 installer.log；失败带最后 30 行；--mirror= 等号形式，失败降级去 mirror 重试 */
 function runInstaller(javaPath: string, jar: string, emit: ProgressEmit): Promise<void> {
-  return new Promise((resolve, reject) => {
+  const useMirror = getSettings().mirror === 'bmclapi'
+
+  const buildArgs = (withMirror: boolean): string[] => {
     const args = ['-jar', jar, '--installClient', gameDir()]
-    if (getSettings().mirror === 'bmclapi') {
-      args.push('--mirror', 'https://bmclapi2.bangbang93.com/maven')
-    }
-    const proc = spawn(javaPath, args, { windowsHide: true })
-    let tail = ''
-    const onData = (d: Buffer): void => {
-      const lines = (tail + d.toString('utf-8')).split(/\r?\n/)
-      tail = lines.slice(-2).join(' ').slice(-160)
-      emit({ stage: 'loader', progress: 0.75, text: `安装器: ${tail || '运行中…'}` })
-    }
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', onData)
-    proc.on('error', reject)
-    proc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`安装器退出码 ${code}: ${tail}`))
+    if (withMirror) args.push('--mirror=https://bmclapi2.bangbang93.com/maven')
+    return args
+  }
+
+  const runOnce = (args: string[]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const proc = spawn(javaPath, args, { windowsHide: true })
+      const allLines: string[] = []
+      let tail = ''
+      const onData = (d: Buffer): void => {
+        const lines = (tail + d.toString('utf-8')).split(/\r?\n/)
+        tail = lines.pop() ?? ''
+        for (const l of lines) if (l.trim()) allLines.push(l)
+        const shortTail = lines.slice(-2).join(' ').slice(-160)
+        emit({ stage: 'loader', progress: 0.75, text: `安装器: ${shortTail || '运行中…'}` })
+      }
+      proc.stdout.on('data', onData)
+      proc.stderr.on('data', onData)
+      proc.on('error', reject)
+      proc.on('exit', (code) => {
+        if (tail.trim()) allLines.push(tail)
+        // 全量输出落盘，便于排查
+        try {
+          const logDir = path.join(gameDir(), 'kamucl-logs')
+          fs.mkdirSync(logDir, { recursive: true })
+          fs.writeFileSync(
+            path.join(logDir, 'installer.log'),
+            allLines.join('\n') + `\n\n[退出码 ${code ?? '未知'}] ${args.join(' ')}\n`,
+            'utf-8'
+          )
+        } catch {
+          /* 日志写盘失败不影响流程 */
+        }
+        if (code === 0) resolve()
+        else {
+          const last = allLines.slice(-30).join('\n')
+          reject(new Error(`安装器退出码 ${code}（完整日志见 kamucl-logs/installer.log）\n${last}`))
+        }
+      })
     })
+
+  return runOnce(buildArgs(useMirror)).catch((err) => {
+    if (!useMirror) throw err
+    emit({ stage: 'loader', progress: 0.7, text: '镜像模式安装失败，改用官方源重试…' })
+    return runOnce(buildArgs(false))
   })
 }
 
