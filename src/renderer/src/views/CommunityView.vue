@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { communityDownload, communityFiles, communitySearch, errText } from '../api'
+import { communityDownload, communityFiles, communitySearch, errText, getManifest } from '../api'
 import { store, toast } from '../store'
 import type {
   CommunityFile,
@@ -35,12 +35,43 @@ const loaderOptions: Array<{ value: '' | LoaderName; label: string }> = [
   { value: 'neoforge', label: 'NeoForge' }
 ]
 
-/** 已安装版本的 mc 版本去重（供版本筛选） */
-const mcVersionOptions = computed(() => {
-  const set = new Set<string>()
-  for (const v of store.installed) if (v.mcVersion) set.add(v.mcVersion)
-  return [...set].sort().reverse()
+/** 完整 MC 版本列表（与游戏下载页同一数据源：远程版本清单，正式版为主） */
+const manifestVersions = ref<string[]>([])
+const manifestLoading = ref(false)
+
+async function loadManifest() {
+  if (manifestVersions.value.length || manifestLoading.value) return
+  manifestLoading.value = true
+  try {
+    const list = await getManifest()
+    manifestVersions.value = list.filter((v) => v.type === 'release').map((v) => v.id)
+  } catch {
+    /* 清单失败时回退到已安装版本 */
+    const set = new Set<string>()
+    for (const v of store.installed) if (v.mcVersion) set.add(v.mcVersion)
+    manifestVersions.value = [...set].sort().reverse()
+  } finally {
+    manifestLoading.value = false
+  }
+}
+
+/** 版本筛选下拉（支持输入搜索定位） */
+const versionInput = ref('')
+const versionDropdownOpen = ref(false)
+const filteredVersionOptions = computed(() => {
+  const kw = versionInput.value.trim().toLowerCase()
+  if (!kw) return manifestVersions.value.slice(0, 60)
+  return manifestVersions.value.filter((v) => v.toLowerCase().includes(kw)).slice(0, 60)
 })
+
+function pickVersion(v: string) {
+  query.mcVersion = v === query.mcVersion ? '' : v
+  versionInput.value = query.mcVersion
+  versionDropdownOpen.value = false
+  onFilterChange()
+}
+
+onMounted(() => void loadManifest())
 
 const query = reactive({
   keyword: '',
@@ -107,6 +138,7 @@ function onReset() {
   query.source = 'all'
   query.mcVersion = ''
   query.loader = ''
+  versionInput.value = ''
   void doSearch(true)
 }
 
@@ -279,10 +311,32 @@ async function confirmDownload() {
         <select v-model="query.source" class="select filter-select" @change="onFilterChange">
           <option v-for="o in sourceOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
-        <select v-model="query.mcVersion" class="select filter-select" @change="onFilterChange">
-          <option value="">全部版本</option>
-          <option v-for="v in mcVersionOptions" :key="v" :value="v">{{ v }}</option>
-        </select>
+        <!-- 可搜索版本下拉：完整 MC 版本列表（远程清单数据源） -->
+        <div class="ver-filter">
+          <input
+            v-model="versionInput"
+            class="input ver-filter-input"
+            :placeholder="manifestLoading ? '加载版本列表…' : (query.mcVersion || '全部版本')"
+            @focus="versionDropdownOpen = true"
+            @input="versionDropdownOpen = true"
+          />
+          <div v-if="versionDropdownOpen" class="menu-overlay" @click="versionDropdownOpen = false"></div>
+          <div v-if="versionDropdownOpen" class="float-menu ver-filter-menu">
+            <button class="menu-item" :class="{ active: !query.mcVersion }" @click="pickVersion('')">
+              全部版本
+            </button>
+            <button
+              v-for="v in filteredVersionOptions"
+              :key="v"
+              class="menu-item"
+              :class="{ active: query.mcVersion === v }"
+              @click="pickVersion(v)"
+            >
+              {{ v }}
+            </button>
+            <div v-if="!filteredVersionOptions.length" class="ver-menu-empty">无匹配版本</div>
+          </div>
+        </div>
         <select v-model="query.loader" class="select filter-select" @change="onFilterChange">
           <option v-for="o in loaderOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
@@ -475,6 +529,31 @@ async function confirmDownload() {
 .filter-select {
   flex: 1;
   min-width: 140px;
+}
+
+/* 可搜索版本下拉 */
+.ver-filter {
+  position: relative;
+  flex: 1.4;
+  min-width: 170px;
+}
+.ver-filter-input {
+  width: 100%;
+}
+.ver-filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 9001;
+}
+.ver-menu-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12.5px;
 }
 
 /* ---------------- 结果列表 ---------------- */
