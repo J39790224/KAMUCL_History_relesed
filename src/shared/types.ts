@@ -122,6 +122,52 @@ export const DEFAULT_CUSTOM_THEME: CustomTheme = {
   }
 }
 
+/** 预设主题色板（选择后 theme='custom' 并套用对应配色） */
+export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme['colors'] }> = {
+  'pink-white': {
+    label: '粉白',
+    colors: {
+      accent: '#ec4899',
+      bg: '#fdf2f8',
+      card: '#ffffff',
+      text: '#4a1d35',
+      textDim: '#a06b8a',
+      border: '#fbcfe8',
+      sidebarBg: '#fce7f3',
+      sidebarText: '#4a1d35',
+      bannerText: '#ffffff'
+    }
+  },
+  'pink-blue': {
+    label: '粉蓝',
+    colors: {
+      accent: '#6b9df5',
+      bg: '#eef4fd',
+      card: '#ffffff',
+      text: '#1b2a4a',
+      textDim: '#64748b',
+      border: '#c7dbfa',
+      sidebarBg: '#e3edfb',
+      sidebarText: '#1b2a4a',
+      bannerText: '#ffffff'
+    }
+  },
+  'pink-black': {
+    label: '粉黑',
+    colors: {
+      accent: '#f472b6',
+      bg: '#171019',
+      card: '#211623',
+      text: '#f5e8f2',
+      textDim: '#a68ba3',
+      border: '#3d2740',
+      sidebarBg: '#1c1220',
+      sidebarText: '#a68ba3',
+      bannerText: '#ffffff'
+    }
+  }
+}
+
 export interface Settings {
   gameDir: string
   /** 指定 java 可执行文件路径；空字符串 = 自动 */

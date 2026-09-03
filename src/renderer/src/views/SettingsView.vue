@@ -74,6 +74,39 @@ function onToggleFeature(key: string, enabled: boolean) {
   void save({ disabledFeatures: next })
 }
 
+// ---------------- 预设主题 ----------------
+import { THEME_PRESETS, DEFAULT_CUSTOM_THEME } from '@shared/types'
+import type { CustomTheme } from '@shared/types'
+
+const presetThemes = Object.entries(THEME_PRESETS).map(([key, v]) => ({
+  key,
+  label: v.label,
+  colors: v.colors
+}))
+
+/** 当前生效的预设（颜色与某预设完全一致时高亮） */
+const activePreset = computed(() => {
+  const c = store.settings?.custom.colors
+  if (!c) return ''
+  const hit = presetThemes.find((p) =>
+    (Object.keys(p.colors) as Array<keyof CustomTheme['colors']>).every(
+      (k) => p.colors[k].toLowerCase() === c[k].toLowerCase()
+    )
+  )
+  return hit?.key ?? ''
+})
+
+function applyPreset(key: string) {
+  const preset = THEME_PRESETS[key]
+  if (!preset) return
+  const custom: CustomTheme = {
+    colors: { ...preset.colors },
+    layout: { ...(store.settings?.custom.layout ?? DEFAULT_CUSTOM_THEME.layout) }
+  }
+  void save({ theme: 'custom', custom })
+  toast(`已套用「${preset.label}」主题`, 'success')
+}
+
 // ---------------- Java 列表 ----------------
 const javas = ref<Awaited<ReturnType<typeof listJava>>>([])
 const javaLoading = ref(true)
@@ -246,6 +279,26 @@ function saveResolution() {
             <span class="theme-label">自定义颜色</span>
           </button>
         </div>
+
+        <!-- 预设主题（粉白/粉蓝/粉黑） -->
+        <div class="preset-row">
+          <button
+            v-for="p in presetThemes"
+            :key="p.key"
+            class="preset-chip"
+            :class="{ active: activePreset === p.key }"
+            :title="`套用「${p.label}」主题`"
+            @click="applyPreset(p.key)"
+          >
+            <span class="preset-dots">
+              <span class="preset-dot" :style="{ background: p.colors.accent }"></span>
+              <span class="preset-dot" :style="{ background: p.colors.bg }"></span>
+              <span class="preset-dot" :style="{ background: p.colors.card, border: '1px solid ' + p.colors.border }"></span>
+            </span>
+            {{ p.label }}
+          </button>
+        </div>
+        <p class="muted group-hint">预设主题为自定义颜色的快捷方案，套用后仍可在「个性化」中微调。</p>
         <button
           v-if="store.settings.theme === 'custom'"
           class="btn personalize-btn"
@@ -676,7 +729,48 @@ function saveResolution() {
   font-size: 12px;
   line-height: 1.6;
 }
-/* 功能管理开关行 */
+/* 预设主题 chips */
+.preset-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+.preset-chip:hover {
+  border-color: var(--accent);
+}
+.preset-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-weight: 600;
+}
+.preset-chip:active {
+  transform: scale(0.97);
+}
+.preset-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.preset-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
 .feature-row {
   display: flex;
   align-items: center;
