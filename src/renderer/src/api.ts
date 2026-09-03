@@ -200,8 +200,12 @@ export const onLaunchState = (cb: (s: LaunchState) => void) =>
 export const onMsLoginDone = (cb: (account: Account | null) => void) =>
   subscribe<Account | null>(IPC_EVENT.msLoginDone, cb)
 export const onInstallDone = (
-  cb: (r: { versionId: string; ok: boolean; error?: string }) => void
-) => subscribe<{ versionId: string; ok: boolean; error?: string }>(IPC_EVENT.installDone, cb)
+  cb: (r: { versionId: string; installedId?: string; ok: boolean; error?: string }) => void
+) =>
+  subscribe<{ versionId: string; installedId?: string; ok: boolean; error?: string }>(
+    IPC_EVENT.installDone,
+    cb
+  )
 
 // ---------------- 工具 ----------------
 /** 把 invoke 抛出的错误转成适合 toast 展示的短文本 */

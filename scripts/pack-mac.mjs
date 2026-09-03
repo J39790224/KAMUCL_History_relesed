@@ -25,7 +25,8 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8')
 const version = pkg.version
 const RELEASE = path.join(ROOT, 'release')
 const STAGING = path.join(RELEASE, '.mac-staging')
-const ASAR_OUT = path.join(RELEASE, '.mac-staging', 'app.asar')
+// asar 按版本命名：避免旧版本缓存被误用，也避免被占用文件阻塞
+const ASAR_OUT = path.join(RELEASE, '.mac-staging', `app-${version}.asar`)
 const ICNS_OUT = path.join(RELEASE, '.mac-staging', 'kamucl.icns')
 const OUT_ZIP = path.join(RELEASE, `KAMUCL-${version}-mac-${arch}.zip`)
 

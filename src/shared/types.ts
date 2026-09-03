@@ -150,20 +150,6 @@ export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme[
       bannerText: '#ffffff'
     }
   },
-  'pink-blue': {
-    label: '粉蓝',
-    colors: {
-      accent: '#6b9df5',
-      bg: '#eef4fd',
-      card: '#ffffff',
-      text: '#1b2a4a',
-      textDim: '#64748b',
-      border: '#c7dbfa',
-      sidebarBg: '#e3edfb',
-      sidebarText: '#1b2a4a',
-      bannerText: '#ffffff'
-    }
-  },
   'pink-black': {
     label: '粉黑',
     colors: {
@@ -430,7 +416,7 @@ export const IPC_EVENT = {
   launchLog: 'event:launchLog', // (line: string)
   launchState: 'event:launchState', // (s: LaunchState)
   msLoginDone: 'event:msLoginDone', // (account: Account | null)  null = 失败/取消
-  installDone: 'event:installDone', // (r: { versionId: string; ok: boolean; error?: string })
+  installDone: 'event:installDone', // (r: { versionId: string; installedId?: string; ok: boolean; error?: string })  installedId = 实际实例 id（含加载器后缀，成功时存在）
   gameDirDone: 'event:gameDirDone' // (r: { ok: boolean; error?: string; gameDir?: string })  目录迁移结束（配置已切换/失败已回滚）
 } as const
 

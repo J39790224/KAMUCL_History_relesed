@@ -336,26 +336,41 @@ function saveResolution() {
             </span>
             <span class="theme-label">自定义颜色</span>
           </button>
-        </div>
-
-        <!-- 预设主题（粉白/粉蓝/粉黑） -->
-        <div class="preset-row">
+          <!-- 预设主题：与上方主题卡片同格式，套用自定义颜色快捷方案 -->
           <button
             v-for="p in presetThemes"
             :key="p.key"
-            class="preset-chip"
-            :class="{ active: activePreset === p.key }"
+            class="theme-option"
+            :class="{ active: store.settings.theme === 'custom' && activePreset === p.key }"
             :title="`套用「${p.label}」主题`"
             @click="applyPreset(p.key)"
           >
-            <span class="preset-dots">
-              <span class="preset-dot" :style="{ background: p.colors.accent }"></span>
-              <span class="preset-dot" :style="{ background: p.colors.bg }"></span>
-              <span class="preset-dot" :style="{ background: p.colors.card, border: '1px solid ' + p.colors.border }"></span>
+            <span class="theme-preview" :style="{ background: p.colors.bg }">
+              <span
+                class="tp-side"
+                :style="{ background: p.colors.sidebarBg, borderRight: '1px solid ' + p.colors.border }"
+              >
+                <span class="tp-dot" :style="{ background: p.colors.accent }"></span>
+              </span>
+              <span class="tp-main">
+                <span
+                  class="tp-top"
+                  :style="{ background: p.colors.card, borderBottom: '1px solid ' + p.colors.border }"
+                ></span>
+                <span class="tp-body">
+                  <span
+                    class="tp-block"
+                    :style="{ background: p.colors.card, border: '1px solid ' + p.colors.border }"
+                  ></span>
+                  <span class="tp-btn" :style="{ background: p.colors.accent }"></span>
+                </span>
+              </span>
+              <svg v-if="store.settings.theme === 'custom' && activePreset === p.key" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
             </span>
-            {{ p.label }}
+            <span class="theme-label">{{ p.label }}</span>
           </button>
         </div>
+
         <p class="muted group-hint">预设主题为自定义颜色的快捷方案，套用后仍可在「个性化」中微调。</p>
         <button
           v-if="store.settings.theme === 'custom'"
@@ -853,48 +868,6 @@ function saveResolution() {
 .migrate-option span .muted {
   font-size: 12px;
   line-height: 1.6;
-}
-/* 预设主题 chips */
-.preset-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-.preset-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card-2);
-  color: var(--text);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
-}
-.preset-chip:hover {
-  border-color: var(--accent);
-}
-.preset-chip.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-2);
-  font-weight: 600;
-}
-.preset-chip:active {
-  transform: scale(0.97);
-}
-.preset-dots {
-  display: inline-flex;
-  gap: 3px;
-}
-.preset-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
 }
 .feature-row {
   display: flex;

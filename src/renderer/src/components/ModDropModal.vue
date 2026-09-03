@@ -4,8 +4,8 @@
  * 流程：静默解析 → 匹配本地版本 → 有匹配（选版本装入）/ 无匹配（自动或自定义下载后装入）
  */
 import { computed, reactive, ref, watch } from 'vue'
-import { errText, installMods, installVersion, parseMods } from '../api'
-import { displayVersionName, store, toast } from '../store'
+import { errText, installMods, installVersion, onInstallDone, parseMods } from '../api'
+import { displayVersionName, refreshInstalled, store, toast } from '../store'
 import type { InstalledVersion, LoaderName, ModInfo } from '@shared/types'
 
 const props = defineProps<{
@@ -185,7 +185,8 @@ function onDownloadNew() {
   toast('请在游戏页选择兼容的版本安装，完成后重新拖入 MOD 即可装入', 'info')
 }
 
-/** 「自动下载最新兼容版本」：取 MOD 支持的最高 release + 多数派加载器，走现有下载链路 */
+/** 「自动下载最新兼容版本」：取 MOD 支持的最高 release + 多数派加载器，走现有下载链路；
+ *  下载完成后自动把本次 MOD 装入新版本，用户只剩按下启动 */
 const autoState = reactive({ busy: false })
 async function onAutoDownload() {
   if (autoState.busy) return
@@ -227,17 +228,67 @@ async function onAutoDownload() {
         /* API 获取失败不阻断，安装时仍可手动补装 */
       }
     }
+    const filePaths = validMods.value.map((m) => m.filePath)
     emit('close')
     toast(
-      `开始自动下载 ${target.id} + ${LOADER_TAG[loader]} ${loaderVersion}${fabricApi ? ' + Fabric API' : ''}，完成后请重新拖入 MOD 装入`,
+      `开始自动下载 ${target.id} + ${LOADER_TAG[loader]} ${loaderVersion}${fabricApi ? ' + Fabric API' : ''}，完成后将自动装入 ${filePaths.length} 个 MOD`,
       'info'
     )
     store.installing.add(target.id)
-    await installVersion(target.id, { loader, loaderVersion, fabricApi })
+    // 一次性监听：该版本装好后自动装入 MOD（按请求的 versionId 匹配，避免响应其他安装任务）
+    const off = onInstallDone((r) => {
+      if (r.versionId !== target.id) return
+      off()
+      if (!r.ok) {
+        toast('版本安装失败，MOD 未能自动装入，可重新拖入', 'error')
+        return
+      }
+      void autoInstallMods(filePaths, r.installedId, target.id, loader)
+    })
+    try {
+      await installVersion(target.id, { loader, loaderVersion, fabricApi })
+    } catch (e) {
+      off()
+      throw e
+    }
   } catch (e) {
     toast('自动下载失败：' + errText(e), 'error')
   } finally {
     autoState.busy = false
+  }
+}
+
+/** 版本下载完成后自动装入 MOD：installedId 优先，缺失时按 MC 版本 + 加载器兜底定位实例 */
+async function autoInstallMods(
+  filePaths: string[],
+  installedId: string | undefined,
+  mcId: string,
+  loader: LoaderName
+) {
+  try {
+    await refreshInstalled()
+    const vid =
+      (installedId && store.installed.some((v) => v.id === installedId) ? installedId : '') ||
+      store.installed.find((v) => v.mcVersion === mcId && v.loader === loader)?.id ||
+      ''
+    if (!vid) {
+      toast('未找到装好的游戏版本，请重新拖入 MOD', 'error')
+      return
+    }
+    const results = await installMods(filePaths, vid)
+    const okCount = results.filter((r) => r.ok).length
+    const v = store.installed.find((x) => x.id === vid)
+    if (okCount > 0) {
+      toast(
+        `已自动装入 ${okCount} 个 MOD 到 ${v ? displayVersionName(v) : vid}，可直接启动`,
+        'success'
+      )
+      store.fsRefreshTick++
+    } else {
+      toast('MOD 自动装入失败，请重新拖入 MOD', 'error')
+    }
+  } catch (e) {
+    toast('MOD 自动装入失败，请重新拖入：' + errText(e), 'error')
   }
 }
 

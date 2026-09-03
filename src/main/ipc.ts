@@ -106,7 +106,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         } catch (e) {
           console.error('[KAMUCL] 默认隔离设置失败:', e)
         }
-        send(IPC_EVENT.installDone, { versionId, ok: true })
+        send(IPC_EVENT.installDone, { versionId, installedId, ok: true })
       })
       .catch((err) => {
         const text = errText(err)
