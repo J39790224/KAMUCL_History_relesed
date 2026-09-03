@@ -19,8 +19,6 @@ import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import AccountsView from './views/AccountsView.vue'
 
-const APP_VERSION = __APP_VERSION__
-
 const viewMap: Record<ViewName, Component> = {
   home: HomeView,
   game: GameView,
@@ -525,15 +523,6 @@ onUnmounted(() => {
           </template>
         </template>
       </nav>
-
-      <!-- 底部版本 -->
-      <div class="side-foot">
-        <span class="status-dot"></span>
-        <div class="side-foot-text">
-          <span class="side-foot-label">启动器版本</span>
-          <span class="side-foot-ver">{{ APP_VERSION }}</span>
-        </div>
-      </div>
     </aside>
 
     <!-- ============ 右侧（顶栏 + 内容） ============ -->
@@ -884,37 +873,6 @@ onUnmounted(() => {
 .nav-sub-item .nav-icon :deep(svg) {
   width: 16px;
   height: 16px;
-}
-
-.side-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
-  flex-shrink: 0;
-}
-.side-foot-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.side-foot-label {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.side-foot-ver {
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ---------------- 右侧区域 ---------------- */

@@ -563,7 +563,7 @@ async function onToggleAccountType() {
         <div class="sys-row">
           <span class="sys-key">启动器版本</span>
           <span class="sys-val">
-            {__APP_VERSION__}
+            {{ __APP_VERSION__ }}
             <svg class="sys-icon ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           </span>
         </div>
@@ -708,15 +708,18 @@ async function onToggleAccountType() {
   opacity: 0.9;
 }
 .banner-name {
-  font-size: 34px;
   font-weight: 800;
   color: var(--bn-text);
   letter-spacing: 0.5px;
   line-height: 1.15;
   max-width: 70%;
+  /* 超长用户名完整显示：允许断行（最多两行），字号随长度自适应收缩，不丢失信息 */
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: clamp(24px, 5vw, 34px);
 }
 .banner-sub {
   font-size: 13px;
@@ -969,8 +972,13 @@ async function onToggleAccountType() {
 }
 .recent-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 14px;
+  /* 严格限制在主列区域内，任何情况下不侵入右侧栏 */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 .recent-card {
   position: relative;
@@ -996,9 +1004,13 @@ async function onToggleAccountType() {
   font-size: 14.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  /* 长实例名最多两行，完整可读且绝不撑破卡片 */
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
 }
 .recent-loader {
   font-size: 12px;
