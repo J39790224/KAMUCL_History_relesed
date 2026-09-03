@@ -70,6 +70,8 @@ export const store = reactive({
   currentView: 'home' as ViewName,
   /** 顶栏搜索关键字（游戏页版本列表联动过滤） */
   searchKeyword: '',
+  /** 资源管理（模组/资源包/光影包）当前选中的版本 id；空 = 跟随第一个已装版本 */
+  resourceVersionId: '',
   /** 当前下载/安装进度（无任务时为 null） */
   progress: null as ProgressEvent | null,
   /** 正在后台下载/安装的版本 id 集合（installDone 事件到达后移除） */

@@ -200,11 +200,13 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 文件/目录 ----------------
   const safeDir = (rel: string): string => {
-    // 允许 gameDir 下最多两级子目录（如 versions/<id>），防目录穿越
+    // 允许 gameDir 下单级子目录（mods 等）或 versions/<id>/<sub> 三级（版本实例目录），防目录穿越
     const parts = String(rel ?? '')
       .split(/[\\/]+/)
       .filter((s) => s && s !== '.')
-    if (parts.some((s) => s === '..') || parts.length > 2) throw new Error('非法目录')
+    if (parts.some((s) => s === '..')) throw new Error('非法目录')
+    const isVersionPath = parts[0] === 'versions'
+    if (parts.length > (isVersionPath ? 3 : 2)) throw new Error('非法目录')
     const base = settings.getSettings().gameDir
     const dir = parts.length ? path.join(base, ...parts) : base
     if (!path.resolve(dir).startsWith(path.resolve(base))) throw new Error('非法目录')

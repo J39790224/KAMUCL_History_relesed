@@ -67,21 +67,6 @@ const navItems: Array<{ key: ViewName; label: string; icon: string }> = [
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="5.5"/><path d="M7.5 10.8v3.4M5.8 12.5h3.4"/><circle cx="15.6" cy="11.9" r="0.6" fill="currentColor" stroke="none"/><circle cx="18" cy="13.6" r="0.6" fill="currentColor" stroke="none"/></svg>'
   },
   {
-    key: 'mods',
-    label: '模组',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>'
-  },
-  {
-    key: 'packs',
-    label: '资源包',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>'
-  },
-  {
-    key: 'shaders',
-    label: '光影包',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
-  },
-  {
     key: 'skins',
     label: '皮肤',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 4-6 3 2 5 3-1v9h8v-9l3 1 2-5-6-3a3 3 0 0 1-6 0Z"/></svg>'
@@ -99,9 +84,34 @@ const navItems: Array<{ key: ViewName; label: string; icon: string }> = [
   {
     key: 'settings',
     label: '设置',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>'
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06-.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06-.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>'
   }
 ]
+
+/** 资源管理子级菜单（模组/资源包/光影包），按游戏版本管理对应目录 */
+const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = [
+  {
+    key: 'mods',
+    label: '模组',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>'
+  },
+  {
+    key: 'packs',
+    label: '资源包',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>'
+  },
+  {
+    key: 'shaders',
+    label: '光影包',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+  }
+]
+
+/** 资源管理组是否展开（子级菜单显隐；当前在其中任一子页时强制展开高亮） */
+const resourceExpanded = ref(true)
+const inResourceGroup = computed(() =>
+  ['mods', 'packs', 'shaders'].includes(store.currentView)
+)
 
 const win = (action: 'minimize' | 'maximize' | 'close') => {
   window.kamucl.send(`window:${action}`)
@@ -471,16 +481,49 @@ onUnmounted(() => {
 
       <!-- 导航 -->
       <nav class="nav">
-        <button
-          v-for="item in navItems"
-          :key="item.key"
-          class="nav-item"
-          :class="{ active: store.currentView === item.key }"
-          @click="store.currentView = item.key"
-        >
-          <span class="nav-icon" v-html="item.icon"></span>
-          <span class="nav-label">{{ item.label }}</span>
-        </button>
+        <template v-for="item in navItems" :key="item.key">
+          <button
+            class="nav-item"
+            :class="{ active: store.currentView === item.key }"
+            @click="store.currentView = item.key"
+          >
+            <span class="nav-icon" v-html="item.icon"></span>
+            <span class="nav-label">{{ item.label }}</span>
+          </button>
+
+          <!-- 资源管理子级菜单（插在「游戏」之后） -->
+          <template v-if="item.key === 'game'">
+            <button
+              class="nav-item nav-parent"
+              :class="{ active: inResourceGroup }"
+              @click="resourceExpanded = !resourceExpanded"
+            >
+              <span class="nav-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 11h18"/></svg>
+              </span>
+              <span class="nav-label">资源管理</span>
+              <svg
+                class="nav-caret"
+                :class="{ open: resourceExpanded || inResourceGroup }"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              >
+                <path d="m9 6 6 6-6 6" />
+              </svg>
+            </button>
+            <div v-show="resourceExpanded || inResourceGroup" class="nav-sub">
+              <button
+                v-for="sub in resourceSubItems"
+                :key="sub.key"
+                class="nav-item nav-sub-item"
+                :class="{ active: store.currentView === sub.key }"
+                @click="store.currentView = sub.key"
+              >
+                <span class="nav-icon" v-html="sub.icon"></span>
+                <span class="nav-label">{{ sub.label }}</span>
+              </button>
+            </div>
+          </template>
+        </template>
       </nav>
 
       <!-- 底部版本 -->
@@ -793,6 +836,54 @@ onUnmounted(() => {
 }
 .nav-item.active .nav-label {
   font-weight: 600;
+}
+
+/* 资源管理子级菜单 */
+.nav-parent .nav-caret {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+  opacity: 0.7;
+}
+.nav-parent .nav-caret.open {
+  transform: rotate(90deg);
+}
+.nav-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px;
+}
+.nav-sub-item {
+  height: 38px;
+  padding-left: 30px;
+  font-size: 13.5px;
+  position: relative;
+}
+.nav-sub-item::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  transform: translateY(-50%);
+}
+.nav-sub-item.active::before {
+  opacity: 1;
+}
+.nav-sub-item .nav-icon {
+  width: 17px;
+  height: 17px;
+}
+.nav-sub-item .nav-icon :deep(svg) {
+  width: 16px;
+  height: 16px;
 }
 
 .side-foot {

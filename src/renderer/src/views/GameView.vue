@@ -212,6 +212,27 @@ async function openVersionFolder(v: InstalledVersion) {
 // ---------------- 版本隔离开关 ----------------
 const isoBusy = ref<string | null>(null)
 
+// ---------------- 管理快捷菜单 ----------------
+const manageMenu = reactive({ id: '', top: 0, left: 0 })
+
+function openManageMenu(e: MouseEvent, id: string) {
+  if (manageMenu.id === id) {
+    manageMenu.id = ''
+    return
+  }
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  manageMenu.top = r.bottom + 6
+  manageMenu.left = Math.max(8, r.right - 140)
+  manageMenu.id = id
+}
+
+/** 跳转资源管理对应子页，并把上下文版本切到该版本 */
+function goManage(view: 'mods' | 'packs' | 'shaders') {
+  store.resourceVersionId = manageMenu.id
+  manageMenu.id = ''
+  store.currentView = view
+}
+
 async function onToggleIsolation(v: InstalledVersion) {
   if (isoBusy.value) return
   isoBusy.value = v.id
@@ -363,6 +384,16 @@ const installedLoaderText = (v: InstalledVersion) =>
             </svg>
           </button>
           <button
+            class="icon-btn installed-folder"
+            :title="`管理 ${v.id} 的模组/资源包/光影包`"
+            @click="openManageMenu($event, v.id)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 21v-7a8 8 0 0 1 16 0v7" />
+              <path d="M12 3v3M5.6 5.6l2.2 2.2M18.4 5.6l-2.2 2.2M3 13h3M18 13h3" />
+            </svg>
+          </button>
+          <button
             class="btn btn-danger btn-sm installed-remove"
             @click="removeModal.open = true; removeModal.target = v"
           >
@@ -371,6 +402,29 @@ const installedLoaderText = (v: InstalledVersion) =>
         </div>
       </div>
     </div>
+
+    <!-- 管理快捷菜单（模组/资源包/光影包） -->
+    <Teleport to="body">
+      <div v-if="manageMenu.id" class="menu-overlay" @click="manageMenu.id = ''"></div>
+      <div
+        v-if="manageMenu.id"
+        class="float-menu"
+        :style="{ top: manageMenu.top + 'px', left: manageMenu.left + 'px' }"
+      >
+        <button class="menu-item" @click="goManage('mods')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>
+          模组
+        </button>
+        <button class="menu-item" @click="goManage('packs')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          资源包
+        </button>
+        <button class="menu-item" @click="goManage('shaders')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          光影包
+        </button>
+      </div>
+    </Teleport>
 
     <!-- 删除版本二次确认 -->
     <ConfirmModal
