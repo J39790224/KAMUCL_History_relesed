@@ -70,10 +70,13 @@ const validMods = computed(() => mods.value.filter((m) => !m.error))
 /** 解析失败（非 MOD/损坏） */
 const failedMods = computed(() => mods.value.filter((m) => !!m.error))
 
-/** 某 MOD 与某已装版本是否匹配（loader 一致 + MC 版本在范围内） */
+/** 某 MOD 与某已装版本是否匹配（loader 一致 + MC 版本在范围内 + 加载器版本满足要求） */
 function modMatchesVersion(m: ModInfo, v: InstalledVersion): boolean {
   if (!m.loader) return false
-  return v.loader === m.loader && matchRange(m.mcRange, v.mcVersion)
+  if (v.loader !== m.loader || !matchRange(m.mcRange, v.mcVersion)) return false
+  // 加载器版本维度：MOD 声明了 loader 版本范围时需本地实例满足
+  if (m.loaderRange && v.loaderVersion && !matchRange(m.loaderRange, v.loaderVersion)) return false
+  return true
 }
 
 /** 每个 MOD 匹配到的版本 id 集合 */
@@ -203,10 +206,21 @@ async function onAutoDownload() {
       validMods.value.filter((m) => matchRange(m.mcRange, v.id)).length > 0
     )
     if (!target) throw new Error('没有找到兼容的正式版 MC')
+    // 加载器版本维度：取该加载器适配该 MC 的最新版本，且满足 MOD 声明的 loader 版本范围
+    const { listLoaders } = await import('../api')
+    const loaderVersions = await listLoaders(loader, target.id)
+    if (!loaderVersions.length) throw new Error(`${LOADER_TAG[loader]} 没有适配 ${target.id} 的版本`)
+    const loaderVersion =
+      loaderVersions.find((lv) =>
+        validMods.value.every((m) => !m.loaderRange || matchRange(m.loaderRange, lv))
+      ) ?? loaderVersions[0]
     emit('close')
-    toast(`开始自动下载 ${target.id} + ${LOADER_TAG[loader]}，完成后请重新拖入 MOD 装入`, 'info')
+    toast(
+      `开始自动下载 ${target.id} + ${LOADER_TAG[loader]} ${loaderVersion}，完成后请重新拖入 MOD 装入`,
+      'info'
+    )
     store.installing.add(target.id)
-    await installVersion(target.id, { loader })
+    await installVersion(target.id, { loader, loaderVersion })
   } catch (e) {
     toast('自动下载失败：' + errText(e), 'error')
   } finally {
@@ -249,6 +263,7 @@ const modCompatOf = (m: ModInfo): string[] => matchMap.value[m.filePath] ?? []
                   <template v-if="m.error">⚠ {{ m.error }}</template>
                   <template v-else>
                     <span v-if="m.mcRange">MC {{ m.mcRange }}</span>
+                    <span v-if="m.loaderRange"> · Loader {{ m.loaderRange }}</span>
                     <span v-if="m.dependencies.length"> · 前置：{{ m.dependencies.join(', ') }}</span>
                     <span v-if="!m.error && branch !== 'none'" :class="modCompatOf(m).length ? 'compat-ok' : 'compat-bad'">
                       {{ modCompatOf(m).length ? ` · 匹配 ${modCompatOf(m).length} 个本地版本` : ' · 无匹配版本' }}

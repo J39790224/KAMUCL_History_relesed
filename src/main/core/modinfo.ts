@@ -207,6 +207,7 @@ export function parseModFile(filePath: string): ModInfo {
       info.mcRange = Array.isArray(dep.minecraft)
         ? (dep.minecraft as string[]).join(', ')
         : String(dep.minecraft ?? '')
+      info.loaderRange = String(dep.fabricloader ?? '')
       info.dependencies = Object.keys(dep).filter(
         (k) => !['minecraft', 'fabricloader', 'fabric', 'java'].includes(k)
       )
@@ -240,6 +241,8 @@ export function parseModFile(filePath: string): ModInfo {
       if (Array.isArray(deps)) {
         const mc = deps.find((d) => d.id === 'minecraft')
         info.mcRange = mc?.versions ?? ''
+        const qld = deps.find((d) => d.id === 'quilt_loader')
+        info.loaderRange = qld?.versions ?? ''
         info.dependencies = deps
           .map((d) => d.id ?? '')
           .filter((id) => id && !['minecraft', 'quilt_loader', 'quilted_fabric_api', 'java'].includes(id))
@@ -265,6 +268,8 @@ export function parseModFile(filePath: string): ModInfo {
       info.version = (m.version ?? '').replace(/^"|"$/g, '')
       const mcDep = deps.find((d) => d.modId === 'minecraft')
       info.mcRange = mcDep?.versionRange ?? ''
+      const loaderDep = deps.find((d) => d.modId === 'neoforge')
+      info.loaderRange = loaderDep?.versionRange ?? ''
       info.dependencies = deps
         .filter((d) => d.modId && !['minecraft', 'neoforge', 'java'].includes(d.modId) && d.mandatory !== false)
         .map((d) => d.modId as string)
@@ -287,6 +292,8 @@ export function parseModFile(filePath: string): ModInfo {
       info.version = (m.version ?? '').replace(/^"|"$/g, '')
       const mcDep = deps.find((d) => d.modId === 'minecraft')
       info.mcRange = mcDep?.versionRange ?? ''
+      const loaderDep = deps.find((d) => d.modId === 'forge')
+      info.loaderRange = loaderDep?.versionRange ?? ''
       info.dependencies = deps
         .filter((d) => d.modId && !['minecraft', 'forge', 'java'].includes(d.modId) && d.mandatory !== false)
         .map((d) => d.modId as string)
@@ -354,19 +361,19 @@ export function expandJarPaths(paths: string[]): { files: string[]; skipped: str
   return { files, skipped }
 }
 
-// ---------------- ÖØ¸´ MOD ²éÖØ ----------------
+// ---------------- ï¿½Ø¸ï¿½ MOD ï¿½ï¿½ï¿½ï¿½ ----------------
 
-/** °æ±¾ mods Ä¿Â¼£¨×ñÑ­°æ±¾¸ôÀë£© */
+/** ï¿½æ±¾ mods Ä¿Â¼ï¿½ï¿½ï¿½ï¿½Ñ­ï¿½æ±¾ï¿½ï¿½ï¿½ë£© */
 function modsDirOf(versionId: string): string {
   try {
     if (readVersionJson(versionId)._gameDir === true) return path.join(versionDir(versionId), 'mods')
   } catch {
-    /* °´¹²ÏíÄ¿Â¼ */
+    /* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿Â¼ */
   }
   return path.join(gameDir(), 'mods')
 }
 
-/** MOD °æ±¾ºÅ±È½Ï£¨Êý×Ö¶Î±È½Ï£¬ºöÂÔºó×º£© */
+/** MOD ï¿½æ±¾ï¿½Å±È½Ï£ï¿½ï¿½ï¿½ï¿½Ö¶Î±È½Ï£ï¿½ï¿½ï¿½ï¿½Ôºï¿½×ºï¿½ï¿½ */
 function compareModVersion(a: string, b: string): number {
   const norm = (s: string): number[] =>
     s
@@ -382,7 +389,7 @@ function compareModVersion(a: string, b: string): number {
   return 0
 }
 
-/** µ¥°æ±¾²éÖØ£ºÍ¬ mod id ¶àÎÄ¼þ¹²´æ£¬°´°æ±¾ºÅÅÅÐò±ê³ö×îÐÂ°æ */
+/** ï¿½ï¿½ï¿½æ±¾ï¿½ï¿½ï¿½Ø£ï¿½Í¬ mod id ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½æ£¬ï¿½ï¿½ï¿½æ±¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â°ï¿½ */
 export function findDuplicates(versionId: string): ModDuplicateGroup[] {
   const dir = modsDirOf(versionId)
   let jars: string[] = []
@@ -414,7 +421,7 @@ export function findDuplicates(versionId: string): ModDuplicateGroup[] {
   return out.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** ¿ç°æ±¾²éÖØ£ºÍ¬Ò» mod id Í¬Ê±´æÔÚÓÚ¶à¸öËùÑ¡°æ±¾ */
+/** ï¿½ï¿½æ±¾ï¿½ï¿½ï¿½Ø£ï¿½Í¬Ò» mod id Í¬Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Ú¶ï¿½ï¿½ï¿½ï¿½Ñ¡ï¿½æ±¾ */
 export function findCrossDuplicates(versionIds: string[]): ModCrossDuplicate[] {
   const map = new Map<string, ModCrossDuplicate>()
   for (const vid of versionIds) {

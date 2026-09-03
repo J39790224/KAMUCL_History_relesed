@@ -378,6 +378,8 @@ export interface ModInfo {
   loader: LoaderName | null
   /** 支持的 MC 版本范围原文（如 [1.20,) / 1.20.1） */
   mcRange: string
+  /** 要求的加载器版本范围原文（如 >=0.15.0 / [65.0,)） */
+  loaderRange?: string
   /** 前置依赖 mod id 列表 */
   dependencies: string[]
   /** 图标 dataURL（jar 内嵌图标） */
