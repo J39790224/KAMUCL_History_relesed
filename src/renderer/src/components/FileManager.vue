@@ -4,7 +4,7 @@
  * 通过 IPC fs:list / fs:remove / app:openDir 管理游戏目录下的子目录。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, listFs, openDir, removeFs } from '../api'
+import { copyText, errText, listFs, openDir, removeFs } from '../api'
 import { refreshInstalled, store, toast } from '../store'
 import ConfirmModal from './ConfirmModal.vue'
 import type { FsEntry } from '@shared/types'
@@ -69,6 +69,22 @@ onMounted(async () => {
 watch(effectiveRel, () => void load())
 watch(() => store.fsRefreshTick, () => void load())
 
+// ---------------- 路径显示（超长中间省略 + 点击复制） ----------------
+/** 中间省略的路径：versions/neo…2.0.75/mods */
+const displayPath = computed(() => {
+  const p = effectiveRel.value
+  const MAX = 34
+  if (p.length <= MAX) return p
+  const head = p.slice(0, 16)
+  const tail = p.slice(-14)
+  return `${head}…${tail}`
+})
+
+async function copyPath() {
+  const ok = await copyText(`/${effectiveRel.value}`)
+  toast(ok ? '已复制完整路径' : '复制失败', ok ? 'success' : 'error')
+}
+
 // ---------------- 顶栏搜索联动（过滤文件名） ----------------
 const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
 const filtered = computed(() =>
@@ -127,9 +143,15 @@ const fmtDate = (ts: number) => {
   <div class="page">
     <!-- 标题行 -->
     <div class="fm-head">
-      <div class="page-head">
+      <div class="page-head fm-head-left">
         <h1 class="page-title">{{ props.title }}</h1>
-        <p class="page-sub">管理游戏目录 / {{ effectiveRel }} 下的文件</p>
+        <p
+          class="page-sub fm-path"
+          :title="`管理游戏目录 / ${effectiveRel} 下的文件（点击复制完整路径）`"
+          @click="copyPath"
+        >
+          管理游戏目录 / {{ displayPath }} 下的文件
+        </p>
       </div>
       <div class="fm-actions">
         <select
@@ -227,13 +249,28 @@ const fmtDate = (ts: number) => {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* 头部永不换行，按钮组位置固定 */
+}
+.fm-head-left {
+  flex: 1;
+  min-width: 0; /* 允许文本收缩，把空间让给按钮组 */
+}
+.fm-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.fm-path:hover {
+  color: var(--accent-2);
 }
 .fm-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;
+  flex-shrink: 0; /* 按钮组固定尺寸，永不因文本长度移位 */
 }
 .fm-ver-select {
   max-width: 240px;
