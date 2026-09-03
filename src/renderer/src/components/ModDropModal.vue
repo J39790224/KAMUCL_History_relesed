@@ -26,8 +26,10 @@ function cmpVer(a: string, b: string): number {
   return 0
 }
 function matchOne(seg: string, mc: string): boolean {
-  const s = seg.trim()
+  let s = seg.trim()
   if (!s || s === '*') return true
+  // 单元素区间（[26.2] / (1.20.1)）等价精确匹配：剥掉外层括号
+  if (/^[\[(][^,]+[\])]$/.test(s)) s = s.slice(1, -1)
   const range = /^([\[(])([^,]*),([^\])]*)[\])]$/.exec(s)
   if (range) {
     const [, , minS, maxS] = range
@@ -214,13 +216,24 @@ async function onAutoDownload() {
       loaderVersions.find((lv) =>
         validMods.value.every((m) => !m.loaderRange || matchRange(m.loaderRange, lv))
       ) ?? loaderVersions[0]
+    // Fabric 模组自动携带最新 Fabric API（绝大多数 Fabric MOD 需要）
+    let fabricApi: string | undefined
+    if (loader === 'fabric') {
+      try {
+        const { listFabricApi } = await import('../api')
+        const apiList = await listFabricApi(target.id)
+        fabricApi = apiList[0]?.version
+      } catch {
+        /* API 获取失败不阻断，安装时仍可手动补装 */
+      }
+    }
     emit('close')
     toast(
-      `开始自动下载 ${target.id} + ${LOADER_TAG[loader]} ${loaderVersion}，完成后请重新拖入 MOD 装入`,
+      `开始自动下载 ${target.id} + ${LOADER_TAG[loader]} ${loaderVersion}${fabricApi ? ' + Fabric API' : ''}，完成后请重新拖入 MOD 装入`,
       'info'
     )
     store.installing.add(target.id)
-    await installVersion(target.id, { loader, loaderVersion })
+    await installVersion(target.id, { loader, loaderVersion, fabricApi })
   } catch (e) {
     toast('自动下载失败：' + errText(e), 'error')
   } finally {

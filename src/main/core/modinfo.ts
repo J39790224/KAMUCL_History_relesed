@@ -90,8 +90,10 @@ export function compareMcVersion(a: string, b: string): number {
 
 /** 单段范围匹配：[a,b) / (a,b] / [a,b] / (a,b) / >=a / >a / <=a / <a / ~a / a / * */
 function matchOne(seg: string, mc: string): boolean {
-  const s = seg.trim()
+  let s = seg.trim()
   if (!s || s === '*') return true
+  // 单元素区间（[26.2] / (1.20.1)）等价精确匹配：剥掉外层括号
+  if (/^[\[(][^,]+[\])]$/.test(s)) s = s.slice(1, -1)
   const range = /^([\[(])([^,]*),([^\])]*)[\])]$/.exec(s)
   if (range) {
     const [, open, minS, maxS] = range
