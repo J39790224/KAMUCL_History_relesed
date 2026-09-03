@@ -88,7 +88,13 @@ const percent = computed(() =>
 
 const launchText = computed(() => {
   if (running.value) return '结束游戏'
-  if (launching.value) return store.progress?.text || '正在启动…'
+  if (launching.value) {
+    const p = store.progress
+    if (!p) return '正在启动…'
+    let t = p.text
+    if (p.source) t += ` · ${p.source}`
+    return t
+  }
   return '启动游戏'
 })
 

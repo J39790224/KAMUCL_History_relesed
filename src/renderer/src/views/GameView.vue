@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
+import { cleanupPartialInstall, errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
@@ -62,6 +62,23 @@ const typeTagClass = (t: RemoteVersion['type']) =>
   t === 'release' ? 'tag-gold' : t === 'snapshot' ? 'tag-cyan' : ''
 
 const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
+
+/** 阶段计时：阶段切换时重置，用于剩余时间估算 */
+const stageStart = ref(0)
+watch(
+  () => store.progress?.stage,
+  () => {
+    stageStart.value = Date.now()
+  }
+)
+/** 剩余时间估算（基于阶段内进度速率；>3s 才显示避免抖动） */
+const etaText = computed(() => {
+  const p = store.progress
+  if (!p || !stageStart.value || p.progress <= 0.02 || p.progress >= 1) return ''
+  const elapsed = (Date.now() - stageStart.value) / 1000
+  const eta = (elapsed * (1 - p.progress)) / p.progress
+  return eta > 3 ? `约剩 ${Math.round(eta)}s` : ''
+})
 
 const filtered = computed(() =>
   manifest.value.filter((v) => {
@@ -239,6 +256,17 @@ async function onConfirmRemove() {
     toast('删除失败：' + errText(e), 'error')
   } finally {
     removeModal.busy = false
+  }
+}
+
+/** 清理安装失败的残留目录 */
+async function onCleanup(id: string) {
+  try {
+    await cleanupPartialInstall(id)
+    await refreshInstalled()
+    toast('残留已清理', 'success')
+  } catch (e) {
+    toast('清理失败：' + errText(e), 'error')
   }
 }
 
@@ -474,6 +502,8 @@ async function onToggleIsolation(v: InstalledVersion) {
               <span class="muted row-progress-text">
                 {{ Math.round(progressOverall(store.progress) * 100) }}%
                 {{ store.progress.speed ? '· ' + formatSpeed(store.progress.speed) : '' }}
+                {{ etaText ? '· ' + etaText : '' }}
+                {{ store.progress.source ? '· ' + store.progress.source : '' }}
               </span>
             </div>
             <span v-if="isInstalled(v)" class="tag tag-success">已安装</span>
@@ -549,6 +579,16 @@ async function onToggleIsolation(v: InstalledVersion) {
               @click="removeModal.open = true; removeModal.target = v"
             >
               删除残留
+            </button>
+          </template>
+          <!-- 安装事务失败：清理残留 -->
+          <template v-else-if="v.failed">
+            <span class="tag tag-danger">安装失败</span>
+            <button
+              class="btn btn-danger btn-sm installed-remove"
+              @click="onCleanup(v.id)"
+            >
+              清理残留
             </button>
           </template>
           <template v-else>

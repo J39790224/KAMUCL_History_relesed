@@ -29,6 +29,11 @@ export function nativesDir(id: string): string {
   return path.join(versionDir(id), 'natives')
 }
 
+/** 安装事务标记文件路径（存在 = 安装未完成/失败） */
+export function installMarkPath(id: string): string {
+  return path.join(versionDir(id), '.installing')
+}
+
 export function librariesDir(): string {
   return path.join(gameDir(), 'libraries')
 }

@@ -101,12 +101,26 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       .catch((err) => {
         const text = errText(err)
         emit({ stage: 'error', progress: 0, text: `安装失败: ${text}` })
+        // 事务清理：删除安装失败产生的文件（.installing 标记在则目录是失败产物）
+        try {
+          versions.cleanupPartialInstall(versionId)
+          // 加载器实例目录（若已生成）一并清理
+          const installed = versions.listInstalled()
+          for (const v of installed) {
+            if (v.failed) versions.cleanupPartialInstall(v.id)
+          }
+        } catch {
+          /* 清理失败不阻断错误上报 */
+        }
         send(IPC_EVENT.installDone, { versionId, ok: false, error: text })
       })
   })
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
   ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) =>
     versions.renameVersion(String(id ?? ''), String(newName ?? ''))
+  )
+  ipcMain.handle(IPC.versionsCleanup, (_e, id: string) =>
+    versions.cleanupPartialInstall(String(id ?? ''))
   )
   ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
     versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))

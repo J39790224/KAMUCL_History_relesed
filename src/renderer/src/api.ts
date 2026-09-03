@@ -85,6 +85,8 @@ export const renameVersion = (id: string, newName: string) =>
   invoke<void>(IPC.versionsRename, id, newName)
 export const setVersionJava = (id: string, javaPath: string) =>
   invoke<void>(IPC.versionsSetJava, id, javaPath)
+export const cleanupPartialInstall = (id: string) =>
+  invoke<boolean>(IPC.versionsCleanup, id)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
 export const listLoaders = (loader: LoaderName, mc: string) =>

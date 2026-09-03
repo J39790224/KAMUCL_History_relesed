@@ -46,6 +46,8 @@ export interface InstalledVersion {
   isolated?: boolean
   /** 下载未完成的残缺版本（json 在但客户端 jar 缺失/有 .part 残留），不算正常已安装 */
   incomplete?: boolean
+  /** 安装事务失败的标记（.installing 存在），提供清理残留入口 */
+  failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
 }
@@ -191,6 +193,8 @@ export interface ProgressEvent {
   text: string
   /** 字节/秒，可空 */
   speed?: number
+  /** 当前下载源（BMCLAPI 镜像 / 官方源） */
+  source?: string
 }
 
 export interface LaunchState {
@@ -222,6 +226,7 @@ export const IPC = {
   versionsInstall: 'versions:install', // (versionId: string, opts?: InstallOptions) => void
   versionsRemove: 'versions:remove', // (versionId: string) => void
   versionsRename: 'versions:rename', // (id: string, newName: string) => void  重命名实例（目录+json id 同步改）
+  versionsCleanup: 'versions:cleanup', // (id: string) => boolean  清理安装失败残留目录
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
