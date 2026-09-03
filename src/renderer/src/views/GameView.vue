@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { cleanupPartialInstall, errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
-import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import IconPickerModal from '../components/IconPickerModal.vue'
 import type {
   FabricApiVersion,
   InstallOptions,
@@ -347,6 +348,16 @@ function goManage(view: 'mods' | 'packs' | 'shaders') {
 // ---------------- 实例重命名 ----------------
 const renameModal = reactive({ open: false, id: '', name: '', error: '', busy: false })
 
+// ---------------- 实例图标 ----------------
+const iconModal = reactive({ open: false, id: '', current: '' })
+
+function openIconPicker(id: string) {
+  iconModal.id = id
+  iconModal.current = store.installed.find((v) => v.id === id)?.icon ?? ''
+  iconModal.open = true
+  manageMenu.id = ''
+}
+
 // ---------------- 指定 Java ----------------
 const javaModal = reactive({
   open: false,
@@ -590,6 +601,10 @@ async function onToggleIsolation(v: InstalledVersion) {
             <button class="fav-btn on" title="取消收藏" @click="toggleFavorite(v.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
             </button>
+            <button class="inst-icon" title="更换实例图标" @click="openIconPicker(v.id)">
+              <img v-if="versionIconUrl(v)" :src="versionIconUrl(v)" alt="" />
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>
+            </button>
             <div class="inst-names">
               <span class="version-id editable" :title="`点击改名（目录名：${v.id}）`" @click="openRenameFor(v.id)">{{ displayVersionName(v) }}</span>
             </div>
@@ -605,6 +620,10 @@ async function onToggleIsolation(v: InstalledVersion) {
             @click="toggleFavorite(v.id)"
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+          </button>
+          <button class="inst-icon" title="更换实例图标" @click="openIconPicker(v.id)">
+            <img v-if="versionIconUrl(v)" :src="versionIconUrl(v)" alt="" />
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>
           </button>
           <div class="inst-names">
             <span class="version-id editable" :title="`点击改名（目录名：${v.id}）`" @click="openRenameFor(v.id)">{{ displayVersionName(v) }}</span>
@@ -716,6 +735,10 @@ async function onToggleIsolation(v: InstalledVersion) {
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
           重命名
         </button>
+        <button class="menu-item" @click="openIconPicker(manageMenu.id)">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+          更换图标
+        </button>
         <button class="menu-item" @click="openJavaModal">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a3 3 0 0 1 0 6h-1M3 8h15v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M7 12h6M7 15h4"/></svg>
           指定 Java
@@ -770,6 +793,14 @@ async function onToggleIsolation(v: InstalledVersion) {
         </div>
       </div>
     </Teleport>
+
+    <!-- 实例图标选择弹窗 -->
+    <IconPickerModal
+      :open="iconModal.open"
+      :version-id="iconModal.id"
+      :current-icon="iconModal.current"
+      @close="iconModal.open = false"
+    />
 
     <!-- 删除版本二次确认 -->
     <ConfirmModal
@@ -985,6 +1016,32 @@ async function onToggleIsolation(v: InstalledVersion) {
 .version-id.editable:hover {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+/* 实例图标按钮 */
+.inst-icon {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+.inst-icon:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+.inst-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 .version-date {
   font-size: 12px;

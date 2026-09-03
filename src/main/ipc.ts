@@ -3,6 +3,7 @@
  * 事件统一通过 getWin()?.webContents.send(IPC_EVENT.xxx, payload) 推送
  */
 import { ipcMain, dialog, shell, type BrowserWindow } from 'electron'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { IPC, IPC_EVENT } from '../shared/types'
@@ -28,7 +29,7 @@ import * as launch from './core/launch'
 import * as servers from './core/servers'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
-import { folderOfVersion, versionDir } from './core/paths'
+import { folderOfVersion, instanceIconsDir, versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -187,6 +188,31 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
     versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
   )
+  ipcMain.handle(IPC.versionsSetIcon, (_e, id: string, icon: string) =>
+    versions.setVersionIcon(String(id ?? ''), String(icon ?? ''))
+  )
+  // 上传自定义图标：弹窗选图 → 校验类型/大小 → 复制进 .kamucl/icons 并写入版本 json
+  ipcMain.handle(IPC.versionsUploadIcon, async (_e, id: string) => {
+    const vid = String(id ?? '')
+    const win = getWin()
+    const opts = {
+      title: '选择实例图标',
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      properties: ['openFile' as const]
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths[0]) return null
+    const src = r.filePaths[0]
+    const st = fs.statSync(src)
+    if (st.size > 5 * 1024 * 1024) throw new Error('图片过大（最大 5MB）')
+    const ext = path.extname(src).toLowerCase() || '.png'
+    const name = `${crypto.randomUUID()}${ext}`
+    fs.mkdirSync(instanceIconsDir(), { recursive: true })
+    fs.copyFileSync(src, path.join(instanceIconsDir(), name))
+    const icon = `file:${name}`
+    versions.setVersionIcon(vid, icon)
+    return icon
+  })
   ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
     versions.setIsolation(String(versionId ?? ''), isolated === true)
   )

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
-import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshAccounts, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshAccounts, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
@@ -468,8 +468,9 @@ async function onToggleAccountType() {
             >
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
             </button>
-            <!-- 等距草方块图标 -->
-            <svg class="grass-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <!-- 实例图标（未设置时用等距草方块） -->
+            <img v-if="versionIconUrl(v)" class="grass-icon inst-icon-img" :src="versionIconUrl(v)" alt="" />
+            <svg v-else class="grass-icon" viewBox="0 0 48 48" aria-hidden="true">
               <polygon points="24,5 43,14.5 24,24 5,14.5" fill="#79c144" />
               <polygon points="5,14.5 24,24 24,29.5 5,20" fill="#5da236" />
               <polygon points="24,24 43,14.5 43,20 24,29.5" fill="#4e8a2f" />
@@ -1057,6 +1058,10 @@ async function onToggleAccountType() {
   width: 40px;
   height: 40px;
   margin-bottom: 4px;
+}
+.inst-icon-img {
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 /* 卡片右上角收藏星标 */
 .recent-fav {

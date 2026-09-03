@@ -100,6 +100,12 @@ export const setDefaultFolder = (path: string) =>
 export const setActiveFolder = (path: string) => invoke<void>(IPC.foldersSetActive, path)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
+/** 设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认） */
+export const setVersionIcon = (id: string, icon: string) =>
+  invoke<void>(IPC.versionsSetIcon, id, icon)
+/** 上传自定义实例图标，返回新 icon 值（取消 = null） */
+export const uploadVersionIcon = (id: string) =>
+  invoke<string | null>(IPC.versionsUploadIcon, id)
 export const listLoaders = (loader: LoaderName, mc: string) =>
   invoke<string[]>(IPC.loadersList, loader, mc)
 export const listFabricApi = (mc: string) => invoke<FabricApiVersion[]>(IPC.fabricApiList, mc)

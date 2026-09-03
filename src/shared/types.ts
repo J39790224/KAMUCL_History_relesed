@@ -60,6 +60,8 @@ export interface InstalledVersion {
   failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
+  /** 实例图标：'mob:<内置生物头像id>' | 'file:<自定义图标文件名>'（空 = 默认图标） */
+  icon?: string
   /** 该版本所属的游戏文件夹路径 */
   folder: string
 }
@@ -349,6 +351,9 @@ export const IPC = {
   foldersSetActive: 'folders:setActive', // (path: string) => void  切换活动文件夹（gameDir 跟随）
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
+
+  versionsSetIcon: 'versions:setIcon', // (versionId: string, icon: string) => void  设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认）
+  versionsUploadIcon: 'versions:uploadIcon', // (versionId: string) => string | null  弹窗选择图片并落地为自定义图标，返回新 icon 值（取消 = null）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
   fabricApiList: 'loaders:fabricApi', // (mcVersion: string) => FabricApiVersion[]
 

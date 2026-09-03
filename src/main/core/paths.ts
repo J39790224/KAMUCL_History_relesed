@@ -120,3 +120,8 @@ export function baseVersionJsonPath(id: string): string {
 export function baseVersionJarPath(id: string): string {
   return path.join(baseVersionDir(id), `${id}.jar`)
 }
+
+/** 自定义实例图标目录：<默认文件夹>/.kamucl/icons（文件名随机，版本 json 以 file:<名> 引用） */
+export function instanceIconsDir(): string {
+  return path.join(defaultFolderPath(), '.kamucl', 'icons')
+}

@@ -264,6 +264,21 @@ export function displayVersionSub(v: InstalledVersion): string {
   return v.id
 }
 
+/** 实例图标 URL：内置 mob 头像走渲染包静态资源；自定义图标走 file://（空 = 默认图标） */
+export function versionIconUrl(v: InstalledVersion): string {
+  const icon = v.icon
+  if (!icon) return ''
+  if (icon.startsWith('mob:')) return `mobs/${icon.slice(4)}.png`
+  if (icon.startsWith('file:')) {
+    const def =
+      store.settings?.folders.find((f) => f.isDefault)?.path ?? store.settings?.gameDir ?? ''
+    if (!def) return ''
+    const p = `${def}/.kamucl/icons/${icon.slice(5)}`.replace(/\\/g, '/')
+    return 'file:///' + p.replace(/^\/+/, '')
+  }
+  return ''
+}
+
 // ---------------- 进度平滑 ----------------/** 安装/启动任务的阶段顺序（用于把单阶段进度换算为单调不回退的整体进度） */
 const STAGE_ORDER = [
   'version-json',

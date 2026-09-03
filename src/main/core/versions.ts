@@ -21,6 +21,7 @@ import {
   baseVersionJsonPath,
   gameDir,
   installMarkPath,
+  instanceIconsDir,
   libraryPath,
   registerVersionFolder,
   versionDir,
@@ -96,6 +97,8 @@ export interface VersionJson {
   _javaPath?: string
   /** KAMUCL 自定义字段：自定义命名的原版实例记录其真实 MC 版本 id（修复/推断用） */
   _mcVersion?: string
+  /** KAMUCL 自定义字段：实例图标（'mob:<内置id>' / 'file:<自定义文件名>'） */
+  _icon?: string
 }
 
 // ---------------- rules 评估 ----------------
@@ -522,6 +525,7 @@ export function listInstalled(): InstalledVersion[] {
         if (j._modpackName) item.modpackName = j._modpackName
         if (j._modpackVersion) item.modpackVersion = j._modpackVersion
         if (j._javaPath) item.javaPath = j._javaPath
+        if (j._icon) item.icon = j._icon
         if (j._gameDir === true) item.isolated = true
         if (!j.inheritsFrom) {
           const jarOk = fs.existsSync(versionJarPath(name))
@@ -607,7 +611,37 @@ export function renameVersion(id: string, newName: string): void {
   }
 }
 export function removeVersion(id: string): void {
+  // 自定义图标文件随实例删除（内置 mob 头像无文件落地）
+  try {
+    const j = readVersionJson(id)
+    if (j._icon?.startsWith('file:')) {
+      fs.rmSync(path.join(instanceIconsDir(), j._icon.slice(5)), { force: true })
+    }
+  } catch {
+    /* 清理图标失败不阻断删除 */
+  }
   fs.rmSync(versionDir(id), { recursive: true, force: true })
+}
+
+/** 设置实例图标：'mob:<内置id>' / 'file:<文件名>' / '' 恢复默认；更换时清理旧的自定义图标文件 */
+export function setVersionIcon(id: string, icon: string): void {
+  if (icon && !/^mob:[a-z0-9_]{1,32}$/.test(icon) && !/^file:[\w.-]{1,64}$/.test(icon)) {
+    throw new Error('非法的图标标识')
+  }
+  const jp = versionJsonPath(id)
+  const j = readVersionJson(id)
+  const old = j._icon
+  if (icon) j._icon = icon
+  else delete j._icon
+  fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
+  // 旧的自定义图标文件若不再使用则删除
+  if (old?.startsWith('file:') && old !== icon) {
+    try {
+      fs.rmSync(path.join(instanceIconsDir(), old.slice(5)), { force: true })
+    } catch {
+      /* 清理失败不影响设置 */
+    }
+  }
 }
 
 /**
