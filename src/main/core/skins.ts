@@ -90,15 +90,40 @@ function validateSkinPng(filePath: string): Buffer {
  * 主进程下载纹理后随档案返回，前端不再直连 textures.minecraft.net（CORS/网络不稳）。
  * 失败返回 undefined，不阻断主流程。
  */
+/**
+ * 下载纹理图片转 dataURL（主进程侧，规避 renderer 的 CORS/WebGL 跨域限制）。
+ * 重试 2 次；最终失败返回 undefined 并写日志，不阻断主流程。
+ */
 async function fetchDataUrl(url: string): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30000) })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const buf = Buffer.from(await res.arrayBuffer())
+      if (!buf.length) throw new Error('空响应')
+      return `data:image/png;base64,${buf.toString('base64')}`
+    } catch (e) {
+      if (attempt === 2) {
+        console.error(`[KAMUCL] 皮肤纹理下载失败(${url}):`, e instanceof Error ? e.message : e)
+        appendLauncherLog(`皮肤纹理下载失败(${url}): ${e instanceof Error ? e.message : e}`)
+      }
+    }
+  }
+  return undefined
+}
+
+/** 启动器自身诊断日志：gameDir/kamucl-logs/launcher.log */
+function appendLauncherLog(line: string): void {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) })
-    if (!res.ok) return undefined
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (!buf.length) return undefined
-    return `data:image/png;base64,${buf.toString('base64')}`
+    const dir = path.join(app.getPath('appData'), '.kamucl', 'kamucl-logs')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(
+      path.join(dir, 'launcher.log'),
+      `[${new Date().toISOString()}] ${line}\n`,
+      'utf-8'
+    )
   } catch {
-    return undefined
+    /* 忽略 */
   }
 }
 

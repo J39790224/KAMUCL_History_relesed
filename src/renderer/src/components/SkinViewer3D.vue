@@ -161,8 +161,7 @@ function disposeModel() {
   }
   for (const d of disposables) d.dispose()
   disposables = []
-  baseTex?.dispose()
-  baseTex = null
+  // 注意：baseTex 不在此处 dispose——buildModel 开头会调用本函数，源纹理由调用方管理
 }
 
 /** 加载皮肤纹理并重建人偶；src / variant 变化时调用 */
@@ -170,28 +169,41 @@ function rebuild() {
   const src = props.src
   if (!renderer || !src) {
     disposeModel()
+    baseTex?.dispose()
+    baseTex = null
     return
   }
   const token = ++loadToken
-  const tex = new THREE.TextureLoader().load(src, undefined, undefined, () => {
-    if (token !== loadToken) return // 回调过期（src 已变）
-    // 皮肤加载失败：素色兜底，避免黑块
-    for (const d of disposables) {
-      if (d instanceof THREE.MeshBasicMaterial) {
-        d.map = null
-        d.color.set('#8f94a8')
-        d.needsUpdate = true
+  new THREE.TextureLoader().load(
+    src,
+    (tex) => {
+      if (token !== loadToken) {
+        tex.dispose()
+        return
       }
+      // 关键：必须在加载完成的回调里建模——提前克隆的空纹理不会随后续加载更新
+      // 像素风关键：最近邻采样 + 关闭 mipmap；sRGB 保证颜色不发灰
+      tex.magFilter = THREE.NearestFilter
+      tex.minFilter = THREE.NearestFilter
+      tex.generateMipmaps = false
+      tex.colorSpace = THREE.SRGBColorSpace
+      const old = baseTex
+      baseTex = tex
+      buildModel()
+      old?.dispose()
+    },
+    undefined,
+    () => {
+      if (token !== loadToken) return
+      // 皮肤加载失败：用 1×1 素色纹理建模型，避免一片空白
+      const fallback = new THREE.DataTexture(new Uint8Array([143, 148, 168, 255]), 1, 1)
+      fallback.needsUpdate = true
+      const old = baseTex
+      baseTex = fallback
+      buildModel()
+      old?.dispose()
     }
-  })
-  // 像素风关键：最近邻采样 + 关闭 mipmap；sRGB 保证颜色不发灰
-  tex.magFilter = THREE.NearestFilter
-  tex.minFilter = THREE.NearestFilter
-  tex.generateMipmaps = false
-  tex.colorSpace = THREE.SRGBColorSpace
-  disposeModel()
-  baseTex = tex
-  buildModel()
+  )
 }
 
 // ---------------- 拖动旋转 ----------------
@@ -303,6 +315,8 @@ onUnmounted(() => {
   observer?.disconnect()
   onPointerUp() // 防止拖动中卸载残留全局监听
   disposeModel()
+  baseTex?.dispose()
+  baseTex = null
   renderer?.dispose()
   renderer?.domElement.remove()
   renderer = null
