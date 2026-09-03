@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, setVersionIsolation } from '../api'
-import { progressOverall, refreshInstalled, store, toast } from '../store'
+import { displayVersionName, displayVersionSub, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
   FabricApiVersion,
@@ -252,10 +252,6 @@ async function onToggleIsolation(v: InstalledVersion) {
     isoBusy.value = null
   }
 }
-
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-const installedLoaderText = (v: InstalledVersion) =>
-  v.loader ? `${cap(v.loader)} ${v.loaderVersion ?? ''}`.trim() : '纯净版'
 </script>
 
 <template>
@@ -354,9 +350,14 @@ const installedLoaderText = (v: InstalledVersion) =>
       </div>
       <div v-else class="installed-list">
         <div v-for="v in store.installed" :key="v.id" class="installed-row">
-          <span class="version-id">{{ v.id }}</span>
+          <div class="inst-names">
+            <span class="version-id">{{ displayVersionName(v) }}</span>
+            <span v-if="displayVersionSub(v) !== displayVersionName(v)" class="muted inst-sub">
+              {{ displayVersionSub(v) }}
+            </span>
+          </div>
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
-          <span class="tag" :class="v.loader ? 'tag-gold' : ''">{{ installedLoaderText(v) }}</span>
+          <span v-else-if="!v.loader" class="tag">纯净版</span>
           <span v-if="v.isolated" class="tag">已隔离</span>
           <label
             v-if="!v.modpackName"
@@ -673,6 +674,19 @@ const installedLoaderText = (v: InstalledVersion) =>
 }
 .installed-row:last-child {
   border-bottom: none;
+}
+/* 实例名称（主名 + 技术 id 副标） */
+.inst-names {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.inst-sub {
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
 }
 /* 版本隔离开关 */
 .iso-switch {

@@ -175,8 +175,25 @@ export function exitEditMode() {
   store.editTarget = ''
 }
 
-// ---------------- 进度平滑 ----------------
-/** 安装/启动任务的阶段顺序（用于把单阶段进度换算为单调不回退的整体进度） */
+// ---------------- 实例显示（版本 × 加载器 统一语义） ----------------
+/**
+ * 实例主显示名：`26.2 · Forge 65.0.0` / `26.2`（纯净版）。
+ * 加载器实例不再裸奔技术 id（fabric-loader-x.x.x-mc）。
+ */
+export function displayVersionName(v: InstalledVersion): string {
+  if (v.loader) {
+    const cap = v.loader.charAt(0).toUpperCase() + v.loader.slice(1)
+    return `${v.mcVersion} · ${cap}${v.loaderVersion ? ' ' + v.loaderVersion : ''}`
+  }
+  return v.mcVersion
+}
+
+/** 实例副显示名：技术 id（小字补充） */
+export function displayVersionSub(v: InstalledVersion): string {
+  return v.id
+}
+
+// ---------------- 进度平滑 ----------------/** 安装/启动任务的阶段顺序（用于把单阶段进度换算为单调不回退的整体进度） */
 const STAGE_ORDER = [
   'version-json',
   'libraries',

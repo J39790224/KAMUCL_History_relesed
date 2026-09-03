@@ -432,6 +432,14 @@ export function listInstalled(): InstalledVersion[] {
       // 跳过损坏的 json
     }
   }
+  // 实例排序：按 MC 版本分组（新→旧），同版本内纯净版在前、加载器实例按 id 字母序
+  out.sort((a, b) => {
+    if (a.mcVersion !== b.mcVersion) {
+      return b.mcVersion.localeCompare(a.mcVersion, undefined, { numeric: true })
+    }
+    if (!!a.loader !== !!b.loader) return a.loader ? 1 : -1
+    return a.id.localeCompare(b.id)
+  })
   return out
 }
 

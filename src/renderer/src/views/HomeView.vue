@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
-import { fmtLastPlayed, progressOverall, refreshAccounts, refreshInstalled, store, toast } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshAccounts, refreshInstalled, store, toast } from '../store'
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
@@ -66,9 +66,8 @@ watch(selectedId, (id) => {
 })
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-/** 胶囊/卡片显示用版本名，如「26.2-Fabric」 */
-const versionLabel = (v: InstalledVersion) =>
-  v.loader && !v.id.toLowerCase().includes(v.loader) ? `${v.id}-${cap(v.loader)}` : v.id
+/** 实例主显示名（统一语义）：26.2 · Fabric 0.19.5 / 26.2 */
+const versionLabel = (v: InstalledVersion) => displayVersionName(v)
 const loaderText = (v: InstalledVersion) =>
   v.loader ? `${cap(v.loader)} ${v.loaderVersion ?? ''}`.trim() : '纯净版'
 
@@ -440,8 +439,8 @@ async function onToggleAccountType() {
               <polygon points="10,23 15,25.5 15,28 10,25.5" fill="#7a5230" opacity="0.8" />
               <polygon points="30,30 36,27 36,30 30,33" fill="#5e3d22" opacity="0.8" />
             </svg>
-            <div class="recent-id">{{ v.id }}</div>
-            <div class="recent-loader">{{ loaderText(v) }}</div>
+            <div class="recent-id">{{ versionLabel(v) }}</div>
+            <div class="recent-loader muted">{{ displayVersionSub(v) }}</div>
             <div class="recent-played">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</div>
             <div class="recent-foot">
               <button
