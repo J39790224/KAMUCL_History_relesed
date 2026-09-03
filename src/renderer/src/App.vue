@@ -105,8 +105,8 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
   }
 ]
 
-/** 资源管理组是否展开（子级菜单显隐；当前在其中任一子页时强制展开高亮） */
-const resourceExpanded = ref(true)
+/** 资源管理组是否展开（默认折叠；当前在其中任一子页时强制展开高亮） */
+const resourceExpanded = ref(false)
 const inResourceGroup = computed(() =>
   ['mods', 'packs', 'shaders'].includes(store.currentView)
 )
