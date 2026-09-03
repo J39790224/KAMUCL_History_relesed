@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
-import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshAccounts, refreshInstalled, store, toast } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshAccounts, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite } from '../store'
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type { InstalledVersion, JavaInfo } from '@shared/types'
@@ -150,11 +150,9 @@ function chooseVersion(id: string) {
 }
 
 // ---------------- 最近游戏 ----------------
-const recent = computed(() =>
-  [...store.installed]
-    .sort((a, b) => (store.lastPlayed[b.id] ?? 0) - (store.lastPlayed[a.id] ?? 0))
-    .slice(0, 4)
-)
+const recent = computed(() => sortWithFavorite(store.installed).slice(0, 4))
+/** 版本选择器菜单：收藏置顶 */
+const sortedInstalledMenu = computed(() => sortWithFavorite(store.installed))
 
 const cardMenu = reactive({ id: '', top: 0, left: 0 })
 const cardMenuVersion = computed(() =>
@@ -440,6 +438,14 @@ async function onToggleAccountType() {
 
         <div v-else class="recent-grid">
           <article v-for="v in recent" :key="v.id" class="recent-card" data-edit="card">
+            <button
+              class="fav-btn recent-fav"
+              :class="{ on: isFavorite(v.id) }"
+              :title="isFavorite(v.id) ? '取消收藏' : '收藏'"
+              @click.stop="toggleFavorite(v.id)"
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+            </button>
             <!-- 等距草方块图标 -->
             <svg class="grass-icon" viewBox="0 0 48 48" aria-hidden="true">
               <polygon points="24,5 43,14.5 24,24 5,14.5" fill="#79c144" />
@@ -600,13 +606,14 @@ async function onToggleAccountType() {
         :style="{ top: verMenuPos.top + 'px', left: verMenuPos.left + 'px', width: verMenuPos.width + 'px' }"
       >
         <button
-          v-for="v in store.installed"
+          v-for="v in sortedInstalledMenu"
           :key="v.id"
           class="menu-item"
           :class="{ active: v.id === selectedId }"
           @click="chooseVersion(v.id)"
         >
-          <svg v-if="v.id === selectedId" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+          <svg v-if="isFavorite(v.id)" class="menu-fav" viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+          <svg v-else-if="v.id === selectedId" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           <span v-else class="menu-item-spacer"></span>
           {{ versionLabel(v) }}
         </button>
@@ -1008,6 +1015,35 @@ async function onToggleAccountType() {
   width: 40px;
   height: 40px;
   margin-bottom: 4px;
+}
+/* 卡片右上角收藏星标 */
+.recent-fav {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+  z-index: 2;
+}
+.recent-fav:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.recent-fav.on {
+  color: #f5b301;
+}
+.menu-fav {
+  color: #f5b301;
+  flex-shrink: 0;
 }
 .recent-id {
   font-size: 14.5px;

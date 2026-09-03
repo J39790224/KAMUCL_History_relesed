@@ -29,6 +29,7 @@ function defaults(): Settings {
     theme: 'light',
     custom: structuredClone(DEFAULT_CUSTOM_THEME),
     disabledFeatures: [],
+    favoriteVersions: [],
     closeAfterLaunch: false
   }
 }

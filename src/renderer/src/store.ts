@@ -135,6 +135,33 @@ export async function refreshInstalled() {
   store.installed = await getInstalled()
 }
 
+// ---------------- 版本收藏 ----------------
+export function isFavorite(id: string): boolean {
+  return (store.settings?.favoriteVersions ?? []).includes(id)
+}
+
+export async function toggleFavorite(id: string) {
+  const cur = store.settings?.favoriteVersions ?? []
+  const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+  try {
+    store.settings = await saveSettings({ favoriteVersions: next })
+    toast(isFavorite(id) ? '已收藏' : '已取消收藏', 'success')
+  } catch (e) {
+    toast('收藏失败：' + errText(e), 'error')
+  }
+}
+
+/** 收藏置顶 + 组内最近游玩倒序 */
+export function sortWithFavorite<T extends { id: string }>(list: T[]): T[] {
+  const fav = new Set(store.settings?.favoriteVersions ?? [])
+  return [...list].sort((a, b) => {
+    const fa = fav.has(a.id) ? 0 : 1
+    const fb = fav.has(b.id) ? 0 : 1
+    if (fa !== fb) return fa - fb
+    return (store.lastPlayed[b.id] ?? 0) - (store.lastPlayed[a.id] ?? 0)
+  })
+}
+
 // ---------------- 最近游玩记录 ----------------
 /** 记录某版本的最后启动时间（启动状态变为 running 时调用） */
 export function recordLastPlayed(id: string) {

@@ -145,6 +145,8 @@ export interface Settings {
   custom: CustomTheme
   /** 禁用的功能模块 key（mods/packs/shaders/servers/skins/community），关闭后侧栏入口隐藏 */
   disabledFeatures: string[]
+  /** 收藏的版本 id 列表（各列表置顶） */
+  favoriteVersions: string[]
   closeAfterLaunch: boolean
 }
 

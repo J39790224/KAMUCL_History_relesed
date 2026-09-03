@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { cleanupPartialInstall, errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
-import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
   FabricApiVersion,
@@ -312,6 +312,13 @@ function onRetry(versionId: string) {
 /** 安装中的版本（进度条显示在已安装页顶部） */
 const installingVersions = computed(() => [...store.installing])
 
+/** 收藏置顶 + 组内最近游玩倒序 */
+const sortedInstalled = computed(() => sortWithFavorite(store.installed))
+/** 已收藏分组（不含残缺/失败版本） */
+const favoriteInstalled = computed(() =>
+  store.installed.filter((v) => isFavorite(v.id) && !v.incomplete && !v.failed)
+)
+
 function openManageMenu(e: MouseEvent, id: string) {
   if (manageMenu.id === id) {
     manageMenu.id = ''
@@ -557,7 +564,32 @@ async function onToggleIsolation(v: InstalledVersion) {
         <button class="btn btn-gold btn-sm" @click="tab = 'download'">去版本下载看看</button>
       </div>
       <div v-else class="installed-list">
-        <div v-for="v in store.installed" :key="v.id" class="installed-row">
+        <!-- 已收藏分组（置顶） -->
+        <template v-if="favoriteInstalled.length">
+          <div class="fav-group-head">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+            已收藏
+          </div>
+          <div v-for="v in favoriteInstalled" :key="'fav-' + v.id" class="installed-row">
+            <button class="fav-btn on" title="取消收藏" @click="toggleFavorite(v.id)">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+            </button>
+            <div class="inst-names">
+              <span class="version-id">{{ displayVersionName(v) }}</span>
+            </div>
+            <span class="muted played-text">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</span>
+          </div>
+        </template>
+
+        <div v-for="v in sortedInstalled" :key="v.id" class="installed-row">
+          <button
+            class="fav-btn"
+            :class="{ on: isFavorite(v.id) }"
+            :title="isFavorite(v.id) ? '取消收藏' : '收藏'"
+            @click="toggleFavorite(v.id)"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
+          </button>
           <div class="inst-names">
             <span class="version-id">{{ displayVersionName(v) }}</span>
             <span v-if="displayVersionSub(v) !== displayVersionName(v)" class="muted inst-sub">
@@ -1058,6 +1090,41 @@ async function onToggleIsolation(v: InstalledVersion) {
   margin-left: auto;
   font-size: 12px;
   flex-shrink: 0;
+}
+
+/* 收藏星标按钮与分组标题 */
+.fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+.fav-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.fav-btn.on {
+  color: #f5b301;
+}
+.fav-btn:active {
+  transform: scale(0.9);
+}
+.fav-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #f5b301;
 }
 
 /* 版本隔离开关 */
