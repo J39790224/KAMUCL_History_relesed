@@ -67,6 +67,7 @@ onMounted(async () => {
 })
 
 watch(effectiveRel, () => void load())
+watch(() => store.fsRefreshTick, () => void load())
 
 // ---------------- 顶栏搜索联动（过滤文件名） ----------------
 const keyword = computed(() => store.searchKeyword.trim().toLowerCase())

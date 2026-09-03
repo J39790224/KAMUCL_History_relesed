@@ -18,6 +18,7 @@ import CommunityView from './views/CommunityView.vue'
 import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import AccountsView from './views/AccountsView.vue'
+import ModDropModal from './components/ModDropModal.vue'
 
 const viewMap: Record<ViewName, Component> = {
   home: HomeView,
@@ -148,15 +149,27 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   dragDepth = 0
   dragActive.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (!file) return
-  if (!/\.(mrpack|zip)$/i.test(file.name)) {
-    toast('仅支持导入 .mrpack 或 .zip 格式的整合包', 'error')
+  const dropped = Array.from(e.dataTransfer?.files ?? [])
+  if (!dropped.length) return
+  const paths = dropped.map((f) => window.kamucl.getFilePath(f))
+  const names = dropped.map((f) => f.name.toLowerCase())
+
+  // 单文件且为整合包格式 → 整合包导入流程
+  if (names.length === 1 && /\.(mrpack|zip)$/.test(names[0])) {
+    void openModpackImport(paths[0])
     return
   }
-  const filePath = window.kamucl.getFilePath(file)
-  void openModpackImport(filePath)
+  // 全部为非压缩包扩展（.jar 或文件夹）→ MOD 拖入即装流程
+  if (names.every((n) => !/\.(mrpack|zip)$/.test(n))) {
+    modDrop.files = paths
+    modDrop.open = true
+    return
+  }
+  toast('不能混合拖入整合包与其他文件，请分开拖入', 'error')
 }
+
+// ---------------- MOD 拖入即装 ----------------
+const modDrop = reactive({ open: false, files: [] as string[] })
 
 // ---------------- 整合包导入确认弹窗 ----------------
 const FORMAT_LABEL: Record<ModpackInfo['format'], string> = {
@@ -632,10 +645,13 @@ onUnmounted(() => {
           <path d="m7 8 5-5 5 5" />
           <path d="M12 3v12" />
         </svg>
-        <p class="drop-title">松开鼠标导入整合包（.mrpack / .zip）</p>
+        <p class="drop-title">松开导入：整合包（.mrpack / .zip）或 MOD（.jar / 文件夹）</p>
       </div>
     </div>
   </Teleport>
+
+  <!-- MOD 拖入即装确认弹窗 -->
+  <ModDropModal :open="modDrop.open" :files="modDrop.files" @close="modDrop.open = false" />
 
   <!-- 整合包导入确认弹窗 -->
   <Teleport to="body">

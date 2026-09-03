@@ -224,6 +224,10 @@ export const IPC = {
   serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
   serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
 
+  // MOD 拖入即装
+  modsParse: 'mods:parse', // (paths: string[]) => ModInfo[]  支持文件/文件夹路径，静默解析元数据
+  modsInstall: 'mods:install', // (files: string[], targetVersionId: string) => ModInstallResult[]  装入目标版本 mods 目录（遵循版本隔离）
+
   // 整合包
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
   modpackInstall: 'modpack:install', // (filePath: string, opts?: { nameSource?: 'file' | 'inner' }) => void  nameSource 默认 'file'（以压缩包文件名命名实例）；异步：进度走 event:progress，完成走 event:installDone（versionId = 实例 id）
@@ -329,6 +333,36 @@ export interface ServerEntry {
   id: string
   name: string
   address: string
+}
+
+// ---------------- MOD 拖入即装 ----------------
+/** 单个 MOD 文件的元数据解析结果 */
+export interface ModInfo {
+  /** jar 文件绝对路径 */
+  filePath: string
+  fileName: string
+  /** 解析出的 mod id（失败为空） */
+  id: string
+  /** 展示名 */
+  name: string
+  /** MOD 版本号 */
+  version: string
+  /** 所属加载器 */
+  loader: LoaderName | null
+  /** 支持的 MC 版本范围原文（如 [1.20,) / 1.20.1） */
+  mcRange: string
+  /** 前置依赖 mod id 列表 */
+  dependencies: string[]
+  /** 图标 dataURL（jar 内嵌图标） */
+  iconDataUrl?: string
+  /** 解析失败原因（非 MOD/损坏时存在） */
+  error?: string
+}
+
+export interface ModInstallResult {
+  fileName: string
+  ok: boolean
+  message: string
 }
 
 export interface ServerPingResult {

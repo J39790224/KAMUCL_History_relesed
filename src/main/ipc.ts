@@ -26,6 +26,8 @@ import * as loaders from './core/loaders'
 import * as java from './core/java'
 import * as launch from './core/launch'
 import * as servers from './core/servers'
+import * as modinfo from './core/modinfo'
+import { versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -197,6 +199,50 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.serversPing, (_e, address: string) =>
     servers.pingServer(String(address ?? ''))
   )
+
+  // ---------------- MOD 拖入即装 ----------------
+  ipcMain.handle(IPC.modsParse, (_e, paths: string[]) => {
+    const { files, skipped } = modinfo.expandJarPaths(
+      Array.isArray(paths) ? paths.map(String) : []
+    )
+    const list = files.map((f) => modinfo.parseModFile(f))
+    // 非 jar 文件逐个给出原因，不静默吞掉
+    for (const s of skipped) {
+      list.push({
+        filePath: s,
+        fileName: s,
+        id: '',
+        name: '',
+        version: '',
+        loader: null,
+        mcRange: '',
+        dependencies: [],
+        error: '不支持的文件类型（仅支持 .jar 或包含 .jar 的文件夹）'
+      })
+    }
+    return list
+  })
+  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {
+    const vid = String(targetVersionId ?? '')
+    // 版本隔离时装入版本独立 mods 目录，否则共享目录
+    let base = settings.getSettings().gameDir
+    try {
+      if (versions.readVersionJson(vid)._gameDir === true) base = versionDir(vid)
+    } catch {
+      /* json 读取失败按共享目录 */
+    }
+    const modsDir = path.join(base, 'mods')
+    fs.mkdirSync(modsDir, { recursive: true })
+    return (Array.isArray(files) ? files : []).map((f) => {
+      const name = path.basename(String(f))
+      try {
+        fs.copyFileSync(String(f), path.join(modsDir, name))
+        return { fileName: name, ok: true, message: '已装入' }
+      } catch (e) {
+        return { fileName: name, ok: false, message: errText(e) }
+      }
+    })
+  })
 
   // ---------------- 文件/目录 ----------------
   const safeDir = (rel: string): string => {

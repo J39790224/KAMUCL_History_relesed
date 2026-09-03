@@ -72,6 +72,8 @@ export const store = reactive({
   searchKeyword: '',
   /** 资源管理（模组/资源包/光影包）当前选中的版本 id；空 = 跟随第一个已装版本 */
   resourceVersionId: '',
+  /** 文件系统变更计数器（MOD 装入等操作后自增，驱动 FileManager 刷新） */
+  fsRefreshTick: 0,
   /** 当前下载/安装进度（无任务时为 null） */
   progress: null as ProgressEvent | null,
   /** 正在后台下载/安装的版本 id 集合（installDone 事件到达后移除） */

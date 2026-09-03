@@ -17,6 +17,8 @@ import type {
   JavaInfo,
   LaunchState,
   LoaderName,
+  ModInfo,
+  ModInstallResult,
   ModpackInfo,
   MsDeviceCodeInfo,
   ProgressEvent,
@@ -123,6 +125,11 @@ export const addServer = (name: string, address: string) =>
 export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
 export const pingServer = (address: string) =>
   invoke<ServerPingResult>(IPC.serversPing, address)
+
+// ---------------- MOD 拖入即装 ----------------
+export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)
+export const installMods = (files: string[], targetVersionId: string) =>
+  invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId)
 
 // ---------------- 文件/目录 ----------------
 /** 用系统资源管理器打开游戏目录下的子目录（'' = 游戏根目录） */
