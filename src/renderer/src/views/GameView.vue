@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, renameVersion, setVersionIsolation } from '../api'
+import { errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation } from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
@@ -257,6 +257,19 @@ const isoBusy = ref<string | null>(null)
 // ---------------- 管理快捷菜单 ----------------
 const manageMenu = reactive({ id: '', top: 0, left: 0 })
 
+/** 下载源切换（镜像 ⇄ 官方），持久化并刷新版本清单 */
+async function onToggleMirror() {
+  const next = store.settings?.mirror === 'bmclapi' ? 'official' : 'bmclapi'
+  try {
+    await saveSettings({ mirror: next })
+    store.settings = await getSettings()
+    toast(next === 'bmclapi' ? '已切换为 BMCLAPI 镜像源' : '已切换为官方源', 'success')
+    void load(true)
+  } catch (e) {
+    toast('切换下载源失败：' + errText(e), 'error')
+  }
+}
+
 /** 重试安装失败的版本 */
 function onRetry(versionId: string) {
   store.failedInstalls.delete(versionId)
@@ -387,9 +400,14 @@ async function onToggleIsolation(v: InstalledVersion) {
         {{ loading ? '刷新中' : '刷新' }}
       </button>
 
-      <span class="tag" :class="store.settings?.mirror === 'bmclapi' ? 'tag-cyan' : ''">
+      <button
+        class="tag mirror-toggle"
+        :class="store.settings?.mirror === 'bmclapi' ? 'tag-cyan' : ''"
+        :title="store.settings?.mirror === 'bmclapi' ? '当前：BMCLAPI 镜像源，点击切换为官方源' : '当前：官方源，点击切换为 BMCLAPI 镜像源'"
+        @click="onToggleMirror"
+      >
         {{ store.settings?.mirror === 'bmclapi' ? 'BMCLAPI 镜像' : '官方源' }}
-      </span>
+      </button>
     </div>
 
     <!-- 版本列表 -->
@@ -879,6 +897,19 @@ async function onToggleIsolation(v: InstalledVersion) {
   font-family: ui-monospace, Consolas, monospace;
   word-break: break-all;
 }
+/* 下载源切换按钮 */
+.mirror-toggle {
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.12s ease, filter 0.15s ease;
+}
+.mirror-toggle:hover {
+  filter: brightness(1.15);
+}
+.mirror-toggle:active {
+  transform: scale(0.96);
+}
+
 /* 顶部 Tab 分段 */
 .game-tabs {
   display: inline-flex;
