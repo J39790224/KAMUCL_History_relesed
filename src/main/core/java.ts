@@ -224,8 +224,8 @@ export function hideJava(javaPath: string): void {
 export function requiredMajor(versionJson: VersionJson): number {
   const declared = versionJson.javaVersion?.majorVersion
   if (declared && declared > 0) return declared
-  // 按 MC 版本号推断（id 形如 1.20.5 / 1.18 / 1.8.9）
-  const verId = versionJson.inheritsFrom ?? versionJson.id
+  // 按 MC 版本号推断（id 形如 1.20.5 / 1.18 / 1.8.9；自定义命名的原版取 _mcVersion）
+  const verId = versionJson.inheritsFrom ?? versionJson._mcVersion ?? versionJson.id
   const m = /^1\.(\d+)(?:\.(\d+))?/.exec(verId)
   if (!m) return 8
   const minor = parseInt(m[1], 10)

@@ -13,6 +13,7 @@ import { ensureJava, scanJava } from './java'
 import {
   installVanilla,
   libraryTasks,
+  migrateDependencyVanilla,
   readVersionJson,
   type VersionJson
 } from './versions'
@@ -211,7 +212,8 @@ function tagLoaderJson(id: string, loader: LoaderName, loaderVersion: string): v
 
 /**
  * 安装加载器，返回新版本的 id。
- * 前置：自动确保原版 mcVersion 已安装。
+ * 原版作为内部依赖：fabric/quilt 直接装进 .kamucl/base（不进版本列表）；
+ * forge/neoforge 安装器强制要求 versions/ 下存在原版，先落地、装完（无论成败）再迁移进 base。
  */
 export async function installLoader(
   loader: LoaderName,
@@ -220,9 +222,10 @@ export async function installLoader(
   emit: ProgressEmit,
   instanceName?: string
 ): Promise<string> {
-  // 先确保原版已安装（已装则文件校验跳过，开销很小）
   emit({ stage: 'loader', progress: 0, text: `检查原版 ${mcVersion}` })
-  await installVanilla(mcVersion, emit)
+  const vanillaPreExisted = fs.existsSync(versionJsonPath(mcVersion))
+  const installerBased = loader === 'forge' || loader === 'neoforge'
+  await installVanilla(mcVersion, emit, vanillaPreExisted || installerBased ? 'versions' : 'base')
 
   // ---- fabric / quilt：profile json 直写 ----
   if (loader === 'fabric' || loader === 'quilt') {
@@ -343,6 +346,14 @@ export async function installLoader(
     return id
   } finally {
     fs.rmSync(jarPath, { force: true })
+    // 本次安装临时落地的原版条目迁移进依赖区（无论成败），版本列表只保留加载器实例
+    if (!vanillaPreExisted) {
+      try {
+        migrateDependencyVanilla(mcVersion)
+      } catch {
+        /* 迁移失败不阻断安装结果 */
+      }
+    }
   }
 }
 

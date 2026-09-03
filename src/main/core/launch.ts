@@ -13,14 +13,17 @@ import { ensureJava, requiredMajor, scanJava } from './java'
 import {
   assetIndexPath,
   assetsDir,
+  baseVersionJarPath,
   gameDir,
   librariesDir,
   nativesDir,
   versionDir,
   versionJarPath,
+  versionJsonPath,
   virtualLegacyDir
 } from './paths'
 import {
+  clientJarPath,
   installVanilla,
   libraryTasks,
   readVersionJson,
@@ -155,14 +158,26 @@ export async function launch(
     }
     chainBroken = true
   }
-  if (chainBroken || !fs.existsSync(versionJarPath(baseIdProbe))) {
+  // 链底原版 json/jar 可能在 versions 区（独立原版）或 .kamucl/base 依赖区（加载器实例的内部依赖）
+  const baseInVersions = fs.existsSync(versionJsonPath(baseIdProbe))
+  const jarProbe = baseInVersions ? versionJarPath(baseIdProbe) : baseVersionJarPath(baseIdProbe)
+  if (chainBroken || !fs.existsSync(jarProbe)) {
     emit({
       stage: 'repair',
       progress: 0,
       text: `检测到游戏文件缺失，正在自动补全 ${baseIdProbe}…`
     })
     // installVanilla 内部：json 不在则下载，已存在文件校验跳过，只补缺失部分
-    await installVanilla(baseIdProbe, emit)
+    // 自定义命名的原版实例：真实 MC 版本 id 从 _mcVersion 取
+    let realId = baseIdProbe
+    try {
+      realId = readVersionJson(baseIdProbe)._mcVersion ?? baseIdProbe
+    } catch {
+      /* json 缺失时用 probe（即真实 MC id） */
+    }
+    // 加载器实例的依赖原版补进 base 区；独立原版实例仍在 versions 区修复
+    const dest = baseIdProbe !== versionId && !baseInVersions ? 'base' : 'versions'
+    await installVanilla(realId, emit, dest, realId !== baseIdProbe ? baseIdProbe : undefined)
     emit({ stage: 'repair', progress: 1, text: '文件补全完成' })
   }
 
@@ -185,7 +200,7 @@ export async function launch(
   // a) 版本链合并
   emit({ stage: 'launch', progress: 0, text: '解析版本信息' })
   const { merged, baseId } = resolveChain(versionId)
-  const clientJar = versionJarPath(baseId)
+  const clientJar = clientJarPath(baseId)
   if (!fs.existsSync(clientJar)) {
     throw new Error(`客户端文件缺失（${baseId}.jar），请先完整安装版本 ${baseId}`)
   }

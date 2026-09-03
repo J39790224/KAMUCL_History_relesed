@@ -103,3 +103,20 @@ export function virtualLegacyDir(): string {
 export function runtimesDir(): string {
   return path.join(defaultFolderPath(), 'runtimes')
 }
+
+// ---------------- 依赖原版区（.kamucl/base，不进入版本列表） ----------------
+// 加载器实例依赖的原版 json/jar 统一放这里（默认文件夹下共享），
+// 不再在 versions/ 生成独立原版条目
+
+/** 依赖原版目录：<默认文件夹>/.kamucl/base/<id> */
+export function baseVersionDir(id: string): string {
+  return path.join(defaultFolderPath(), '.kamucl', 'base', id)
+}
+
+export function baseVersionJsonPath(id: string): string {
+  return path.join(baseVersionDir(id), `${id}.json`)
+}
+
+export function baseVersionJarPath(id: string): string {
+  return path.join(baseVersionDir(id), `${id}.jar`)
+}

@@ -16,6 +16,9 @@ import {
   allVersionsDirs,
   assetIndexPath,
   assetObjectPath,
+  baseVersionDir,
+  baseVersionJarPath,
+  baseVersionJsonPath,
   gameDir,
   installMarkPath,
   libraryPath,
@@ -91,6 +94,8 @@ export interface VersionJson {
   _modpackVersion?: string
   /** KAMUCL 自定义字段：版本独立指定 Java 路径 */
   _javaPath?: string
+  /** KAMUCL 自定义字段：自定义命名的原版实例记录其真实 MC 版本 id（修复/推断用） */
+  _mcVersion?: string
 }
 
 // ---------------- rules 评估 ----------------
@@ -184,16 +189,18 @@ export async function fetchVersionManifest(
 
 // ---------------- 版本 json ----------------
 
-/** 同步读取本地版本 json（容错 BOM 头） */
+/** 同步读取本地版本 json（容错 BOM 头）；versions/ 没有时回退到 .kamucl/base 依赖原版区 */
 export function readVersionJson(id: string): VersionJson {
-  const raw = fs.readFileSync(versionJsonPath(id), 'utf-8')
+  let p = versionJsonPath(id)
+  if (!fs.existsSync(p) && fs.existsSync(baseVersionJsonPath(id))) p = baseVersionJsonPath(id)
+  const raw = fs.readFileSync(p, 'utf-8')
   return JSON.parse(raw.replace(/^﻿/, '')) as VersionJson
 }
 
-/** 确保 versions/<id>/<id>.json 存在并解析返回（不存在则按清单下载） */
-export async function getVersionJson(versionId: string): Promise<VersionJson> {
-  const dest = versionJsonPath(versionId)
-  if (!fs.existsSync(dest)) {
+/** 确保版本 json 存在并解析返回（不存在则按清单下载到 dest，默认 versions 区） */
+export async function getVersionJson(versionId: string, dest?: string): Promise<VersionJson> {
+  const jsonPath = dest ?? versionJsonPath(versionId)
+  if (!fs.existsSync(jsonPath)) {
     const mirror = getSettings().mirror
     let manifest = await fetchVersionManifest(mirror)
     let entry = manifest.find((v) => v.id === versionId)
@@ -203,9 +210,10 @@ export async function getVersionJson(versionId: string): Promise<VersionJson> {
       entry = manifest.find((v) => v.id === versionId)
     }
     if (!entry) throw new Error(`版本清单中找不到 ${versionId}`)
-    await downloadFile(entry.url, dest, undefined, undefined, mirror)
+    fs.mkdirSync(path.dirname(jsonPath), { recursive: true })
+    await downloadFile(entry.url, jsonPath, undefined, undefined, mirror)
   }
-  return readVersionJson(versionId)
+  return JSON.parse(fs.readFileSync(jsonPath, 'utf-8').replace(/^﻿/, '')) as VersionJson
 }
 
 // ---------------- 依赖库收集 ----------------
@@ -280,19 +288,38 @@ function fmtMB(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1) + 'MB'
 }
 
-/** 安装原版（不含加载器）。已下载的文件会自动跳过。 */
-export async function installVanilla(versionId: string, emit: ProgressEmit): Promise<void> {
+/**
+ * 安装原版（不含加载器），返回最终版本 id。已下载的文件会自动跳过。
+ * dest='versions'：作为独立版本安装进 versions/（用户主动安装，支持 instanceName 自定义实例名）
+ * dest='base'：作为加载器实例的内部依赖装进 .kamucl/base/（不进版本列表，json/jar 仅供链解析）
+ */
+export async function installVanilla(
+  versionId: string,
+  emit: ProgressEmit,
+  dest: 'versions' | 'base' = 'versions',
+  instanceName?: string
+): Promise<string> {
+  const finalId = dest === 'versions' ? instanceName?.trim() || versionId : versionId
+  const dir = dest === 'base' ? baseVersionDir(versionId) : versionDir(finalId)
+  const jsonPath = path.join(dir, `${finalId}.json`)
+  const jarPath = path.join(dir, `${finalId}.jar`)
+  const mark = path.join(dir, '.installing')
   const mirror = getSettings().mirror
   const sourceText = mirror === 'bmclapi' ? 'BMCLAPI 镜像' : '官方源'
 
   // 事务标记：安装开始打标，全部成功才移除；失败由 cleanupPartialInstall 清理
-  const mark = installMarkPath(versionId)
-  fs.mkdirSync(versionDir(versionId), { recursive: true })
-  registerVersionFolder(versionId, gameDir()) // 新安装版本注册到当前活动文件夹
+  fs.mkdirSync(dir, { recursive: true })
+  if (dest === 'versions') registerVersionFolder(finalId, gameDir()) // 新版本注册到当前活动文件夹
   fs.writeFileSync(mark, new Date().toISOString(), 'utf-8')
   try {
     emit({ stage: 'version-json', progress: 0, text: `获取版本信息 ${versionId}`, source: sourceText })
-    const vj = await getVersionJson(versionId)
+    const vj = await getVersionJson(versionId, jsonPath)
+    // 自定义实例名：json id 同步改写，并记录真实 MC 版本供修复/Java 推断
+    if (finalId !== versionId) {
+      vj.id = finalId
+      vj._mcVersion = versionId
+      fs.writeFileSync(jsonPath, JSON.stringify(vj, null, 2), 'utf-8')
+    }
 
     // 1. 依赖库（含 natives classifiers）
     const libTasks = libraryTasks(vj)
@@ -315,7 +342,7 @@ export async function installVanilla(versionId: string, emit: ProgressEmit): Pro
     if (client?.url) {
       await downloadFile(
         client.url,
-        versionJarPath(versionId),
+        jarPath,
         (d, t) =>
           emit({
             stage: 'client',
@@ -388,11 +415,12 @@ export async function installVanilla(versionId: string, emit: ProgressEmit): Pro
     // 失败时保留 .installing 标记（列表显示「安装失败」+ 清理残留入口）
     throw e
   }
+  return finalId
 }
 
 /**
- * 安装版本。opts.loader 存在时先确保原版，再委托 loaders 模块安装加载器。
- * 返回最终安装完成的版本 id。
+ * 安装版本。opts.loader 存在时先确保原版（作为内部依赖，不产生独立版本条目），
+ * 再委托 loaders 模块安装加载器。返回最终安装完成的版本 id。
  */
 export async function installVersion(
   versionId: string,
@@ -415,21 +443,49 @@ export async function installVersion(
     }
     return installedId
   }
-  await installVanilla(versionId, emit)
-  return versionId
+  return await installVanilla(versionId, emit, 'versions', opts.instanceName)
+}
+
+/** 链底客户端 jar 的实际位置（versions 区优先，缺省时取 .kamucl/base 依赖原版区） */
+export function clientJarPath(id: string): string {
+  return fs.existsSync(versionJsonPath(id)) ? versionJarPath(id) : baseVersionJarPath(id)
+}
+
+/**
+ * 把「加载器安装时临时落地的原版条目」迁移进 .kamucl/base 依赖区：
+ * versions/<mc>/ 下的 json+jar 移走并删除目录，版本列表不再出现多余的原版条目。
+ * 安装不完整（.installing 标记在）时整个目录直接删除。
+ */
+export function migrateDependencyVanilla(mcId: string): void {
+  const dir = versionDir(mcId)
+  if (!fs.existsSync(dir)) return
+  if (fs.existsSync(installMarkPath(mcId))) {
+    fs.rmSync(dir, { recursive: true, force: true })
+    return
+  }
+  const jp = versionJsonPath(mcId)
+  if (!fs.existsSync(jp)) return
+  const base = baseVersionDir(mcId)
+  fs.mkdirSync(base, { recursive: true })
+  const baseJson = baseVersionJsonPath(mcId)
+  const baseJar = baseVersionJarPath(mcId)
+  if (!fs.existsSync(baseJson)) fs.renameSync(jp, baseJson)
+  const jar = versionJarPath(mcId)
+  if (fs.existsSync(jar) && !fs.existsSync(baseJar)) fs.renameSync(jar, baseJar)
+  fs.rmSync(dir, { recursive: true, force: true })
 }
 
 // ---------------- 已安装列表 / 删除 ----------------
 
-/** 沿 inheritsFrom 链解析到最底层的原版 MC 版本 id（链断时回退为当前已知 id） */
+/** 沿 inheritsFrom 链解析到最底层的原版 MC 版本 id（链断时回退为当前已知 id；自定义命名的原版取 _mcVersion） */
 function resolveBaseMcId(j: VersionJson, fallback: string): string {
   let cur = j
-  let id = j.inheritsFrom ?? j.id ?? fallback
+  let id = j.inheritsFrom ?? j._mcVersion ?? j.id ?? fallback
   let hops = 0
   while (cur.inheritsFrom && hops++ < 8) {
     try {
       const parent = readVersionJson(cur.inheritsFrom)
-      id = parent.inheritsFrom ?? parent.id ?? id
+      id = parent.inheritsFrom ?? parent._mcVersion ?? parent.id ?? id
       cur = parent
     } catch {
       break
