@@ -18,6 +18,7 @@ import type {
 import { downloadFile } from './download'
 import { gameDir, versionDir } from './paths'
 import { readVersionJson } from './versions'
+import { MOD_ZH, ZH_TO_SLUGS } from './community-zh'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
@@ -256,34 +257,111 @@ async function cfFiles(
 
 const hasChinese = (s: string): boolean => /[一-鿿]/.test(s)
 
+// ---------------- 中文名检索（community-zh 映射表） ----------------
+
+/** 中文关键词反查 slug：中文名包含关键词的映射项（取前 5 个 slug） */
+function zhKeywordToSlugs(keyword: string): string[] {
+  const kw = keyword.trim().toLowerCase()
+  if (!kw || !hasChinese(kw)) return []
+  const out: string[] = []
+  for (const [zh, slugs] of Object.entries(ZH_TO_SLUGS)) {
+    if (zh.includes(kw)) out.push(...slugs)
+    if (out.length >= 5) break
+  }
+  return [...new Set(out)].slice(0, 5)
+}
+
+/** 给搜索结果标题加中文名前缀（slug 命中映射表时） */
+function withZhTitle(list: CommunityResult[]): CommunityResult[] {
+  return list.map((r) => {
+    const zh = MOD_ZH[r.slug]
+    if (zh && !r.title.startsWith(zh)) {
+      return { ...r, title: `${zh} | ${r.title}` }
+    }
+    return r
+  })
+}
+
+/** 按 slug 精确搜索单个项目（用于中文反查命中后置顶），找不到返回 null */
+async function searchBySlug(source: CommunitySource, slug: string, kind: CommunityKind): Promise<CommunityResult | null> {
+  try {
+    if (source === 'modrinth') {
+      const data = (await mrFetch(`/project/${encodeURIComponent(slug)}`)) as Record<string, unknown>
+      return {
+        source,
+        projectId: String(data.id ?? slug),
+        slug: String(data.slug ?? slug),
+        title: String(data.title ?? slug),
+        author: '',
+        description: String(data.description ?? ''),
+        iconUrl: String(data.icon_url ?? ''),
+        downloads: Number(data.downloads ?? 0),
+        updatedAt: String(data.updated ?? ''),
+        categories: (data.categories as string[]) ?? []
+      }
+    }
+    // CurseForge：按 slug 模糊搜，取 slug 精确匹配项
+    const list = await cfSearch({ keyword: slug, kind, source: 'curseforge', offset: 0, limit: 10 })
+    return list.find((r) => r.slug === slug) ?? list[0] ?? null
+  } catch {
+    return null
+  }
+}
+
 /** 社区资源搜索；source='all' 时两源并发、各取一半交错合并，单源失败不拖垮另一源 */
 export async function communitySearch(q: CommunityQuery): Promise<CommunityResult[]> {
-  if (q.source === 'modrinth') return mrSearch(q)
-  if (q.source === 'curseforge') {
+  let base: CommunityResult[]
+  if (q.source === 'modrinth') {
+    base = await mrSearch(q)
+  } else if (q.source === 'curseforge') {
     try {
-      return await cfSearch(q)
+      base = await cfSearch(q)
     } catch (e) {
       if (hasChinese(q.keyword)) {
         throw new Error('CurseForge 源暂不可用，中文关键词建议切换 Modrinth 源或「全部」')
       }
       throw e
     }
+  } else {
+    // 全部：两源并发各取一半，交错合并
+    const half = Math.max(1, Math.ceil(q.limit / 2))
+    const sub: CommunityQuery = { ...q, limit: half }
+    const [mr, cf] = await Promise.allSettled([mrSearch(sub), cfSearch(sub)])
+    if (mr.status === 'rejected' && cf.status === 'rejected') {
+      throw mr.reason instanceof Error ? mr.reason : new Error(String(mr.reason))
+    }
+    const mrList = mr.status === 'fulfilled' ? mr.value : []
+    const cfList = cf.status === 'fulfilled' ? cf.value : []
+    const out: CommunityResult[] = []
+    for (let i = 0; i < Math.max(mrList.length, cfList.length); i++) {
+      if (mrList[i]) out.push(mrList[i])
+      if (cfList[i]) out.push(cfList[i])
+    }
+    base = out
   }
-  // 全部：两源并发各取一半，交错合并
-  const half = Math.max(1, Math.ceil(q.limit / 2))
-  const sub: CommunityQuery = { ...q, limit: half }
-  const [mr, cf] = await Promise.allSettled([mrSearch(sub), cfSearch(sub)])
-  if (mr.status === 'rejected' && cf.status === 'rejected') {
-    throw mr.reason instanceof Error ? mr.reason : new Error(String(mr.reason))
+
+  // 中文名检索：中文关键词反查 slug，命中的项目置顶；全部结果加中文名前缀
+  const slugs = zhKeywordToSlugs(q.keyword)
+  if (slugs.length) {
+    const sources: CommunitySource[] =
+      q.source === 'all' ? ['modrinth', 'curseforge'] : [q.source as CommunitySource]
+    const hits: CommunityResult[] = []
+    for (const slug of slugs) {
+      for (const src of sources) {
+        const hit = await searchBySlug(src, slug, q.kind)
+        if (hit && !hits.some((h) => h.source === hit.source && h.projectId === hit.projectId)) {
+          hits.push(hit)
+        }
+      }
+    }
+    if (hits.length) {
+      base = [
+        ...hits,
+        ...base.filter((r) => !hits.some((h) => h.source === r.source && h.projectId === r.projectId))
+      ]
+    }
   }
-  const mrList = mr.status === 'fulfilled' ? mr.value : []
-  const cfList = cf.status === 'fulfilled' ? cf.value : []
-  const out: CommunityResult[] = []
-  for (let i = 0; i < Math.max(mrList.length, cfList.length); i++) {
-    if (mrList[i]) out.push(mrList[i])
-    if (cfList[i]) out.push(cfList[i])
-  }
-  return out
+  return withZhTitle(base)
 }
 
 /** 项目文件列表（新→旧） */
