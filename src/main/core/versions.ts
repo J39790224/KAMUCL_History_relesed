@@ -377,7 +377,7 @@ export async function installVersion(
       loaderVersion = list[0]
       if (!loaderVersion) throw new Error(`${opts.loader} 没有适配 ${versionId} 的版本`)
     }
-    const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit)
+    const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit, opts.instanceName)
     // Fabric：可选同时安装 Fabric API 到 mods 文件夹
     if (opts.loader === 'fabric' && opts.fabricApi) {
       await installFabricApi(versionId, opts.fabricApi, emit)
@@ -458,7 +458,45 @@ export function listInstalled(): InstalledVersion[] {
   return out
 }
 
-/** 删除版本目录 */
+/** 实例名校验：非法字符与保留名（返回错误文案，合法返回 null） */
+export function validateInstanceName(name: string, excludeId?: string): string | null {
+  const n = name.trim()
+  if (!n) return '实例名不能为空'
+  if (n.length > 64) return '实例名过长（最多 64 字符）'
+  if (/[\\/:*?"<>|]/.test(n)) return '实例名不能包含 \\ / : * ? " < > | 字符'
+  if (/^[.\s]|[.\s]$/.test(n)) return '实例名不能以空格或点开头/结尾'
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(n)) return '实例名为系统保留名'
+  if (n !== excludeId && fs.existsSync(versionDir(n))) return `实例「${n}」已存在，请换一个名字`
+  return null
+}
+
+/** 重命名实例：目录与 json id 同步改名（校验冲突/非法/占用；原版版本不可改名） */
+export function renameVersion(id: string, newName: string): void {
+  const j = fs.existsSync(versionJsonPath(id)) ? readVersionJson(id) : null
+  if (j && !j.inheritsFrom && !j._modpackName) {
+    throw new Error('原版游戏版本名不可更改（加载器实例与整合包实例可重命名）')
+  }
+  const err = validateInstanceName(newName, id)
+  if (err) throw new Error(err)
+  const from = versionDir(id)
+  const to = versionDir(newName.trim())
+  if (!fs.existsSync(from)) throw new Error('实例不存在')
+  if (from === to) return
+  // 更新 json 内 id 字段（先读改写，再移动目录，避免中间态）
+  const jp = versionJsonPath(id)
+  if (fs.existsSync(jp)) {
+    const j = readVersionJson(id)
+    j.id = newName.trim()
+    fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
+  }
+  // 重命名 json 文件名 <id>.json → <newName>.json
+  try {
+    fs.renameSync(jp, path.join(from, `${newName.trim()}.json`))
+  } catch {
+    /* json 文件名异常不阻断 */
+  }
+  fs.renameSync(from, to)
+}
 export function removeVersion(id: string): void {
   fs.rmSync(versionDir(id), { recursive: true, force: true })
 }

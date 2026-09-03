@@ -105,6 +105,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       })
   })
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
+  ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) =>
+    versions.renameVersion(String(id ?? ''), String(newName ?? ''))
+  )
   ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
     versions.setIsolation(String(versionId ?? ''), isolated === true)
   )

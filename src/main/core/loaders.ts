@@ -217,7 +217,8 @@ export async function installLoader(
   loader: LoaderName,
   mcVersion: string,
   loaderVersion: string,
-  emit: ProgressEmit
+  emit: ProgressEmit,
+  instanceName?: string
 ): Promise<string> {
   // 先确保原版已安装（已装则文件校验跳过，开销很小）
   emit({ stage: 'loader', progress: 0, text: `检查原版 ${mcVersion}` })
@@ -231,8 +232,10 @@ export async function installLoader(
     const profile = (await fetchJson(
       `${base}/versions/loader/${mcVersion}/${loaderVersion}/profile/json`
     )) as VersionJson
-    const id = profile.id
+    const id = instanceName?.trim() || profile.id
     if (!id) throw new Error(`${loader} profile 缺少 id`)
+    // 自定义实例名：json id 同步改写，inheritsFrom 保持不变
+    profile.id = id
     profile._loader = loader
     profile._loaderVersion = loaderVersion
     fs.mkdirSync(versionDir(id), { recursive: true })
@@ -302,8 +305,15 @@ export async function installLoader(
     emit({ stage: 'loader', progress: 0.7, text: '运行安装器（可能需要几分钟）…' })
     await runInstaller(javaPath, jarPath, emit)
 
-    const id = findInstalledDir(loader, mcVersion, loaderVersion)
-    if (!id) throw new Error('安装器运行结束，但未找到生成的版本目录')
+    const id0 = findInstalledDir(loader, mcVersion, loaderVersion)
+    if (!id0) throw new Error('安装器运行结束，但未找到生成的版本目录')
+    // 自定义实例名：重命名安装器生成的目录与 json id
+    let id = id0
+    if (instanceName?.trim() && instanceName.trim() !== id0) {
+      const { renameVersion } = await import('./versions')
+      renameVersion(id0, instanceName.trim())
+      id = instanceName.trim()
+    }
     tagLoaderJson(id, loader, loaderVersion)
 
     // 完整性自愈：安装器可能半失败（json 已写但部分库未下载，如 client 校验失败中止）

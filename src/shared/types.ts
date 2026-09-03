@@ -55,6 +55,8 @@ export interface InstallOptions {
   loaderVersion?: string
   /** Fabric 专用：同时安装的 Fabric API 版本号（不传 = 不装） */
   fabricApi?: string
+  /** 自定义实例名（作为 versions/<名> 目录名与版本 id）；纯净版不支持（固定为 MC 版本号） */
+  instanceName?: string
 }
 
 /** Fabric API 版本条目（来自 Modrinth） */
@@ -209,6 +211,7 @@ export const IPC = {
   versionsInstalled: 'versions:installed', // () => InstalledVersion[]
   versionsInstall: 'versions:install', // (versionId: string, opts?: InstallOptions) => void
   versionsRemove: 'versions:remove', // (versionId: string) => void
+  versionsRename: 'versions:rename', // (id: string, newName: string) => void  重命名实例（目录+json id 同步改）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
   fabricApiList: 'loaders:fabricApi', // (mcVersion: string) => FabricApiVersion[]

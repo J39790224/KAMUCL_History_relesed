@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, setVersionIsolation } from '../api'
+import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, renameVersion, setVersionIsolation } from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
@@ -101,8 +101,34 @@ const modal = reactive({
   apiVersions: [] as FabricApiVersion[],
   apiVersion: '',
   loadingApi: false,
-  apiError: ''
+  apiError: '',
+  instanceName: '',
+  instanceEdited: false
 })
+
+/** 默认实例名（加载器类型+版本自动生成；纯净版固定为 MC 版本号） */
+const defaultInstanceName = computed(() => {
+  const mc = modal.version?.id ?? ''
+  if (!modal.loader) return mc
+  if (modal.loader === 'forge') return `${mc}-forge-${modal.loaderVersion || '?'}`
+  if (modal.loader === 'neoforge') return `neoforge-${modal.loaderVersion || '?'}`
+  return `${modal.loader}-loader-${modal.loaderVersion || '?'}-${mc}`
+})
+
+/** 实例名冲突/非法校验（返回错误文案，合法为 ''） */
+const instanceError = computed(() => {
+  if (!modal.loader) return ''
+  const n = (modal.instanceEdited ? modal.instanceName : defaultInstanceName.value).trim()
+  if (!n) return '实例名不能为空'
+  if (/[\\/:*?"<>|]/.test(n)) return '实例名不能包含 \\ / : * ? " < > | 字符'
+  if (store.installed.some((v) => v.id === n)) return `实例「${n}」已存在，请改名后安装`
+  return ''
+})
+
+/** 实际生效的实例名 */
+const effectiveInstanceName = computed(() =>
+  modal.loader ? (modal.instanceEdited ? modal.instanceName.trim() : defaultInstanceName.value) : ''
+)
 
 function openInstall(v: RemoteVersion) {  modal.open = true
   modal.version = v
@@ -116,6 +142,8 @@ function openInstall(v: RemoteVersion) {  modal.open = true
   modal.apiVersion = ''
   modal.loadingApi = false
   modal.apiError = ''
+  modal.instanceName = ''
+  modal.instanceEdited = false
 }
 
 watch(
@@ -157,7 +185,11 @@ watch(
 )
 
 const canConfirm = computed(
-  () => !!modal.version && !modal.loadingLoaders && (modal.loader === '' || !!modal.loaderVersion)
+  () =>
+    !!modal.version &&
+    !modal.loadingLoaders &&
+    (modal.loader === '' || !!modal.loaderVersion) &&
+    !instanceError.value
 )
 
 async function confirmInstall() {
@@ -170,7 +202,8 @@ async function confirmInstall() {
         fabricApi:
           modal.loader === 'fabric' && modal.apiOn && modal.apiVersion
             ? modal.apiVersion
-            : undefined
+            : undefined,
+        instanceName: effectiveInstanceName.value || undefined
       }
     : {}
   modal.open = false
@@ -254,6 +287,33 @@ function goManage(view: 'mods' | 'packs' | 'shaders') {
   store.resourceVersionId = manageMenu.id
   manageMenu.id = ''
   store.currentView = view
+}
+
+// ---------------- 实例重命名 ----------------
+const renameModal = reactive({ open: false, id: '', name: '', error: '', busy: false })
+
+function openRename() {
+  renameModal.id = manageMenu.id
+  renameModal.name = manageMenu.id
+  renameModal.error = ''
+  renameModal.open = true
+  manageMenu.id = ''
+}
+
+async function onConfirmRename() {
+  if (renameModal.busy) return
+  renameModal.busy = true
+  renameModal.error = ''
+  try {
+    await renameVersion(renameModal.id, renameModal.name)
+    await refreshInstalled()
+    renameModal.open = false
+    toast('实例已重命名', 'success')
+  } catch (e) {
+    renameModal.error = errText(e)
+  } finally {
+    renameModal.busy = false
+  }
 }
 
 async function onToggleIsolation(v: InstalledVersion) {
@@ -509,6 +569,33 @@ async function onToggleIsolation(v: InstalledVersion) {
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
           光影包
         </button>
+        <button class="menu-item" @click="openRename">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+          重命名
+        </button>
+      </div>
+    </Teleport>
+
+    <!-- 实例重命名弹窗 -->
+    <Teleport to="body">
+      <div v-if="renameModal.open" class="modal-mask" @click.self="renameModal.open = false">
+        <div class="modal">
+          <h3 class="modal-title">重命名实例</h3>
+          <p class="modal-label">新实例名（将作为文件夹名 versions/&lt;名&gt;/）</p>
+          <input
+            v-model="renameModal.name"
+            class="input mono"
+            spellcheck="false"
+            @keyup.enter="onConfirmRename"
+          />
+          <p v-if="renameModal.error" class="loaders-error">{{ renameModal.error }}</p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" @click="renameModal.open = false">取消</button>
+            <button class="btn btn-gold" :disabled="renameModal.busy" @click="onConfirmRename">
+              {{ renameModal.busy ? '重命名中…' : '确认重命名' }}
+            </button>
+          </div>
+        </div>
       </div>
     </Teleport>
 
@@ -552,6 +639,24 @@ async function onToggleIsolation(v: InstalledVersion) {
                 <option v-for="lv in modal.loaderVersions" :key="lv" :value="lv">{{ lv }}</option>
               </select>
               <p v-if="modal.loadLoadersError" class="loaders-error">{{ modal.loadLoadersError }}</p>
+            </template>
+
+            <!-- 实例名（加载器实例可自定义；纯净版固定为 MC 版本号） -->
+            <p class="modal-label">实例名</p>
+            <template v-if="modal.loader">
+              <input
+                v-model="modal.instanceName"
+                class="input mono"
+                :placeholder="defaultInstanceName"
+                spellcheck="false"
+                @input="modal.instanceEdited = true"
+              />
+              <p v-if="instanceError" class="loaders-error">{{ instanceError }}</p>
+              <p v-else class="muted inst-hint">实例将安装为 versions/{{ effectiveInstanceName }}/，可自定义（同 MC 版本可共存多个实例）</p>
+            </template>
+            <template v-else>
+              <input class="input mono" :value="modal.version?.id" readonly disabled />
+              <p class="muted inst-hint">原版使用固定目录名，不可更改</p>
             </template>
 
             <!-- Fabric 联动：Fabric API 自动选择 -->
@@ -884,6 +989,11 @@ async function onToggleIsolation(v: InstalledVersion) {
   margin-top: 8px;
   font-size: 13px;
   color: var(--danger);
+}
+.inst-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 /* Fabric API 联动区块 */
 .fapi-head {
