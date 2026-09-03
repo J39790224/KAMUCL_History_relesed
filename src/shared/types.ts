@@ -71,7 +71,7 @@ export interface InstallOptions {
   loaderVersion?: string
   /** Fabric 专用：同时安装的 Fabric API 版本号（不传 = 不装） */
   fabricApi?: string
-  /** 自定义实例名（作为 versions/<名> 目录名与版本 id）；纯净版不支持（固定为 MC 版本号） */
+  /** 自定义实例名（作为 versions/<名> 目录名与版本 id）；不填按规则自动生成 */
   instanceName?: string
 }
 

@@ -39,6 +39,12 @@ export type SendLog = (line: string) => void
 export type OnState = (s: LaunchState) => void
 
 let current: ChildProcess | null = null
+let currentVersionId: string | null = null
+
+/** 当前正在运行的游戏版本 id（无则 null），供重命名等写操作前校验 */
+export function getRunningVersionId(): string | null {
+  return currentVersionId
+}
 
 /** 终止当前游戏进程 */
 export function killGame(): void {
@@ -377,6 +383,7 @@ export async function launch(
   emit({ stage: 'launch', progress: 1, text: '启动游戏进程' })
   const proc = spawn(javaPath, args, { cwd: effectiveGameDir })
   current = proc
+  currentVersionId = versionId
   onState({ status: 'running', text: '游戏进程已启动' })
 
   const pushLine = makeLinePusher(log)
@@ -384,11 +391,13 @@ export async function launch(
   proc.stderr?.on('data', pushLine)
   proc.on('error', (err) => {
     current = null
+    currentVersionId = null
     logStream?.end()
     onState({ status: 'error', text: `进程启动失败: ${err.message}` })
   })
   proc.on('exit', (code) => {
     current = null
+    currentVersionId = null
     logStream?.end()
     onState({ status: 'exited', code: code ?? 0, text: `游戏已退出 (code=${code ?? 0})` })
   })

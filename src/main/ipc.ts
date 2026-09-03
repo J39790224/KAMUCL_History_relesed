@@ -126,9 +126,24 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       })
   })
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
-  ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) =>
-    versions.renameVersion(String(id ?? ''), String(newName ?? ''))
-  )
+  ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) => {
+    const vid = String(id ?? '')
+    const name = String(newName ?? '').trim()
+    // 前置校验：游戏运行中禁止改名（文件夹句柄被占用，且引用会错乱）
+    if (launch.getRunningVersionId() === vid) {
+      throw new Error('该版本正在运行中，请先退出游戏再改名')
+    }
+    versions.renameVersion(vid, name)
+    // 引用同步：收藏列表
+    const s = settings.getSettings()
+    if (s.favoriteVersions.includes(vid)) {
+      settings.saveSettings({
+        favoriteVersions: s.favoriteVersions.map((x) => (x === vid ? name : x))
+      })
+    }
+    // 引用同步：服务器绑定（隔离实例的 servers.dat 随目录迁移，无需额外处理）
+    servers.renameBinding(vid, name)
+  })
   ipcMain.handle(IPC.versionsCleanup, (_e, id: string) =>
     versions.cleanupPartialInstall(String(id ?? ''))
   )

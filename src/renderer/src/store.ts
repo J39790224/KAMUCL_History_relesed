@@ -174,6 +174,20 @@ export function recordLastPlayed(id: string) {
   }
 }
 
+/** 实例重命名后迁移最近游玩记录（lastPlayed 以版本 id 为键） */
+export function renameLastPlayed(oldId: string, newId: string) {
+  if (!oldId || !newId || oldId === newId) return
+  const ts = store.lastPlayed[oldId]
+  if (ts === undefined) return
+  store.lastPlayed[newId] = ts
+  delete store.lastPlayed[oldId]
+  try {
+    localStorage.setItem(LAST_PLAYED_KEY, JSON.stringify(store.lastPlayed))
+  } catch {
+    /* 持久化失败不影响功能 */
+  }
+}
+
 /** 设置 Banner 文字对齐方式（靠左下 / 居中），并持久化 */
 export function setBannerAlign(a: BannerAlign) {
   store.bannerAlign = a
@@ -207,11 +221,27 @@ export function exitEditMode() {
 }
 
 // ---------------- 实例显示（版本 × 加载器 统一语义） ----------------
-/**
- * 实例主显示名：`26.2 · Forge 65.0.0` / `26.2`（纯净版）。
- * 加载器实例不再裸奔技术 id（fabric-loader-x.x.x-mc）。
- */
-export function displayVersionName(v: InstalledVersion): string {
+/** 实例 id 是否为自动生成的默认名（自定义命名的实例按自定义名展示） */
+function isAutoInstanceId(v: InstalledVersion): boolean {
+  if (v.modpackName) return false // 整合包实例 id 即包名，视作自定义名展示
+  if (!v.loader) return v.id === v.mcVersion
+  const lv = v.loaderVersion ?? ''
+  switch (v.loader) {
+    case 'forge':
+      return v.id === `${v.mcVersion}-forge-${lv}`
+    case 'neoforge':
+      return v.id === `neoforge-${lv}`
+    case 'fabric':
+      return v.id === `fabric-loader-${lv}-${v.mcVersion}`
+    case 'quilt':
+      return v.id === `quilt-loader-${lv}-${v.mcVersion}`
+    default:
+      return false
+  }
+}
+
+/** 实际内容描述：`26.2 · NeoForge 21.1.0` / `26.2`（纯净版） */
+function contentDesc(v: InstalledVersion): string {
   if (v.loader) {
     const cap = v.loader.charAt(0).toUpperCase() + v.loader.slice(1)
     return `${v.mcVersion} · ${cap}${v.loaderVersion ? ' ' + v.loaderVersion : ''}`
@@ -219,8 +249,18 @@ export function displayVersionName(v: InstalledVersion): string {
   return v.mcVersion
 }
 
-/** 实例副显示名：技术 id（小字补充） */
+/**
+ * 实例主显示名：默认名实例显示 `26.2 · Forge 65.0.0` / `26.2`；
+ * 自定义命名实例直接显示自定义名（如「机械动力生存」）。
+ */
+export function displayVersionName(v: InstalledVersion): string {
+  if (!isAutoInstanceId(v)) return v.id
+  return contentDesc(v)
+}
+
+/** 实例副显示名：默认名实例显示技术 id；自定义名实例显示实际内容（MC 版本 + 加载器） */
 export function displayVersionSub(v: InstalledVersion): string {
+  if (!isAutoInstanceId(v)) return contentDesc(v)
   return v.id
 }
 

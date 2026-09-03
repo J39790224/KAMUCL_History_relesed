@@ -563,32 +563,48 @@ export function validateInstanceName(name: string, excludeId?: string): string |
   return null
 }
 
-/** 重命名实例：目录与 json id 同步改名（校验冲突/非法/占用；原版版本不可改名） */
+/** 重命名实例：目录、json id、原版 jar 文件名同步改名（校验冲突/非法/占用；运行中由调用方拦截） */
 export function renameVersion(id: string, newName: string): void {
-  const j = fs.existsSync(versionJsonPath(id)) ? readVersionJson(id) : null
-  if (j && !j.inheritsFrom && !j._modpackName) {
-    throw new Error('原版游戏版本名不可更改（加载器实例与整合包实例可重命名）')
-  }
   const err = validateInstanceName(newName, id)
   if (err) throw new Error(err)
+  const trimmed = newName.trim()
   const from = versionDir(id)
-  const to = versionDir(newName.trim())
+  const to = versionDir(trimmed)
   if (!fs.existsSync(from)) throw new Error('实例不存在')
   if (from === to) return
-  // 更新 json 内 id 字段（先读改写，再移动目录，避免中间态）
+  // 更新 json 内 id 字段（先读改写，再移动目录，避免中间态）；
+  // 原版实例改名前记录真实 MC 版本 id（_mcVersion），改名后修复/Java 推断仍可用
   const jp = versionJsonPath(id)
   if (fs.existsSync(jp)) {
     const j = readVersionJson(id)
-    j.id = newName.trim()
+    if (!j.inheritsFrom && !j._loader && !j._modpackName && !j._mcVersion) j._mcVersion = j.id
+    j.id = trimmed
     fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
   }
   // 重命名 json 文件名 <id>.json → <newName>.json
   try {
-    fs.renameSync(jp, path.join(from, `${newName.trim()}.json`))
+    fs.renameSync(jp, path.join(from, `${trimmed}.json`))
   } catch {
     /* json 文件名异常不阻断 */
   }
-  fs.renameSync(from, to)
+  // 原版实例的客户端 jar 文件名与 id 同名，同步改名
+  const oldJar = path.join(from, `${id}.jar`)
+  if (fs.existsSync(oldJar)) {
+    try {
+      fs.renameSync(oldJar, path.join(from, `${trimmed}.jar`))
+    } catch {
+      /* 同上 */
+    }
+  }
+  try {
+    fs.renameSync(from, to)
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY') {
+      throw new Error('文件夹正被占用（游戏运行中或被其他程序打开），请关闭后重试')
+    }
+    throw e
+  }
 }
 export function removeVersion(id: string): void {
   fs.rmSync(versionDir(id), { recursive: true, force: true })

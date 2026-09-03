@@ -58,6 +58,19 @@ export function bindServer(id: string, versionId: string): ServerEntry[] {
   return list
 }
 
+/** 实例重命名后同步 servers.json 中的绑定 versionId */
+export function renameBinding(oldId: string, newId: string): void {
+  const list = listServers()
+  let changed = false
+  for (const s of list) {
+    if (s.versionId === oldId) {
+      s.versionId = newId
+      changed = true
+    }
+  }
+  if (changed) persist(list)
+}
+
 // ---------------- servers.dat 双向同步 ----------------
 
 interface DatServer {
