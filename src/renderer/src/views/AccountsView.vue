@@ -50,6 +50,7 @@ const ms = reactive({
   open: false,
   waiting: false,
   starting: false,
+  autoCopied: false,
   info: null as MsDeviceCodeInfo | null
 })
 
@@ -60,6 +61,11 @@ async function beginMsLogin() {
     ms.info = await msBeginLogin()
     ms.open = true
     ms.waiting = true
+    // 设备代码出现的瞬间自动写入剪贴板，玩家到验证页直接粘贴即可
+    ms.autoCopied = false
+    if (ms.info.userCode) {
+      ms.autoCopied = await copyText(ms.info.userCode)
+    }
   } catch (e) {
     toast('无法开始微软登录：' + errText(e), 'error')
   } finally {
@@ -240,7 +246,11 @@ async function onRemove(acc: Account) {
           <button class="user-code" title="点击复制" @click="copyCode">
             {{ ms.info?.userCode }}
           </button>
-          <p class="muted copy-hint">点击代码即可复制</p>
+          <p v-if="ms.autoCopied" class="copy-hint copied">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            已自动复制到剪贴板，到验证页直接粘贴即可
+          </p>
+          <p v-else class="muted copy-hint">点击代码即可复制</p>
 
           <div class="ms-uri-row">
             <input class="input" :value="ms.info?.verificationUri" readonly />
@@ -427,6 +437,12 @@ async function onRemove(acc: Account) {
 .copy-hint {
   font-size: 12px;
   margin-bottom: 16px;
+}
+.copy-hint.copied {
+  color: var(--ok);
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 .ms-uri-row {
   display: flex;
