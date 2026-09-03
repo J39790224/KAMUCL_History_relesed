@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { errText, getSettings, installModpack, onInstallDone, onLaunchLog, onLaunchState, onProgress, probeModpack, selectFile } from './api'
+import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, probeModpack, selectFile } from './api'
 import { exitEditMode, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, store, toast } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
@@ -417,6 +417,15 @@ onMounted(async () => {
         void refreshInstalled()
       } else {
         toast('安装失败：' + (r.error ?? '未知错误'), 'error')
+      }
+    }),
+    // 游戏目录迁移完成：立即全局刷新（版本列表/最近游戏/资源管理），全程无需重启
+    onGameDirDone((r) => {
+      store.progress = null
+      if (r.ok) {
+        void refreshInstalled().then(() => {
+          store.fsRefreshTick++
+        })
       }
     }),
     onLaunchLog((line) => {

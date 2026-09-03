@@ -44,6 +44,13 @@ export const getSettings = () => invoke<Settings>(IPC.settingsGet)
 export const saveSettings = (patch: Partial<Settings>) =>
   invoke<Settings>(IPC.settingsSet, JSON.parse(JSON.stringify(patch)) as Partial<Settings>)
 export const selectDir = () => invoke<string | null>(IPC.appSelectDir)
+/** 游戏目录迁移（异步）；结束经 onGameDirDone 回调 */
+export const migrateGameDir = (newDir: string, migrate: boolean) =>
+  invoke<void>(IPC.gameDirMigrate, newDir, migrate)
+export const onGameDirDone = (
+  cb: (r: { ok: boolean; error?: string; gameDir?: string }) => void
+) =>
+  subscribe<{ ok: boolean; error?: string; gameDir?: string }>(IPC_EVENT.gameDirDone, cb)
 /** 选择整合包文件（.mrpack/.zip），取消返回 null */
 export const selectFile = () => invoke<string | null>(IPC.appSelectFile)
 

@@ -27,6 +27,7 @@ import * as java from './core/java'
 import * as launch from './core/launch'
 import * as servers from './core/servers'
 import * as modinfo from './core/modinfo'
+import * as gamedir from './core/gamedir'
 import { versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
@@ -189,6 +190,14 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       .catch((err) => sendState({ status: 'error', text: errText(err) }))
   })
   ipcMain.handle(IPC.gameKill, () => launch.killGame())
+
+  // ---------------- 游戏目录迁移 ----------------
+  ipcMain.handle(IPC.gameDirMigrate, (_e, newDir: string, migrate: boolean) => {
+    void gamedir
+      .migrateGameDir(String(newDir ?? ''), migrate === true, emit)
+      .then((dir) => send(IPC_EVENT.gameDirDone, { ok: true, gameDir: dir }))
+      .catch((err) => send(IPC_EVENT.gameDirDone, { ok: false, error: errText(err) }))
+  })
 
   // ---------------- 服务器 ----------------
   ipcMain.handle(IPC.serversList, () => servers.listServers())

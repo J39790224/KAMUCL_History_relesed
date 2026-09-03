@@ -16,6 +16,7 @@ import type {
   SkinVariant
 } from '../../shared/types'
 import { getValidAccount, selectedAccount } from './accounts'
+import { gameDir } from './paths'
 
 const API = 'https://api.minecraftservices.com'
 /** 历史皮肤上限，超出删除最旧 */
@@ -115,7 +116,7 @@ async function fetchDataUrl(url: string): Promise<string | undefined> {
 /** 启动器自身诊断日志：gameDir/kamucl-logs/launcher.log */
 function appendLauncherLog(line: string): void {
   try {
-    const dir = path.join(app.getPath('appData'), '.kamucl', 'kamucl-logs')
+    const dir = path.join(gameDir(), 'kamucl-logs')
     fs.mkdirSync(dir, { recursive: true })
     fs.appendFileSync(
       path.join(dir, 'launcher.log'),

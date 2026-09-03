@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { errText, listJava, saveSettings, selectDir } from '../api'
-import { enterEditMode, store, toast } from '../store'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { errText, getSettings, listJava, migrateGameDir, onGameDirDone, saveSettings, selectDir } from '../api'
+import { enterEditMode, progressOverall, store, toast } from '../store'
 import type { Settings } from '@shared/types'
 
 // ---------------- 保存 ----------------
@@ -13,19 +13,49 @@ async function save(patch: Partial<Settings>) {
   }
 }
 
-// ---------------- 游戏目录 ----------------
+// ---------------- 游戏目录迁移 ----------------
 const pickingDir = ref(false)
+const migrateModal = reactive({
+  open: false,
+  newDir: '',
+  migrating: false,
+  migrateData: true
+})
+
+/** 迁移进度（复用全局 progress 事件 stage=migrate） */
+const migratingProgress = computed(() =>
+  migrateModal.migrating && store.progress?.stage === 'migrate'
+    ? `${store.progress.text} ${Math.round(progressOverall(store.progress) * 100)}%`
+    : ''
+)
 
 async function browseDir() {
   pickingDir.value = true
   try {
     const dir = await selectDir()
-    if (dir) await save({ gameDir: dir })
+    if (!dir) return
+    if (dir === store.settings?.gameDir) {
+      toast('新目录与当前目录相同', 'info')
+      return
+    }
+    migrateModal.newDir = dir
+    migrateModal.migrateData = true
+    migrateModal.open = true
   } catch (e) {
     toast('选择目录失败：' + errText(e), 'error')
   } finally {
     pickingDir.value = false
   }
+}
+
+/** 确认执行迁移（或从零开始）；完成/失败由 App.vue 订阅的 gameDirDone 统一收尾 */
+function onConfirmMigrate() {
+  migrateModal.open = false
+  migrateModal.migrating = true
+  void migrateGameDir(migrateModal.newDir, migrateModal.migrateData).catch((e) => {
+    migrateModal.migrating = false
+    toast('目录迁移失败：' + errText(e), 'error')
+  })
 }
 
 // ---------------- Java 列表 ----------------
@@ -41,7 +71,20 @@ onMounted(async () => {
   } finally {
     javaLoading.value = false
   }
+  // 目录迁移收尾：成功 → 重新拉取设置并提示；失败 → 配置已回滚，仅提示
+  offGameDirDone = onGameDirDone(async (r) => {
+    migrateModal.migrating = false
+    if (r.ok) {
+      store.settings = await getSettings()
+      toast('游戏目录已切换，数据已刷新', 'success')
+    } else {
+      toast(`迁移失败：${r.error ?? '未知错误'}（配置未变更）`, 'error')
+    }
+  })
 })
+
+let offGameDirDone: (() => void) | null = null
+onUnmounted(() => offGameDirDone?.())
 
 const javaLabel = (j: { major: number; path: string; version: string }) =>
   `Java ${j.major}（${j.version}）· ${j.path}`
@@ -160,13 +203,20 @@ function saveResolution() {
 
       <!-- 游戏目录 -->
       <div class="card group">
-        <h3 class="group-title">游戏目录</h3>
+        <h3 class="group-title">游戏安装目录</h3>
         <div class="dir-row">
           <input class="input mono" :value="store.settings.gameDir" readonly title="游戏目录" />
-          <button class="btn btn-ghost dir-btn" :disabled="pickingDir" @click="browseDir">
-            {{ pickingDir ? '选择中…' : '浏览…' }}
+          <button class="btn btn-ghost dir-btn" :disabled="pickingDir || migrateModal.migrating" @click="browseDir">
+            {{ pickingDir ? '选择中…' : '更改…' }}
           </button>
         </div>
+        <p class="muted group-hint">
+          默认位于系统盘（%AppData%\.kamucl）。更改时可选择将已有游戏文件完整迁移到新目录。
+        </p>
+        <p v-if="migrateModal.migrating" class="migrate-status">
+          <span class="spin"></span>
+          {{ migratingProgress || '正在迁移游戏文件…' }}
+        </p>
       </div>
 
       <!-- 默认版本隔离 -->
@@ -344,6 +394,36 @@ function saveResolution() {
         </label>
       </div>
     </template>
+
+    <!-- 游戏目录迁移确认弹窗 -->
+    <Teleport to="body">
+      <div v-if="migrateModal.open" class="modal-mask" @click.self="migrateModal.open = false">
+        <div class="modal">
+          <h3 class="modal-title">更改游戏安装目录</h3>
+          <p class="modal-label">新目录</p>
+          <input class="input mono" :value="migrateModal.newDir" readonly />
+          <p class="modal-label">已有游戏文件</p>
+          <label class="migrate-option" :class="{ active: migrateModal.migrateData }">
+            <input v-model="migrateModal.migrateData" type="radio" :value="true" />
+            <span>
+              <strong>迁移到新目录（推荐）</strong>
+              <span class="muted">完整迁移 versions、模组、存档等全部游戏数据，迁移前自动校验磁盘空间与权限；旧目录数据保留作备份。</span>
+            </span>
+          </label>
+          <label class="migrate-option" :class="{ active: !migrateModal.migrateData }">
+            <input v-model="migrateModal.migrateData" type="radio" :value="false" />
+            <span>
+              <strong>新目录从零开始</strong>
+              <span class="muted">不迁移任何数据，新目录下的启动器从空白开始。</span>
+            </span>
+          </label>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" @click="migrateModal.open = false">取消</button>
+            <button class="btn btn-gold" @click="onConfirmMigrate">确认更改</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -394,6 +474,44 @@ function saveResolution() {
 .select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+/* 迁移状态与选项 */
+.migrate-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--accent-2);
+}
+.migrate-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.migrate-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.migrate-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.migrate-option span strong {
+  display: block;
+  font-size: 13.5px;
+  margin-bottom: 3px;
+}
+.migrate-option span .muted {
+  font-size: 12px;
+  line-height: 1.6;
 }
 .group-hint {
   font-size: 12px;

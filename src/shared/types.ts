@@ -218,6 +218,9 @@ export const IPC = {
   gameLaunch: 'game:launch', // (versionId: string, serverAddress?: string) => void  带 serverAddress 时用 --quickPlayMultiplayer 直接进服
   gameKill: 'game:kill', // () => void
 
+  // 游戏目录迁移
+  gameDirMigrate: 'gameDir:migrate', // (newDir: string, migrate: boolean) => void  异步：进度走 event:progress（stage=migrate），结束走 event:gameDirDone
+
   // 服务器（SLP 协议 ping）
   serversList: 'servers:list', // () => ServerEntry[]
   serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
@@ -265,7 +268,8 @@ export const IPC_EVENT = {
   launchLog: 'event:launchLog', // (line: string)
   launchState: 'event:launchState', // (s: LaunchState)
   msLoginDone: 'event:msLoginDone', // (account: Account | null)  null = 失败/取消
-  installDone: 'event:installDone' // (r: { versionId: string; ok: boolean; error?: string })
+  installDone: 'event:installDone', // (r: { versionId: string; ok: boolean; error?: string })
+  gameDirDone: 'event:gameDirDone' // (r: { ok: boolean; error?: string; gameDir?: string })  目录迁移结束（配置已切换/失败已回滚）
 } as const
 
 /**
