@@ -152,7 +152,7 @@ const versionMissing = (s: ServerEntry): boolean =>
 
 function openJoin(s: ServerEntry) {
   if (!store.installed.length) {
-    toast('还没有安装任何版本，请先到游戏页安装', 'error')
+    toast('还没有安装任何版本，请先到游戏版本页安装', 'error')
     return
   }
   joinModal.target = s

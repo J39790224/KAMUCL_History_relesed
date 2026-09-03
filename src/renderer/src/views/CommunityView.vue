@@ -463,7 +463,7 @@ async function confirmDownload() {
                 {{ v.id }}{{ v.modpackName ? `（整合包 · ${v.modpackName}）` : '' }}
               </option>
             </select>
-            <p v-else class="files-error">暂无已安装版本，请先在「游戏」页安装一个版本</p>
+            <p v-else class="files-error">暂无已安装版本，请先在「游戏版本」页安装一个版本</p>
           </template>
           <p v-else class="muted pack-tip">整合包将下载后自动创建独立实例并安装</p>
 

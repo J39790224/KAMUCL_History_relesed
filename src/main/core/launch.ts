@@ -154,7 +154,7 @@ export async function launch(
   } catch (e) {
     if (baseIdProbe === versionId) {
       // 连入口版本的 json 都丢了，无法推断链条，只能重装
-      throw new Error(`版本 ${versionId} 文件丢失，请在游戏页重新安装`)
+      throw new Error(`版本 ${versionId} 文件丢失，请在游戏版本页重新安装`)
     }
     chainBroken = true
   }

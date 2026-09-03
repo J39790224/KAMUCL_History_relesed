@@ -431,7 +431,7 @@ async function onToggleIsolation(v: InstalledVersion) {
   <div class="page">
     <!-- 标题 -->
     <div class="page-head">
-      <h1 class="page-title">游戏</h1>
+      <h1 class="page-title">游戏版本</h1>
       <p class="page-sub">浏览、安装与管理 Minecraft 版本</p>
     </div>
 

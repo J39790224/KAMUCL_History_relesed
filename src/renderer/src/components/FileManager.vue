@@ -193,7 +193,7 @@ const fmtDate = (ts: number) => {
 
     <!-- 未安装任何版本时提示 -->
     <div v-if="!store.installed.length" class="card empty" style="padding: 40px 20px">
-      <span>还没有安装任何游戏版本，请先到「游戏」页安装</span>
+      <span>还没有安装任何游戏版本，请先到「游戏版本」页安装</span>
     </div>
 
     <!-- 文件列表 -->

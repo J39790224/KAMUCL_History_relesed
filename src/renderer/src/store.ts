@@ -68,7 +68,7 @@ export const store = reactive({
   selectedAccount: null as Account | null,
   installed: [] as InstalledVersion[],
   currentView: 'home' as ViewName,
-  /** 顶栏搜索关键字（游戏页版本列表联动过滤） */
+  /** 顶栏搜索关键字（游戏版本页版本列表联动过滤） */
   searchKeyword: '',
   /** 资源管理（模组/资源包/光影包）当前选中的版本 id；空 = 跟随第一个已装版本 */
   resourceVersionId: '',

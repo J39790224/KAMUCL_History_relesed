@@ -178,11 +178,11 @@ async function onInstallSelected() {
   }
 }
 
-/** 「下载新版本」：跳游戏页，提示装完后再装入 */
+/** 「下载新版本」：跳游戏版本页，提示装完后再装入 */
 function onDownloadNew() {
   emit('close')
   store.currentView = 'game'
-  toast('请在游戏页选择兼容的版本安装，完成后重新拖入 MOD 即可装入', 'info')
+  toast('请在游戏版本页选择兼容的版本安装，完成后重新拖入 MOD 即可装入', 'info')
 }
 
 /** 「自动下载最新兼容版本」：取 MOD 支持的最高 release + 多数派加载器，走现有下载链路；

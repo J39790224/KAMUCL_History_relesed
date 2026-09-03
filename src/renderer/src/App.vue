@@ -62,7 +62,7 @@ const navItems: Array<{ key: ViewName; label: string; icon: string }> = [
   },
   {
     key: 'game',
-    label: '游戏',
+    label: '游戏版本',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="5.5"/><path d="M7.5 10.8v3.4M5.8 12.5h3.4"/><circle cx="15.6" cy="11.9" r="0.6" fill="currentColor" stroke="none"/><circle cx="18" cy="13.6" r="0.6" fill="currentColor" stroke="none"/></svg>'
   },
   {
@@ -498,7 +498,7 @@ onMounted(async () => {
         const broken = store.installed.filter((v) => v.incomplete)
         if (broken.length) {
           toast(
-            `检测到 ${broken.length} 个版本下载未完成（${broken.map((b) => b.id).join('、')}），可在「游戏 → 已安装」继续下载或删除残留`,
+            `检测到 ${broken.length} 个版本下载未完成（${broken.map((b) => b.id).join('、')}），可在「游戏版本 → 已安装」继续下载或删除残留`,
             'info'
           )
         }
@@ -565,7 +565,7 @@ onUnmounted(() => {
             <span class="nav-label">{{ item.label }}</span>
           </button>
 
-          <!-- 资源管理子级菜单（插在「游戏」之后） -->
+          <!-- 资源管理子级菜单（插在「游戏版本」之后） -->
           <template v-if="item.key === 'game'">
             <button
               class="nav-item nav-parent"

@@ -458,7 +458,7 @@ function saveResolution() {
           <span class="java-auto-text">
             <span class="java-auto-title">新版本默认开启版本隔离（推荐）</span>
             <span class="muted java-auto-desc">
-              每个新安装的版本使用独立的存档/模组/配置目录，互不干扰。关闭后新版本与全局共享游戏目录；已安装的版本可在游戏页单独开关。
+              每个新安装的版本使用独立的存档/模组/配置目录，互不干扰。关闭后新版本与全局共享游戏目录；已安装的版本可在游戏版本页单独开关。
             </span>
           </span>
           <span class="switch">
