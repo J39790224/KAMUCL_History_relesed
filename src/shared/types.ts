@@ -33,6 +33,16 @@ export interface RemoteVersion {
   releaseTime: string
 }
 
+// ---------------- 游戏文件夹 ----------------
+export interface GameFolder {
+  /** 绝对路径 */
+  path: string
+  /** 显示名（默认取目录名） */
+  name: string
+  /** 是否为默认文件夹（承接新安装版本；libraries/assets/runtimes 共享位置） */
+  isDefault: boolean
+}
+
 export interface InstalledVersion {
   id: string
   /** 基于的原版版本（加载器版本等于对应 mc 版本） */
@@ -50,6 +60,8 @@ export interface InstalledVersion {
   failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
+  /** 该版本所属的游戏文件夹路径 */
+  folder: string
 }
 
 export type LoaderName = 'forge' | 'fabric' | 'quilt' | 'neoforge'
@@ -170,6 +182,10 @@ export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme[
 
 export interface Settings {
   gameDir: string
+  /** 游戏文件夹登记列表（每个文件夹独立 versions/；libraries/assets/runtimes 共享于默认文件夹） */
+  folders: GameFolder[]
+  /** 当前活动文件夹（新安装版本与常规寻址目标） */
+  activeFolder: string
   /** 指定 java 可执行文件路径；空字符串 = 自动 */
   javaPath: string
   /** Java 自动管理：自动检测版本所需 Java，缺失时自动下载（默认开启） */
@@ -338,6 +354,13 @@ export const IPC = {
   versionsRemove: 'versions:remove', // (versionId: string) => void
   versionsRename: 'versions:rename', // (id: string, newName: string) => void  重命名实例（目录+json id 同步改）
   versionsCleanup: 'versions:cleanup', // (id: string) => boolean  清理安装失败残留目录
+
+  // 游戏文件夹管理
+  foldersList: 'folders:list', // () => { folders: GameFolder[]; active: string }
+  foldersAdd: 'folders:add', // (path: string) => GameFolder[]  添加已有文件夹（校验存在）
+  foldersRemove: 'folders:remove', // (path: string) => GameFolder[]  移除登记（不删文件；默认文件夹不可移除）
+  foldersSetDefault: 'folders:setDefault', // (path: string) => GameFolder[]
+  foldersSetActive: 'folders:setActive', // (path: string) => void  切换活动文件夹（gameDir 跟随）
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]

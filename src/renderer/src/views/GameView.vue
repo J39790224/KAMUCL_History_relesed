@@ -312,6 +312,12 @@ function onRetry(versionId: string) {
 /** 安装中的版本（进度条显示在已安装页顶部） */
 const installingVersions = computed(() => [...store.installing])
 
+/** 文件夹路径简写（取末级目录名） */
+const folderShortName = (p: string): string => {
+  const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || p
+}
+
 /** 收藏置顶 + 组内最近游玩倒序 */
 const sortedInstalled = computed(() => sortWithFavorite(store.installed))
 /** 已收藏分组（不含残缺/失败版本） */
@@ -627,6 +633,7 @@ async function onToggleIsolation(v: InstalledVersion) {
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
           <span v-else-if="!v.loader" class="tag">纯净版</span>
           <span v-if="v.isolated" class="tag">已隔离</span>
+          <span class="tag tag-cyan" :title="v.folder">{{ folderShortName(v.folder) }}</span>
           <span class="muted played-text">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</span>
           <label
             v-if="!v.modpackName"

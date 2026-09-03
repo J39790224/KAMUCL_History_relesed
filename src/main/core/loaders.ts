@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
 import { downloadAll, downloadFile } from './download'
 import { getSettings } from './settings'
-import { gameDir, versionDir, versionJsonPath, versionsDir } from './paths'
+import { gameDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { ensureJava, scanJava } from './java'
 import {
   installVanilla,
@@ -257,6 +257,7 @@ export async function installLoader(
       mirror
     )
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
+    registerVersionFolder(id, gameDir()) // fabric/quilt 实例注册到当前活动文件夹
     return id
   }
 
@@ -338,6 +339,7 @@ export async function installLoader(
       )
     }
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
+    registerVersionFolder(id, gameDir()) // forge/neoforge 实例注册到当前活动文件夹
     return id
   } finally {
     fs.rmSync(jarPath, { force: true })

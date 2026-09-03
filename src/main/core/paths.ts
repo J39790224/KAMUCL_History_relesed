@@ -1,20 +1,58 @@
 /**
- * 目录拼接工具：所有路径基于 settings.gameDir
+ * 目录拼接工具（多游戏文件夹体系）：
+ * - versions 按「版本所属文件夹」寻址（versionFolderMap 由 listInstalled 扫描时填充，
+ *   新安装版本经 registerVersionFolder 注册）
+ * - libraries / assets / runtimes 共享，统一放在「默认文件夹」下
  */
 import path from 'node:path'
 import { getSettings } from './settings'
 
-/** 游戏根目录 */
+/** 当前活动游戏文件夹（新安装版本与常规寻址目标） */
 export function gameDir(): string {
-  return getSettings().gameDir
+  return getSettings().activeFolder || getSettings().gameDir
 }
 
+/** 默认文件夹（libraries/assets/runtimes 的共享位置） */
+export function defaultFolderPath(): string {
+  const s = getSettings()
+  return s.folders.find((f) => f.isDefault)?.path ?? gameDir()
+}
+
+/** 全部已登记的游戏文件夹路径 */
+export function allFolders(): string[] {
+  const s = getSettings()
+  const list = s.folders.map((f) => f.path)
+  return list.length ? list : [gameDir()]
+}
+
+// ---------------- 版本 → 文件夹 映射 ----------------
+
+const versionFolderMap = new Map<string, string>()
+
+/** 注册版本所属文件夹（安装时与 listInstalled 扫描时调用） */
+export function registerVersionFolder(id: string, folder: string): void {
+  versionFolderMap.set(id, folder)
+}
+
+/** 版本所属文件夹（未注册时回退为当前活动文件夹） */
+export function folderOfVersion(id: string): string {
+  return versionFolderMap.get(id) ?? gameDir()
+}
+
+// ---------------- versions ----------------
+
+/** 当前活动文件夹的 versions 目录（新安装与安装器输出位置） */
 export function versionsDir(): string {
   return path.join(gameDir(), 'versions')
 }
 
+/** 全部文件夹的 versions 目录（listInstalled 扫描用） */
+export function allVersionsDirs(): Array<{ folder: string; dir: string }> {
+  return allFolders().map((folder) => ({ folder, dir: path.join(folder, 'versions') }))
+}
+
 export function versionDir(id: string): string {
-  return path.join(versionsDir(), id)
+  return path.join(folderOfVersion(id), 'versions', id)
 }
 
 export function versionJsonPath(id: string): string {
@@ -34,8 +72,10 @@ export function installMarkPath(id: string): string {
   return path.join(versionDir(id), '.installing')
 }
 
+// ---------------- 共享库 / 资源 / 运行时（默认文件夹下） ----------------
+
 export function librariesDir(): string {
-  return path.join(gameDir(), 'libraries')
+  return path.join(defaultFolderPath(), 'libraries')
 }
 
 /** rel 为 maven 风格的相对路径（正斜杠），Windows 下混合分隔符也可正常使用 */
@@ -44,7 +84,7 @@ export function libraryPath(rel: string): string {
 }
 
 export function assetsDir(): string {
-  return path.join(gameDir(), 'assets')
+  return path.join(defaultFolderPath(), 'assets')
 }
 
 export function assetIndexPath(indexId: string): string {
@@ -61,5 +101,5 @@ export function virtualLegacyDir(): string {
 }
 
 export function runtimesDir(): string {
-  return path.join(gameDir(), 'runtimes')
+  return path.join(defaultFolderPath(), 'runtimes')
 }

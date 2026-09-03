@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { addCustomJava, errText, getSettings, hideJava, listJava, migrateGameDir, onGameDirDone, refreshJava, saveSettings, selectDir } from '../api'
-import { enterEditMode, progressOverall, store, toast } from '../store'
-import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
-import type { Settings } from '@shared/types'
+import { addCustomJava, addFolder, errText, getSettings, hideJava, listFolders, listJava, migrateGameDir, onGameDirDone, refreshJava, removeFolder, saveSettings, selectDir, setActiveFolder, setDefaultFolder } from '../api'
+import { enterEditMode, progressOverall, refreshInstalled, store, toast } from '../store'
+import type { GameFolder, Settings } from '@shared/types'
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
@@ -73,6 +72,63 @@ function onToggleFeature(key: string, enabled: boolean) {
   const cur = store.settings?.disabledFeatures ?? []
   const next = enabled ? cur.filter((k) => k !== key) : [...new Set([...cur, key])]
   void save({ disabledFeatures: next })
+}
+
+// ---------------- 游戏文件夹 ----------------
+const folders = ref<GameFolder[]>([])
+const activeFolder = ref('')
+
+async function loadFolders() {
+  try {
+    const r = await listFolders()
+    folders.value = r.folders
+    activeFolder.value = r.active
+  } catch (e) {
+    toast('读取游戏文件夹失败：' + errText(e), 'error')
+  }
+}
+
+async function onAddFolder() {
+  const dir = await selectDir()
+  if (!dir) return
+  try {
+    folders.value = await addFolder(dir)
+    await refreshInstalled()
+    toast('已添加文件夹，其中版本已纳入列表', 'success')
+  } catch (e) {
+    toast('添加失败：' + errText(e), 'error')
+  }
+}
+
+async function onSetActive(p: string) {
+  try {
+    await setActiveFolder(p)
+    activeFolder.value = p
+    store.settings = await getSettings()
+    await refreshInstalled()
+    toast('已切换活动文件夹', 'success')
+  } catch (e) {
+    toast('切换失败：' + errText(e), 'error')
+  }
+}
+
+async function onSetDefault(p: string) {
+  try {
+    folders.value = await setDefaultFolder(p)
+    toast('已设为默认文件夹', 'success')
+  } catch (e) {
+    toast('设置失败：' + errText(e), 'error')
+  }
+}
+
+async function onRemoveFolder(p: string) {
+  try {
+    folders.value = await removeFolder(p)
+    await refreshInstalled()
+    toast('已移除登记（文件保留）', 'success')
+  } catch (e) {
+    toast('移除失败：' + errText(e), 'error')
+  }
 }
 
 // ---------------- 预设主题 ----------------
@@ -156,6 +212,7 @@ async function onHideJava(p: string) {
 }
 
 onMounted(async () => {
+  void loadFolders()
   try {
     javas.value = await listJava()
   } catch (e) {
@@ -334,6 +391,33 @@ function saveResolution() {
 
       <!-- 首页布局与背景（个性化） -->
       <HomeLayoutEditor />
+
+      <!-- 游戏文件夹（多目录体系） -->
+      <div class="card group">
+        <h3 class="group-title">游戏文件夹</h3>
+        <p class="muted group-hint">
+          登记多个游戏文件夹（官方 .minecraft、其他启动器目录等），版本按所属文件夹管理；「默认」文件夹承接新安装与共享库，「活动」为当前操作目标。
+        </p>
+        <div v-if="!folders.length" class="muted">加载中…</div>
+        <div v-for="f in folders" :key="f.path" class="folder-row">
+          <div class="folder-meta">
+            <div class="folder-name-row">
+              <span class="folder-name">{{ f.name }}</span>
+              <span v-if="f.isDefault" class="tag tag-gold">默认</span>
+              <span v-if="f.path === activeFolder" class="tag">活动中</span>
+            </div>
+            <span class="muted folder-path" :title="f.path">{{ f.path }}</span>
+          </div>
+          <div class="folder-actions">
+            <button v-if="f.path !== activeFolder" class="btn btn-ghost btn-sm" @click="onSetActive(f.path)">切换</button>
+            <button v-if="!f.isDefault" class="btn btn-ghost btn-sm" @click="onSetDefault(f.path)">设为默认</button>
+            <button v-if="!f.isDefault" class="btn btn-danger btn-sm" @click="onRemoveFolder(f.path)">移除</button>
+          </div>
+        </div>
+        <button class="btn btn-ghost" style="align-self: flex-start; margin-top: 8px" @click="onAddFolder">
+          + 添加已有文件夹…
+        </button>
+      </div>
 
       <!-- 游戏目录 -->
       <div class="card group">
@@ -664,6 +748,43 @@ function saveResolution() {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+}
+/* 游戏文件夹列表 */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.folder-row:last-of-type {
+  border-bottom: none;
+}
+.folder-meta {
+  flex: 1;
+  min-width: 0;
+}
+.folder-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.folder-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.folder-path {
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .java-auto-row {
   display: flex;

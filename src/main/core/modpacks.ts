@@ -11,7 +11,8 @@ import AdmZip from 'adm-zip'
 import type { LoaderName, ModpackInfo, ProgressEvent } from '../../shared/types'
 import { downloadAll, type DownloadTask } from './download'
 import { getSettings } from './settings'
-import { versionDir, versionJsonPath, versionsDir } from './paths'
+import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
+import { gameDir } from './paths'
 import { installVersion } from './versions'
 
 export type ProgressEmit = (e: ProgressEvent) => void
@@ -532,6 +533,7 @@ function installFullpack(
     _modpackVersion: meta.vid
   }
   fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
+  registerVersionFolder(id, gameDir())
 
   emit({ stage: 'done', progress: 1, text: `${name} 安装完成` })
   return id
@@ -685,6 +687,7 @@ export async function installModpack(
     _modpackVersion: meta.packVersion
   }
   fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
+  registerVersionFolder(id, gameDir())
 
   // 6) 下载整合包文件
   let pending: PendingFile[]

@@ -19,8 +19,11 @@ function settingsFile(): string {
 }
 
 function defaults(): Settings {
+  const gameDir = path.join(app.getPath('appData'), '.kamucl')
   return {
-    gameDir: path.join(app.getPath('appData'), '.kamucl'),
+    gameDir,
+    folders: [{ path: gameDir, name: '默认文件夹', isDefault: true }],
+    activeFolder: gameDir,
     javaPath: '',
     javaAuto: true,
     javaCustom: [],
@@ -59,10 +62,26 @@ export function getSettings(): Settings {
         main: Array.isArray(raw.homeLayout?.main) ? raw.homeLayout.main : def.homeLayout.main,
         side: Array.isArray(raw.homeLayout?.side) ? raw.homeLayout.side : def.homeLayout.side
       },
-      background: { ...def.background, ...(raw.background ?? {}) }
+      background: { ...def.background, ...(raw.background ?? {}) },
+      // 兼容旧配置：无 folders 时由 gameDir 迁移为唯一默认文件夹
+      folders:
+        Array.isArray(raw.folders) && raw.folders.length
+          ? raw.folders
+          : def.folders,
+      activeFolder:
+        raw.activeFolder ||
+        raw.gameDir ||
+        def.activeFolder
     }
+    const c = cached
     // 迁移：旧版默认 client_id（Mojang legacy 应用，不支持 device code）→ 新默认
-    if (cached.msClientId === '00000000402b5328') cached.msClientId = def.msClientId
+    if (c.msClientId === '00000000402b5328') c.msClientId = def.msClientId
+    // 保证 activeFolder 指向已登记文件夹；gameDir 与 activeFolder 保持一致语义
+    if (!c.folders.some((f) => f.path === c.activeFolder)) {
+      c.activeFolder = c.folders.find((f) => f.isDefault)?.path ?? c.folders[0].path
+    }
+    c.gameDir = c.activeFolder
+    cached = c
   } catch {
     cached = def
   }
@@ -85,6 +104,18 @@ export function saveSettings(patch: Partial<Settings>): Settings {
       side: Array.isArray(patch.homeLayout?.side) ? patch.homeLayout.side : cur.homeLayout.side
     },
     background: { ...cur.background, ...(patch.background ?? {}) }
+  }
+  // activeFolder 与 gameDir 语义一致：改其一跟随另一个
+  if (patch.activeFolder && merged.folders.some((f) => f.path === patch.activeFolder)) {
+    merged.gameDir = patch.activeFolder
+  } else if (patch.gameDir) {
+    merged.activeFolder = patch.gameDir
+    if (!merged.folders.some((f) => f.path === patch.gameDir)) {
+      merged.folders = [
+        ...merged.folders,
+        { path: patch.gameDir, name: path.basename(patch.gameDir), isDefault: false }
+      ]
+    }
   }
   cached = merged
   try {

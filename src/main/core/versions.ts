@@ -13,11 +13,13 @@ import type {
 import { downloadAll, downloadFile, mirrorUrl, type DownloadTask, type MirrorPref } from './download'
 import { getSettings } from './settings'
 import {
+  allVersionsDirs,
   assetIndexPath,
   assetObjectPath,
   gameDir,
   installMarkPath,
   libraryPath,
+  registerVersionFolder,
   versionDir,
   versionJarPath,
   versionJsonPath,
@@ -286,6 +288,7 @@ export async function installVanilla(versionId: string, emit: ProgressEmit): Pro
   // 事务标记：安装开始打标，全部成功才移除；失败由 cleanupPartialInstall 清理
   const mark = installMarkPath(versionId)
   fs.mkdirSync(versionDir(versionId), { recursive: true })
+  registerVersionFolder(versionId, gameDir()) // 新安装版本注册到当前活动文件夹
   fs.writeFileSync(mark, new Date().toISOString(), 'utf-8')
   try {
     emit({ stage: 'version-json', progress: 0, text: `获取版本信息 ${versionId}`, source: sourceText })
@@ -435,47 +438,45 @@ function resolveBaseMcId(j: VersionJson, fallback: string): string {
   return id
 }
 
-/** 扫描 gameDir/versions/*\/，读取每个 <dir>/<dir>.json */
+/** 扫描全部已登记游戏文件夹的 versions/*\/（标注所属文件夹并注册寻址映射） */
 export function listInstalled(): InstalledVersion[] {
-  const dir = versionsDir()
-  if (!fs.existsSync(dir)) return []
   const out: InstalledVersion[] = []
-  for (const name of fs.readdirSync(dir)) {
-    const jp = versionJsonPath(name)
-    if (!fs.existsSync(jp)) continue
-    try {
-      const j = readVersionJson(name)
-      const item: InstalledVersion = {
-        id: name,
-        // 整合包实例的 inheritsFrom 指向加载器 profile 版本（如 fabric-loader-x-mc），
-        // 需沿链解析到真实原版版本，避免污染「已安装」判定与版本筛选
-        mcVersion: resolveBaseMcId(j, name)
+  for (const { folder, dir } of allVersionsDirs()) {
+    if (!fs.existsSync(dir)) continue
+    for (const name of fs.readdirSync(dir)) {
+      const jp = path.join(dir, name, `${name}.json`)
+      if (!fs.existsSync(jp)) continue
+      try {
+        const j = readVersionJson(name)
+        registerVersionFolder(name, folder)
+        const item: InstalledVersion = {
+          id: name,
+          mcVersion: resolveBaseMcId(j, name),
+          folder
+        }
+        if (j._loader) item.loader = j._loader
+        else {
+          const mc = (j.mainClass ?? '').toLowerCase()
+          if (mc.includes('neoforged')) item.loader = 'neoforge'
+          else if (mc.includes('forge')) item.loader = 'forge'
+          else if (mc.includes('fabricmc')) item.loader = 'fabric'
+          else if (mc.includes('quiltmc')) item.loader = 'quilt'
+        }
+        if (j._loaderVersion) item.loaderVersion = j._loaderVersion
+        if (j._modpackName) item.modpackName = j._modpackName
+        if (j._modpackVersion) item.modpackVersion = j._modpackVersion
+        if (j._javaPath) item.javaPath = j._javaPath
+        if (j._gameDir === true) item.isolated = true
+        if (!j.inheritsFrom) {
+          const jarOk = fs.existsSync(versionJarPath(name))
+          const hasPart = fs.existsSync(versionJarPath(name) + '.part')
+          if (!jarOk || hasPart) item.incomplete = true
+        }
+        if (fs.existsSync(installMarkPath(name))) item.failed = true
+        out.push(item)
+      } catch {
+        // 跳过损坏的 json
       }
-      if (j._loader) item.loader = j._loader
-      else {
-        // 无标记时从 mainClass 推断加载器（修复第三方/旧数据错标「纯净版」）
-        const mc = (j.mainClass ?? '').toLowerCase()
-        if (mc.includes('neoforged')) item.loader = 'neoforge'
-        else if (mc.includes('forge')) item.loader = 'forge'
-        else if (mc.includes('fabricmc')) item.loader = 'fabric'
-        else if (mc.includes('quiltmc')) item.loader = 'quilt'
-      }
-      if (j._loaderVersion) item.loaderVersion = j._loaderVersion
-      if (j._modpackName) item.modpackName = j._modpackName
-      if (j._modpackVersion) item.modpackVersion = j._modpackVersion
-      if (j._javaPath) item.javaPath = j._javaPath
-      if (j._gameDir === true) item.isolated = true
-      // 完整性校验：原版版本必须有客户端 jar；有 .part 残留或 jar 缺失 = 下载未完成
-      if (!j.inheritsFrom) {
-        const jarOk = fs.existsSync(versionJarPath(name))
-        const hasPart = fs.existsSync(versionJarPath(name) + '.part')
-        if (!jarOk || hasPart) item.incomplete = true
-      }
-      // 安装事务标记：.installing 存在 = 上次安装失败
-      if (fs.existsSync(installMarkPath(name))) item.failed = true
-      out.push(item)
-    } catch {
-      // 跳过损坏的 json
     }
   }
   // 实例排序：按 MC 版本分组（新→旧），同版本内纯净版在前、加载器实例按 id 字母序
@@ -497,7 +498,12 @@ export function validateInstanceName(name: string, excludeId?: string): string |
   if (/[\\/:*?"<>|]/.test(n)) return '实例名不能包含 \\ / : * ? " < > | 字符'
   if (/^[.\s]|[.\s]$/.test(n)) return '实例名不能以空格或点开头/结尾'
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(n)) return '实例名为系统保留名'
-  if (n !== excludeId && fs.existsSync(versionDir(n))) return `实例「${n}」已存在，请换一个名字`
+  if (n !== excludeId) {
+    // 跨所有游戏文件夹查重
+    for (const { dir } of allVersionsDirs()) {
+      if (fs.existsSync(path.join(dir, n))) return `实例「${n}」已存在，请换一个名字`
+    }
+  }
   return null
 }
 

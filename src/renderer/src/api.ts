@@ -12,6 +12,7 @@ import type {
   CommunitySource,
   FabricApiVersion,
   FsEntry,
+  GameFolder,
   InstallOptions,
   InstalledVersion,
   JavaInfo,
@@ -88,6 +89,15 @@ export const setVersionJava = (id: string, javaPath: string) =>
   invoke<void>(IPC.versionsSetJava, id, javaPath)
 export const cleanupPartialInstall = (id: string) =>
   invoke<boolean>(IPC.versionsCleanup, id)
+
+// ---------------- 游戏文件夹管理 ----------------
+export const listFolders = () =>
+  invoke<{ folders: GameFolder[]; active: string }>(IPC.foldersList)
+export const addFolder = (path: string) => invoke<GameFolder[]>(IPC.foldersAdd, path)
+export const removeFolder = (path: string) => invoke<GameFolder[]>(IPC.foldersRemove, path)
+export const setDefaultFolder = (path: string) =>
+  invoke<GameFolder[]>(IPC.foldersSetDefault, path)
+export const setActiveFolder = (path: string) => invoke<void>(IPC.foldersSetActive, path)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
 export const listLoaders = (loader: LoaderName, mc: string) =>

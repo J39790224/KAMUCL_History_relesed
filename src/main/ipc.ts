@@ -28,7 +28,7 @@ import * as launch from './core/launch'
 import * as servers from './core/servers'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
-import { versionDir } from './core/paths'
+import { folderOfVersion, versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -132,6 +132,43 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.versionsCleanup, (_e, id: string) =>
     versions.cleanupPartialInstall(String(id ?? ''))
   )
+
+  // ---------------- 游戏文件夹管理 ----------------
+  ipcMain.handle(IPC.foldersList, () => {
+    const s = settings.getSettings()
+    return { folders: s.folders, active: s.activeFolder }
+  })
+  ipcMain.handle(IPC.foldersAdd, (_e, p: string) => {
+    const dir = path.resolve(String(p ?? ''))
+    if (!fs.existsSync(dir)) throw new Error('文件夹不存在')
+    const s = settings.getSettings()
+    if (s.folders.some((f) => path.resolve(f.path) === dir)) return s.folders
+    return settings.saveSettings({
+      folders: [...s.folders, { path: dir, name: path.basename(dir), isDefault: false }]
+    }).folders
+  })
+  ipcMain.handle(IPC.foldersRemove, (_e, p: string) => {
+    const dir = path.resolve(String(p ?? ''))
+    const s = settings.getSettings()
+    const target = s.folders.find((f) => path.resolve(f.path) === dir)
+    if (target?.isDefault) throw new Error('默认文件夹不可移除（请先设其他文件夹为默认）')
+    return settings.saveSettings({
+      folders: s.folders.filter((f) => path.resolve(f.path) !== dir)
+    }).folders
+  })
+  ipcMain.handle(IPC.foldersSetDefault, (_e, p: string) => {
+    const dir = path.resolve(String(p ?? ''))
+    const s = settings.getSettings()
+    return settings.saveSettings({
+      folders: s.folders.map((f) => ({ ...f, isDefault: path.resolve(f.path) === dir }))
+    }).folders
+  })
+  ipcMain.handle(IPC.foldersSetActive, (_e, p: string) => {
+    const dir = path.resolve(String(p ?? ''))
+    const s = settings.getSettings()
+    if (!s.folders.some((f) => path.resolve(f.path) === dir)) throw new Error('文件夹未登记')
+    settings.saveSettings({ activeFolder: dir, gameDir: dir })
+  })
   ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
     versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
   )
@@ -305,7 +342,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     if (parts.some((s) => s === '..')) throw new Error('非法目录')
     const isVersionPath = parts[0] === 'versions'
     if (parts.length > (isVersionPath ? 3 : 2)) throw new Error('非法目录')
-    const base = settings.getSettings().gameDir
+    // versions/<id> 前缀按版本所属文件夹寻址（多文件夹体系）；其余按当前活动文件夹
+    const base = isVersionPath && parts.length >= 2 ? folderOfVersion(parts[1]) : settings.getSettings().gameDir
     const dir = parts.length ? path.join(base, ...parts) : base
     if (!path.resolve(dir).startsWith(path.resolve(base))) throw new Error('非法目录')
     return dir
