@@ -48,6 +48,16 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => settings.saveSettings(patch))
+  ipcMain.handle(IPC.appSelectImage, async () => {
+    const win = getWin()
+    const opts = {
+      properties: ['openFile' as const],
+      title: '选择背景图片',
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
   ipcMain.handle(IPC.appSelectDir, async () => {
     const win = getWin()
     const opts = { properties: ['openDirectory' as const], title: '选择游戏目录' }

@@ -193,7 +193,69 @@ export interface Settings {
   disabledFeatures: string[]
   /** 收藏的版本 id 列表（各列表置顶） */
   favoriteVersions: string[]
+  /** 首页布局：模块顺序与显隐（main=主列，side=右栏，数组顺序即渲染顺序） */
+  homeLayout: HomeLayout
+  /** 背景自定义 */
+  background: BackgroundSettings
   closeAfterLaunch: boolean
+}
+
+// ---------------- 首页布局 ----------------
+export interface HomeModule {
+  key: string
+  visible: boolean
+}
+
+export interface HomeLayout {
+  /** 主列模块（欢迎横幅/启动日志/最近游戏） */
+  main: HomeModule[]
+  /** 右栏模块（账户信息/系统信息/快速操作/作者卡片） */
+  side: HomeModule[]
+}
+
+export const DEFAULT_HOME_LAYOUT: HomeLayout = {
+  main: [
+    { key: 'banner', visible: true },
+    { key: 'logDrawer', visible: true },
+    { key: 'recentGames', visible: true }
+  ],
+  side: [
+    { key: 'accountCard', visible: true },
+    { key: 'sysInfo', visible: true },
+    { key: 'quickActions', visible: true },
+    { key: 'authorCard', visible: true }
+  ]
+}
+
+export const HOME_MODULE_LABELS: Record<string, string> = {
+  banner: '欢迎横幅',
+  logDrawer: '启动日志',
+  recentGames: '最近游戏',
+  accountCard: '账户信息',
+  sysInfo: '系统信息',
+  quickActions: '快速操作',
+  authorCard: '作者卡片'
+}
+
+// ---------------- 背景 ----------------
+export interface BackgroundSettings {
+  /** none=默认主题底色 / color=纯色 / image=本地图片 */
+  mode: 'none' | 'color' | 'image'
+  color: string
+  /** 图片路径（userData 内复制的文件名） */
+  image: string
+  /** 0-1 背景层透明度 */
+  opacity: number
+  /** 0-40 模糊度 px */
+  blur: number
+}
+
+export const DEFAULT_BACKGROUND: BackgroundSettings = {
+  mode: 'none',
+  color: '#1b2437',
+  image: '',
+  opacity: 0.5,
+  blur: 0
 }
 
 // ---------------- 皮肤/披风 ----------------
@@ -258,6 +320,7 @@ export const IPC = {
   settingsSet: 'settings:set', // (patch: Partial<Settings>) => Settings
   appSelectDir: 'app:selectDir', // () => string | null
   appSelectFile: 'app:selectFile', // () => string | null  选择整合包文件（.mrpack/.zip）
+  appSelectImage: 'app:selectImage', // () => string | null  选择图片文件（png/jpg/webp）
 
   // 账号
   accountsList: 'accounts:list', // () => Account[]

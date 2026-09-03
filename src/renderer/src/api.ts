@@ -56,6 +56,7 @@ export const getSettings = () => invoke<Settings>(IPC.settingsGet)
 export const saveSettings = (patch: Partial<Settings>) =>
   invoke<Settings>(IPC.settingsSet, JSON.parse(JSON.stringify(patch)) as Partial<Settings>)
 export const selectDir = () => invoke<string | null>(IPC.appSelectDir)
+export const selectImage = () => invoke<string | null>(IPC.appSelectImage)
 /** 游戏目录迁移（异步）；结束经 onGameDirDone 回调 */
 export const migrateGameDir = (newDir: string, migrate: boolean) =>
   invoke<void>(IPC.gameDirMigrate, newDir, migrate)

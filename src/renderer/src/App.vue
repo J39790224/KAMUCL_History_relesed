@@ -283,6 +283,29 @@ function fmtNoticeTime(ts: number): string {
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
+/** 自定义背景层样式（mode=none 时无背景层） */
+const bgStyle = computed(() => {
+  const bg = store.settings?.background
+  if (!bg || bg.mode === 'none') return null
+  if (bg.mode === 'color') {
+    return {
+      background: bg.color,
+      opacity: String(bg.opacity)
+    }
+  }
+  if (bg.mode === 'image' && bg.image) {
+    const url = 'file:///' + bg.image.replace(/\\/g, '/')
+    return {
+      backgroundImage: `url("${url}")`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      opacity: String(bg.opacity),
+      filter: bg.blur > 0 ? `blur(${bg.blur}px)` : 'none'
+    }
+  }
+  return null
+})
+
 // ---------------- 主题应用（亮 / 暗 / 自定义） ----------------
 /** 自定义主题写入的全部 inline CSS 变量（切回亮/暗时需统一清除） */
 const CUSTOM_VARS = [
@@ -493,9 +516,11 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <!-- 自定义背景层（纯色/图片 + 透明度 + 模糊） -->
+  <div v-if="bgStyle" class="app-bg" :style="bgStyle"></div>
   <div
     class="shell"
-    :class="{ 'edit-mode': store.editMode }"
+    :class="{ 'edit-mode': store.editMode, 'has-bg': !!bgStyle }"
     @click.capture="onEditClick"
     @dragenter="onDragEnter"
     @dragover="onDragOver"
@@ -783,6 +808,19 @@ onUnmounted(() => {
   display: flex;
   height: 100%;
   background: var(--bg);
+  position: relative;
+  z-index: 1;
+}
+/* 自定义背景层：垫底铺满，不拦截交互 */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+/* 激活自定义背景时界面底色透出背景层 */
+.shell.has-bg {
+  background: transparent;
 }
 
 /* ---------------- 左侧边栏 ---------------- */

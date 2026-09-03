@@ -154,6 +154,14 @@ const recent = computed(() => sortWithFavorite(store.installed).slice(0, 4))
 /** 版本选择器菜单：收藏置顶 */
 const sortedInstalledMenu = computed(() => sortWithFavorite(store.installed))
 
+// ---------------- 首页布局（模块排序与显隐驱动） ----------------
+/** 模块在布局中的 order 与 visible（缺省显示在最后并显示） */
+function layoutOf(key: string, col: 'main' | 'side'): { order: number; visible: boolean } {
+  const arr = store.settings?.homeLayout?.[col] ?? []
+  const idx = arr.findIndex((m) => m.key === key)
+  return idx >= 0 ? { order: idx, visible: arr[idx].visible } : { order: 99, visible: true }
+}
+
 const cardMenu = reactive({ id: '', top: 0, left: 0 })
 const cardMenuVersion = computed(() =>
   store.installed.find((v) => v.id === cardMenu.id)
@@ -335,7 +343,12 @@ async function onToggleAccountType() {
     <!-- ================= 主列 ================= -->
     <div class="home-main">
       <!-- Banner 大卡片 -->
-      <section class="banner" data-edit="banner">
+      <section
+        class="banner"
+        data-edit="banner"
+        :style="{ order: layoutOf('banner', 'main').order }"
+        v-show="layoutOf('banner', 'main').visible"
+      >
         <!-- 三图轮播背景（绝对定位叠放，opacity 过渡） -->
         <img
           v-for="(src, i) in banners"
@@ -399,7 +412,12 @@ async function onToggleAccountType() {
       </section>
 
       <!-- 启动日志抽屉 -->
-      <section class="card log-drawer" data-edit="card">
+      <section
+        class="card log-drawer"
+        data-edit="card"
+        :style="{ order: layoutOf('logDrawer', 'main').order }"
+        v-show="layoutOf('logDrawer', 'main').visible"
+      >
         <div
           class="log-header"
           role="button"
@@ -425,7 +443,11 @@ async function onToggleAccountType() {
       </section>
 
       <!-- 最近游戏 -->
-      <section class="block">
+      <section
+        class="block"
+        :style="{ order: layoutOf('recentGames', 'main').order }"
+        v-show="layoutOf('recentGames', 'main').visible"
+      >
         <div class="block-head" data-edit="text">
           <h2 class="block-title">最近游戏</h2>
           <button class="link-btn" @click="store.currentView = 'game'">查看全部</button>
@@ -484,7 +506,12 @@ async function onToggleAccountType() {
     <!-- ================= 右侧面板（300px） ================= -->
     <aside class="home-side">
       <!-- 账户信息 -->
-      <section class="card side-card" data-edit="card">
+      <section
+        class="card side-card"
+        data-edit="card"
+        :style="{ order: layoutOf('accountCard', 'side').order }"
+        v-show="layoutOf('accountCard', 'side').visible"
+      >
         <h3 class="side-title">账户信息</h3>
 
         <template v-if="store.selectedAccount">
@@ -545,7 +572,12 @@ async function onToggleAccountType() {
       </section>
 
       <!-- 系统信息 -->
-      <section class="card side-card" data-edit="card">
+      <section
+        class="card side-card"
+        data-edit="card"
+        :style="{ order: layoutOf('sysInfo', 'side').order }"
+        v-show="layoutOf('sysInfo', 'side').visible"
+      >
         <h3 class="side-title">系统信息</h3>
         <div class="sys-row">
           <span class="sys-key">Java 版本</span>
@@ -574,7 +606,12 @@ async function onToggleAccountType() {
       </section>
 
       <!-- 快速操作（右栏空白区，首屏免滚动可达） -->
-      <section class="card side-card" data-edit="card">
+      <section
+        class="card side-card"
+        data-edit="card"
+        :style="{ order: layoutOf('quickActions', 'side').order }"
+        v-show="layoutOf('quickActions', 'side').visible"
+      >
         <h3 class="side-title">快速操作</h3>
         <div class="quick-grid quick-grid-side">
           <button v-for="q in quickActions" :key="q.label" class="quick-card" data-edit="card" @click="q.act">
@@ -585,7 +622,12 @@ async function onToggleAccountType() {
       </section>
 
       <!-- BILIBILI 卡慕SaMa -->
-      <section class="card side-card bili-card" data-edit="card">
+      <section
+        class="card side-card bili-card"
+        data-edit="card"
+        :style="{ order: layoutOf('authorCard', 'side').order }"
+        v-show="layoutOf('authorCard', 'side').visible"
+      >
         <svg class="bili-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2.5" y="7" width="19" height="14" rx="3.5" />
           <path d="m8 2.5 3.5 4 3.5-4" />

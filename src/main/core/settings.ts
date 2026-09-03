@@ -5,7 +5,12 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Settings } from '../../shared/types'
-import { DEFAULT_CUSTOM_THEME, DEFAULT_MS_CLIENT_ID } from '../../shared/types'
+import {
+  DEFAULT_BACKGROUND,
+  DEFAULT_CUSTOM_THEME,
+  DEFAULT_HOME_LAYOUT,
+  DEFAULT_MS_CLIENT_ID
+} from '../../shared/types'
 
 let cached: Settings | null = null
 
@@ -30,6 +35,8 @@ function defaults(): Settings {
     custom: structuredClone(DEFAULT_CUSTOM_THEME),
     disabledFeatures: [],
     favoriteVersions: [],
+    homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
+    background: structuredClone(DEFAULT_BACKGROUND),
     closeAfterLaunch: false
   }
 }
@@ -47,7 +54,12 @@ export function getSettings(): Settings {
       custom: {
         colors: { ...def.custom.colors, ...(raw.custom?.colors ?? {}) },
         layout: { ...def.custom.layout, ...(raw.custom?.layout ?? {}) }
-      }
+      },
+      homeLayout: {
+        main: Array.isArray(raw.homeLayout?.main) ? raw.homeLayout.main : def.homeLayout.main,
+        side: Array.isArray(raw.homeLayout?.side) ? raw.homeLayout.side : def.homeLayout.side
+      },
+      background: { ...def.background, ...(raw.background ?? {}) }
     }
     // 迁移：旧版默认 client_id（Mojang legacy 应用，不支持 device code）→ 新默认
     if (cached.msClientId === '00000000402b5328') cached.msClientId = def.msClientId
@@ -67,7 +79,12 @@ export function saveSettings(patch: Partial<Settings>): Settings {
     custom: {
       colors: { ...cur.custom.colors, ...(patch.custom?.colors ?? {}) },
       layout: { ...cur.custom.layout, ...(patch.custom?.layout ?? {}) }
-    }
+    },
+    homeLayout: {
+      main: Array.isArray(patch.homeLayout?.main) ? patch.homeLayout.main : cur.homeLayout.main,
+      side: Array.isArray(patch.homeLayout?.side) ? patch.homeLayout.side : cur.homeLayout.side
+    },
+    background: { ...cur.background, ...(patch.background ?? {}) }
   }
   cached = merged
   try {

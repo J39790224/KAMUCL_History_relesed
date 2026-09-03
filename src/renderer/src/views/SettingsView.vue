@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { addCustomJava, errText, getSettings, hideJava, listJava, migrateGameDir, onGameDirDone, refreshJava, saveSettings, selectDir } from '../api'
 import { enterEditMode, progressOverall, store, toast } from '../store'
+import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
 import type { Settings } from '@shared/types'
 
 // ---------------- 保存 ----------------
@@ -330,6 +331,9 @@ function saveResolution() {
           </span>
         </div>
       </div>
+
+      <!-- 首页布局与背景（个性化） -->
+      <HomeLayoutEditor />
 
       <!-- 游戏目录 -->
       <div class="card group">
