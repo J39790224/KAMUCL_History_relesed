@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 服务器页：服务器列表管理 + SLP 实时状态 + 一键进服
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import {
   addServer,
   errText,
@@ -120,6 +120,21 @@ async function onJoin() {
 
 const pingOf = (s: ServerEntry): ServerPingResult | null =>
   pings[s.id] && pings[s.id] !== 'loading' ? (pings[s.id] as ServerPingResult) : null
+
+// ---------------- 顶栏搜索联动（过滤名称/地址/MOTD） ----------------
+const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
+const filteredServers = computed(() =>
+  keyword.value
+    ? servers.value.filter((s) => {
+        const ping = pingOf(s)
+        return (
+          s.name.toLowerCase().includes(keyword.value) ||
+          s.address.toLowerCase().includes(keyword.value) ||
+          (ping?.motd.toLowerCase().includes(keyword.value) ?? false)
+        )
+      })
+    : servers.value
+)
 </script>
 
 <template>
@@ -156,7 +171,7 @@ const pingOf = (s: ServerEntry): ServerPingResult | null =>
     </div>
 
     <div v-else class="server-list">
-      <div v-for="s in servers" :key="s.id" class="card server-card">
+      <div v-for="s in filteredServers" :key="s.id" class="card server-card">
         <span class="status-dot" :class="pingOf(s)?.online ? 'on' : 'off'"></span>
         <div class="server-main">
           <div class="server-title">

@@ -68,6 +68,14 @@ onMounted(async () => {
 
 watch(effectiveRel, () => void load())
 
+// ---------------- 顶栏搜索联动（过滤文件名） ----------------
+const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
+const filtered = computed(() =>
+  keyword.value
+    ? entries.value.filter((e) => e.name.toLowerCase().includes(keyword.value))
+    : entries.value
+)
+
 async function onOpenDir() {
   opening.value = true
   try {
@@ -170,8 +178,11 @@ const fmtDate = (ts: number) => {
         <span>{{ props.emptyText }}</span>
         <button class="btn btn-ghost btn-sm" @click="onOpenDir">打开文件夹</button>
       </div>
+      <div v-else-if="keyword && !filtered.length" class="empty">
+        <span>没有匹配「{{ store.searchKeyword }}」的文件</span>
+      </div>
       <div v-else class="fm-list">
-        <div v-for="e in entries" :key="e.name" class="fm-row">
+        <div v-for="e in filtered" :key="e.name" class="fm-row">
           <span class="fm-file-icon">
             <svg v-if="e.isDir" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />

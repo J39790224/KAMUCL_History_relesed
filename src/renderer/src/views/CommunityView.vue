@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { communityDownload, communityFiles, communitySearch, errText } from '../api'
 import { store, toast } from '../store'
 import type {
@@ -111,6 +111,19 @@ function onReset() {
 }
 
 onMounted(() => void doSearch(true))
+
+// ---------------- 顶栏搜索联动：顶栏输入防抖驱动社区搜索 ----------------
+let topSearchTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => store.searchKeyword,
+  (kw) => {
+    if (topSearchTimer) clearTimeout(topSearchTimer)
+    topSearchTimer = setTimeout(() => {
+      query.keyword = kw.trim()
+      void doSearch(true)
+    }, 400)
+  }
+)
 
 // ---------------- 列表展示 ----------------
 /** 图标加载失败的项目（显示首字母占位） */
