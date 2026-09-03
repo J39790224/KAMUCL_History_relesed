@@ -82,6 +82,20 @@ const navItems: Array<{ key: ViewName; label: string; icon: string }> = [
   }
 ]
 
+/** 功能禁用判定 */
+const isFeatureOff = (key: string): boolean =>
+  (store.settings?.disabledFeatures ?? []).includes(key)
+
+/** 过滤禁用功能后的主导航 */
+const visibleNavItems = computed(() =>
+  navItems.filter((n) => !isFeatureOff(n.key))
+)
+
+/** 过滤禁用功能后的资源管理子项 */
+const visibleResourceSubItems = computed(() =>
+  resourceSubItems.filter((s) => !isFeatureOff(s.key))
+)
+
 /** 资源管理子级菜单（模组/资源包/光影包），按游戏版本管理对应目录 */
 const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = [
   {
@@ -511,7 +525,7 @@ onUnmounted(() => {
 
       <!-- 导航 -->
       <nav class="nav">
-        <template v-for="item in navItems" :key="item.key">
+        <template v-for="item in visibleNavItems" :key="item.key">
           <button
             class="nav-item"
             :class="{ active: store.currentView === item.key }"
@@ -542,7 +556,7 @@ onUnmounted(() => {
             </button>
             <div v-show="resourceExpanded || inResourceGroup" class="nav-sub">
               <button
-                v-for="sub in resourceSubItems"
+                v-for="sub in visibleResourceSubItems"
                 :key="sub.key"
                 class="nav-item nav-sub-item"
                 :class="{ active: store.currentView === sub.key }"

@@ -26,6 +26,7 @@ function defaults(): Settings {
     msClientId: DEFAULT_MS_CLIENT_ID,
     theme: 'light',
     custom: structuredClone(DEFAULT_CUSTOM_THEME),
+    disabledFeatures: [],
     closeAfterLaunch: false
   }
 }

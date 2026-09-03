@@ -133,6 +133,8 @@ export interface Settings {
   theme: ThemeName
   /** theme === 'custom' 时使用的自定义配色与布局 */
   custom: CustomTheme
+  /** 禁用的功能模块 key（mods/packs/shaders/servers/skins/community），关闭后侧栏入口隐藏 */
+  disabledFeatures: string[]
   closeAfterLaunch: boolean
 }
 

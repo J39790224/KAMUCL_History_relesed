@@ -58,6 +58,22 @@ function onConfirmMigrate() {
   })
 }
 
+// ---------------- 功能管理 ----------------
+const featureToggles = [
+  { key: 'mods', label: '模组（资源管理）' },
+  { key: 'packs', label: '资源包' },
+  { key: 'shaders', label: '光影包' },
+  { key: 'servers', label: '服务器' },
+  { key: 'skins', label: '皮肤与披风' },
+  { key: 'community', label: '社区资源' }
+]
+
+function onToggleFeature(key: string, enabled: boolean) {
+  const cur = store.settings?.disabledFeatures ?? []
+  const next = enabled ? cur.filter((k) => k !== key) : [...new Set([...cur, key])]
+  void save({ disabledFeatures: next })
+}
+
 // ---------------- Java 列表 ----------------
 const javas = ref<Awaited<ReturnType<typeof listJava>>>([])
 const javaLoading = ref(true)
@@ -199,6 +215,25 @@ function saveResolution() {
           </svg>
           个性化
         </button>
+      </div>
+
+      <!-- 功能管理 -->
+      <div class="card group">
+        <h3 class="group-title">功能管理</h3>
+        <p class="muted group-hint" style="margin-top: 0; margin-bottom: 12px">
+          关闭的功能将从侧边栏隐藏入口。核心功能（首页/游戏/设置）不可关闭。
+        </p>
+        <div v-for="f in featureToggles" :key="f.key" class="feature-row">
+          <span class="feature-name">{{ f.label }}</span>
+          <span class="switch">
+            <input
+              type="checkbox"
+              :checked="!store.settings.disabledFeatures.includes(f.key)"
+              @change="onToggleFeature(f.key, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="switch-ui"></span>
+          </span>
+        </div>
       </div>
 
       <!-- 游戏目录 -->
@@ -512,6 +547,20 @@ function saveResolution() {
 .migrate-option span .muted {
   font-size: 12px;
   line-height: 1.6;
+}
+/* 功能管理开关行 */
+.feature-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.feature-row:last-child {
+  border-bottom: none;
+}
+.feature-name {
+  font-size: 13.5px;
 }
 .group-hint {
   font-size: 12px;
