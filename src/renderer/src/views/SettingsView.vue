@@ -169,6 +169,26 @@ function saveResolution() {
         </div>
       </div>
 
+      <!-- 默认版本隔离 -->
+      <div class="card group">
+        <label class="java-auto-row">
+          <span class="java-auto-text">
+            <span class="java-auto-title">新版本默认开启版本隔离（推荐）</span>
+            <span class="muted java-auto-desc">
+              每个新安装的版本使用独立的存档/模组/配置目录，互不干扰。关闭后新版本与全局共享游戏目录；已安装的版本可在游戏页单独开关。
+            </span>
+          </span>
+          <span class="switch">
+            <input
+              type="checkbox"
+              :checked="store.settings.defaultIsolation"
+              @change="save({ defaultIsolation: ($event.target as HTMLInputElement).checked })"
+            />
+            <span class="switch-ui"></span>
+          </span>
+        </label>
+      </div>
+
       <!-- 内存 -->
       <div class="card group">
         <h3 class="group-title">内存分配</h3>

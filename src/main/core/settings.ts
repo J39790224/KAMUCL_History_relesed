@@ -22,6 +22,7 @@ function defaults(): Settings {
     jvmArgs: '',
     resolution: { width: 854, height: 480, fullscreen: false },
     mirror: 'bmclapi',
+    defaultIsolation: true,
     msClientId: DEFAULT_MS_CLIENT_ID,
     theme: 'light',
     custom: structuredClone(DEFAULT_CUSTOM_THEME),

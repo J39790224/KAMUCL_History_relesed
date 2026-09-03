@@ -84,7 +84,17 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.versionsInstall, (_e, versionId: string, opts?: InstallOptions) => {
     void versions
       .installVersion(versionId, opts ?? {}, emit)
-      .then(() => send(IPC_EVENT.installDone, { versionId, ok: true }))
+      .then((installedId) => {
+        // 设置项生效：新版本默认开启版本隔离（整合包实例本身强制隔离，无需处理）
+        try {
+          if (settings.getSettings().defaultIsolation) {
+            versions.setIsolation(installedId, true)
+          }
+        } catch (e) {
+          console.error('[KAMUCL] 默认隔离设置失败:', e)
+        }
+        send(IPC_EVENT.installDone, { versionId, ok: true })
+      })
       .catch((err) => {
         const text = errText(err)
         emit({ stage: 'error', progress: 0, text: `安装失败: ${text}` })

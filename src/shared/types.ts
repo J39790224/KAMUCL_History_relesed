@@ -122,6 +122,8 @@ export interface Settings {
   jvmArgs: string
   resolution: { width: number; height: number; fullscreen: boolean }
   mirror: 'official' | 'bmclapi'
+  /** 新版本安装后默认开启版本隔离（独立游戏目录），可在设置中关闭 */
+  defaultIsolation: boolean
   /** 微软登录用的 Azure 应用 client_id（device code flow） */
   msClientId: string
   theme: ThemeName
