@@ -361,6 +361,8 @@ export const IPC = {
   serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
   serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
   serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
+  serversBind: 'servers:bind', // (id: string, versionId: string) => ServerEntry[]  绑定/解绑版本（空串解绑）
+  serversSyncFromDat: 'servers:syncFromDat', // () => { list: ServerEntry[]; added: number }  从各版本 servers.dat 合并
 
   // MOD 拖入即装
   modsParse: 'mods:parse', // (paths: string[]) => ModInfo[]  支持文件/文件夹路径，静默解析元数据
@@ -476,6 +478,8 @@ export interface ServerEntry {
   id: string
   name: string
   address: string
+  /** 绑定的游戏版本 id（双击直接启动该版本进服；空 = 未绑定） */
+  versionId?: string
 }
 
 // ---------------- MOD 拖入即装 ----------------

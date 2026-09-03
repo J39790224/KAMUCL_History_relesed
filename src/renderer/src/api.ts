@@ -154,6 +154,10 @@ export const addServer = (name: string, address: string) =>
 export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
 export const pingServer = (address: string) =>
   invoke<ServerPingResult>(IPC.serversPing, address)
+export const bindServer = (id: string, versionId: string) =>
+  invoke<ServerEntry[]>(IPC.serversBind, id, versionId)
+export const syncServersFromDat = () =>
+  invoke<{ list: ServerEntry[]; added: number }>(IPC.serversSyncFromDat)
 
 // ---------------- MOD 拖入即装 ----------------
 export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)

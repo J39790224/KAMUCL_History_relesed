@@ -44,6 +44,101 @@ export function removeServer(id: string): ServerEntry[] {
   return list
 }
 
+// ---------------- 版本绑定 ----------------
+
+export function bindServer(id: string, versionId: string): ServerEntry[] {
+  const list = listServers()
+  const s = list.find((x) => x.id === id)
+  if (!s) throw new Error('服务器不存在')
+  if (versionId) s.versionId = versionId
+  else delete s.versionId
+  persist(list)
+  // 绑定变更立即写回该版本 servers.dat
+  if (versionId) writeBackToVersion(versionId)
+  return list
+}
+
+// ---------------- servers.dat 双向同步 ----------------
+
+interface DatServer {
+  name: string
+  ip: string
+}
+
+import { buildServersDat, parseNbt } from './nbt'
+import { listInstalled, readVersionJson } from './versions'
+import { gameDir, versionDir } from './paths'
+import { getSettings } from './settings'
+
+/** 版本的 servers.dat 所在目录（遵循版本隔离与多文件夹） */
+function serverGameDir(versionId: string): string {
+  try {
+    if (readVersionJson(versionId)._gameDir === true) return versionDir(versionId)
+  } catch {
+    /* 按共享目录 */
+  }
+  return gameDir()
+}
+
+/** 读取某版本的 servers.dat（不存在返回空数组） */
+function readServersDat(dir: string): DatServer[] {
+  const file = path.join(dir, 'servers.dat')
+  if (!fs.existsSync(file)) return []
+  try {
+    const root = parseNbt(fs.readFileSync(file))
+    const list = root.servers
+    if (!Array.isArray(list)) return []
+    return list
+      .map((e) => {
+        const o = e as { name?: unknown; ip?: unknown }
+        return { name: String(o.name ?? ''), ip: String(o.ip ?? '') }
+      })
+      .filter((s) => s.ip)
+  } catch {
+    return []
+  }
+}
+
+/** 把启动器列表中绑定该版本的服务器写回其 servers.dat */
+export function writeBackToVersion(versionId: string): void {
+  const dir = serverGameDir(versionId)
+  const mine = listServers().filter((s) => s.versionId === versionId)
+  const list: DatServer[] = mine.map((s) => ({ name: s.name, ip: s.address }))
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'servers.dat'), buildServersDat(list))
+  } catch (e) {
+    console.error('[KAMUCL] 写回 servers.dat 失败:', e)
+  }
+}
+
+/**
+ * 从所有已安装版本的 servers.dat 合并进启动器列表：
+ * 游戏内添加的服务器自动纳入并标注所属版本；同地址已存在则以启动器记录为准。
+ * 返回合并后的列表与新增数量。
+ */
+export function syncFromServersDat(): { list: ServerEntry[]; added: number } {
+  const list = listServers()
+  let added = 0
+  for (const v of listInstalled()) {
+    const dir = serverGameDir(v.id)
+    for (const ds of readServersDat(dir)) {
+      const exists = list.some((s) => s.address.toLowerCase() === ds.ip.toLowerCase())
+      if (!exists) {
+        list.push({
+          id: crypto.randomUUID(),
+          name: ds.name || ds.ip,
+          address: ds.ip,
+          versionId: v.id
+        })
+        added++
+      }
+    }
+  }
+  if (added) persist(list)
+  return { list, added }
+}
+
 // ---------------- Server List Ping ----------------
 
 /** VarInt 编码 */

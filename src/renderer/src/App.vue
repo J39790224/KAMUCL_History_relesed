@@ -479,8 +479,13 @@ onMounted(async () => {
       }
       if (s.status === 'exited' || s.status === 'error') store.progress = null
       if (s.status === 'error') toast('游戏启动出错：' + s.text, 'error')
-      else if (s.status === 'exited')
+      else if (s.status === 'exited') {
         toast(s.code ? `游戏已退出（代码 ${s.code}）` : '游戏已退出', 'info')
+        // 游戏退出后重读 servers.dat（玩家在游戏内增删的服务器自动同步回来）
+        void import('./api').then(({ syncServersFromDat }) =>
+          syncServersFromDat().catch(() => undefined)
+        )
+      }
     })
   )
 

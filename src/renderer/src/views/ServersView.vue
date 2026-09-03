@@ -3,11 +3,13 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   addServer,
+  bindServer,
   errText,
   launchGame,
   listServers,
   pingServer,
-  removeServer
+  removeServer,
+  syncServersFromDat
 } from '../api'
 import { refreshInstalled, store, toast } from '../store'
 import type { ServerEntry, ServerPingResult } from '@shared/types'
@@ -20,7 +22,10 @@ const loading = ref(true)
 async function load() {
   loading.value = true
   try {
-    servers.value = await listServers()
+    // 先从各版本 servers.dat 合并（游戏内添加的服务器自动纳入并标注所属版本）
+    const r = await syncServersFromDat()
+    servers.value = r.list
+    if (r.added > 0) toast(`已从游戏内同步 ${r.added} 个服务器`, 'info')
   } catch (e) {
     toast('读取服务器列表失败：' + errText(e), 'error')
   } finally {
@@ -95,6 +100,55 @@ async function onDelete() {
 
 // ---------------- 一键进服 ----------------
 const joinModal = reactive({ open: false, target: null as ServerEntry | null, versionId: '' })
+
+/** 双击卡片：已绑定版本直接启动进服；未绑定弹版本选择 */
+function onCardDblClick(s: ServerEntry) {
+  if (s.versionId) {
+    const v = store.installed.find((x) => x.id === s.versionId)
+    if (v) {
+      void doLaunch(s, s.versionId)
+      return
+    }
+    toast('绑定版本已缺失，请重新绑定或补装', 'error')
+    return
+  }
+  openJoin(s)
+}
+
+async function doLaunch(s: ServerEntry, versionId: string) {
+  try {
+    await launchGame(versionId, s.address)
+    toast(`正在启动并进入 ${s.name}…`, 'info')
+  } catch (e) {
+    toast('启动失败：' + errText(e), 'error')
+  }
+}
+
+/** 绑定版本变更（立即写回该版本 servers.dat） */
+async function onBind(s: ServerEntry, versionId: string) {
+  try {
+    servers.value = await bindServer(s.id, versionId)
+    toast(versionId ? `已绑定到 ${versionId}` : '已解绑版本', 'success')
+  } catch (e) {
+    toast('绑定失败：' + errText(e), 'error')
+  }
+}
+
+/** 版本缺失补装 */
+async function onReinstall(s: ServerEntry) {
+  const v = s.versionId
+  if (!v) return
+  try {
+    const { installVersion } = await import('../api')
+    toast(`开始补装 ${v}…`, 'info')
+    await installVersion(v, {})
+  } catch (e) {
+    toast('补装失败：' + errText(e), 'error')
+  }
+}
+
+const versionMissing = (s: ServerEntry): boolean =>
+  !!s.versionId && !store.installed.some((v) => v.id === s.versionId)
 
 function openJoin(s: ServerEntry) {
   if (!store.installed.length) {
@@ -171,7 +225,7 @@ const filteredServers = computed(() =>
     </div>
 
     <div v-else class="server-list">
-      <div v-for="s in filteredServers" :key="s.id" class="card server-card">
+      <div v-for="s in filteredServers" :key="s.id" class="card server-card" @dblclick="onCardDblClick(s)">
         <span class="status-dot" :class="pingOf(s)?.online ? 'on' : 'off'"></span>
         <div class="server-main">
           <div class="server-title">
@@ -182,6 +236,23 @@ const filteredServers = computed(() =>
             <span v-if="pings[s.id] === 'loading'" class="muted">正在连接…</span>
             <template v-else>{{ pingOf(s)?.motd }}</template>
           </p>
+          <div class="server-bind">
+            <select
+              class="bind-select"
+              :value="s.versionId ?? ''"
+              :title="s.versionId ? '双击卡片直接启动该版本进服' : '绑定版本后可双击进服'"
+              @change="onBind(s, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">未绑定版本</option>
+              <option v-for="v in store.installed" :key="v.id" :value="v.id">
+                {{ v.id }}{{ v.isolated ? '（隔离）' : '' }}
+              </option>
+            </select>
+            <template v-if="versionMissing(s)">
+              <span class="tag tag-danger">版本缺失</span>
+              <button class="btn btn-ghost btn-sm" @click="onReinstall(s)">一键补装</button>
+            </template>
+          </div>
         </div>
         <div class="server-meta">
           <template v-if="pingOf(s)?.online">
@@ -339,6 +410,23 @@ const filteredServers = computed(() =>
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* 绑定版本行 */
+.server-bind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+.bind-select {
+  max-width: 220px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
 }
 .server-meta {
   display: flex;

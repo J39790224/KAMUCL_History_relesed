@@ -241,6 +241,10 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.serversPing, (_e, address: string) =>
     servers.pingServer(String(address ?? ''))
   )
+  ipcMain.handle(IPC.serversBind, (_e, id: string, versionId: string) =>
+    servers.bindServer(String(id ?? ''), String(versionId ?? ''))
+  )
+  ipcMain.handle(IPC.serversSyncFromDat, () => servers.syncFromServersDat())
 
   // ---------------- MOD 拖入即装 ----------------
   ipcMain.handle(IPC.modsParse, (_e, paths: string[]) => {
