@@ -179,9 +179,10 @@ export async function fetchVersionManifest(
 
 // ---------------- 版本 json ----------------
 
-/** 同步读取本地版本 json */
+/** 同步读取本地版本 json（容错 BOM 头） */
 export function readVersionJson(id: string): VersionJson {
-  return JSON.parse(fs.readFileSync(versionJsonPath(id), 'utf-8')) as VersionJson
+  const raw = fs.readFileSync(versionJsonPath(id), 'utf-8')
+  return JSON.parse(raw.replace(/^﻿/, '')) as VersionJson
 }
 
 /** 确保 versions/<id>/<id>.json 存在并解析返回（不存在则按清单下载） */
@@ -423,10 +424,24 @@ export function listInstalled(): InstalledVersion[] {
         mcVersion: resolveBaseMcId(j, name)
       }
       if (j._loader) item.loader = j._loader
+      else {
+        // 无标记时从 mainClass 推断加载器（修复第三方/旧数据错标「纯净版」）
+        const mc = (j.mainClass ?? '').toLowerCase()
+        if (mc.includes('neoforged')) item.loader = 'neoforge'
+        else if (mc.includes('forge')) item.loader = 'forge'
+        else if (mc.includes('fabricmc')) item.loader = 'fabric'
+        else if (mc.includes('quiltmc')) item.loader = 'quilt'
+      }
       if (j._loaderVersion) item.loaderVersion = j._loaderVersion
       if (j._modpackName) item.modpackName = j._modpackName
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
       if (j._gameDir === true) item.isolated = true
+      // 完整性校验：原版版本必须有客户端 jar；有 .part 残留或 jar 缺失 = 下载未完成
+      if (!j.inheritsFrom) {
+        const jarOk = fs.existsSync(versionJarPath(name))
+        const hasPart = fs.existsSync(versionJarPath(name) + '.part')
+        if (!jarOk || hasPart) item.incomplete = true
+      }
       out.push(item)
     } catch {
       // 跳过损坏的 json

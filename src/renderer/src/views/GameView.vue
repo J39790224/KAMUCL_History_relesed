@@ -420,6 +420,24 @@ async function onToggleIsolation(v: InstalledVersion) {
               {{ displayVersionSub(v) }}
             </span>
           </div>
+          <!-- 下载未完成的残缺版本：继续下载 / 删除 -->
+          <template v-if="v.incomplete">
+            <span class="tag tag-danger">下载未完成</span>
+            <button
+              class="btn btn-gold btn-sm installed-folder"
+              :disabled="store.installing.has(v.id)"
+              @click="onRetry(v.id)"
+            >
+              继续下载
+            </button>
+            <button
+              class="btn btn-danger btn-sm installed-remove"
+              @click="removeModal.open = true; removeModal.target = v"
+            >
+              删除残留
+            </button>
+          </template>
+          <template v-else>
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
           <span v-else-if="!v.loader" class="tag">纯净版</span>
           <span v-if="v.isolated" class="tag">已隔离</span>
@@ -465,6 +483,7 @@ async function onToggleIsolation(v: InstalledVersion) {
           >
             删除
           </button>
+          </template>
         </div>
       </div>
     </div>

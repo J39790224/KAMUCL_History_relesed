@@ -44,6 +44,8 @@ export interface InstalledVersion {
   modpackVersion?: string
   /** 版本隔离：独立的 mods/存档/配置目录（versions/<id>/ 作为游戏目录） */
   isolated?: boolean
+  /** 下载未完成的残缺版本（json 在但客户端 jar 缺失/有 .part 残留），不算正常已安装 */
+  incomplete?: boolean
 }
 
 export type LoaderName = 'forge' | 'fabric' | 'quilt' | 'neoforge'

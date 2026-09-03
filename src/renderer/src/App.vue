@@ -452,6 +452,14 @@ onMounted(async () => {
       (async () => {
         store.settings = await getSettings()
         await Promise.all([refreshAccounts(), refreshInstalled()])
+        // 启动自检：发现上次下载未完成的残缺版本，提示去已安装页处理
+        const broken = store.installed.filter((v) => v.incomplete)
+        if (broken.length) {
+          toast(
+            `检测到 ${broken.length} 个版本下载未完成（${broken.map((b) => b.id).join('、')}），可在「游戏 → 已安装」继续下载或删除残留`,
+            'info'
+          )
+        }
       })(),
       // 开屏动画最短展示 2.4s
       new Promise((r) => setTimeout(r, 2400))
