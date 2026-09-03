@@ -6,3 +6,4 @@ dist-win*.log
 builder-*.log
 *.part
 .DS_Store
+*-installer.jar.log
