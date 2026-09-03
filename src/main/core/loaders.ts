@@ -127,12 +127,14 @@ async function pickJavaForInstaller(mcVersion: string, emit: ProgressEmit): Prom
   return await ensureJava(vj, emit)
 }
 
-/** 运行 forge/neoforge 安装器，输出并入进度 text */
+/** 运行 forge/neoforge 安装器，输出并入进度 text；mirror=bmclapi 时给安装器传 --mirror 加速下载 */
 function runInstaller(javaPath: string, jar: string, emit: ProgressEmit): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(javaPath, ['-jar', jar, '--installClient', gameDir()], {
-      windowsHide: true
-    })
+    const args = ['-jar', jar, '--installClient', gameDir()]
+    if (getSettings().mirror === 'bmclapi') {
+      args.push('--mirror', 'https://bmclapi2.bangbang93.com/maven')
+    }
+    const proc = spawn(javaPath, args, { windowsHide: true })
     let tail = ''
     const onData = (d: Buffer): void => {
       const lines = (tail + d.toString('utf-8')).split(/\r?\n/)
@@ -273,6 +275,28 @@ export async function installLoader(
     const id = findInstalledDir(loader, mcVersion, loaderVersion)
     if (!id) throw new Error('安装器运行结束，但未找到生成的版本目录')
     tagLoaderJson(id, loader, loaderVersion)
+
+    // 完整性自愈：安装器可能半失败（json 已写但部分库未下载，如 client 校验失败中止）
+    // 逐文件校验版本 json 声明的库，缺失则经镜像补齐；补不齐则明确报错
+    emit({ stage: 'loader', progress: 0.92, text: '校验依赖库完整性…' })
+    const profileJson = readVersionJson(id)
+    const libTasks = libraryTasks(profileJson)
+    const missing = libTasks.filter((t) => !fs.existsSync(t.dest))
+    if (missing.length) {
+      emit({ stage: 'loader', progress: 0.94, text: `补全 ${missing.length} 个缺失依赖库…` })
+      await downloadAll(
+        missing,
+        (d, t, speed) =>
+          emit({
+            stage: 'loader',
+            progress: 0.94 + (t ? (d / t) * 0.05 : 0),
+            text: `补全依赖库 ${d}/${t}`,
+            speed
+          }),
+        8,
+        getSettings().mirror
+      )
+    }
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
     return id
   } finally {
