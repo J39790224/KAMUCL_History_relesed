@@ -288,6 +288,8 @@ export interface CommunityQuery {
   source: 'all' | CommunitySource
   mcVersion?: string
   loader?: LoaderName | ''
+  /** 排序：相关度（默认）/ 最多下载 / 最新发布 */
+  sort?: 'relevance' | 'downloads' | 'newest'
   /** 分页偏移 */
   offset: number
   limit: number

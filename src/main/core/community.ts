@@ -60,6 +60,20 @@ const MR_PROJECT_TYPE: Record<CommunityKind, string> = {
   datapack: 'datapack'
 }
 
+/** Modrinth 搜索排序索引 */
+const MR_SORT_INDEX: Record<string, string> = {
+  relevance: 'relevance',
+  downloads: 'downloads',
+  newest: 'newest'
+}
+
+/** CurseForge 搜索 sortField（1=精选 2=人气 3=更新时间 4=名称 6=总下载） */
+const CF_SORT_FIELD: Record<string, number> = {
+  relevance: 2,
+  downloads: 6,
+  newest: 3
+}
+
 interface MrHit {
   project_id?: string
   slug?: string
@@ -80,7 +94,7 @@ async function mrSearch(q: CommunityQuery): Promise<CommunityResult[]> {
     query: q.keyword,
     limit: String(q.limit),
     offset: String(q.offset),
-    index: 'relevance',
+    index: MR_SORT_INDEX[q.sort ?? 'relevance'] ?? 'relevance',
     facets: JSON.stringify(facets)
   })
   const data = (await mrFetch(`/search?${params.toString()}`)) as { hits?: MrHit[] }
@@ -185,7 +199,7 @@ async function cfSearch(q: CommunityQuery): Promise<CommunityResult[]> {
     searchFilter: q.keyword,
     index: String(q.offset),
     pageSize: String(q.limit),
-    sortField: '2',
+    sortField: String(CF_SORT_FIELD[q.sort ?? 'relevance'] ?? 2),
     sortOrder: 'desc'
   })
   if (q.mcVersion) params.set('gameVersion', q.mcVersion)

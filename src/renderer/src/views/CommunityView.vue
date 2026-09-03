@@ -78,8 +78,16 @@ const query = reactive({
   kind: 'mod' as CommunityKind,
   source: 'all' as 'all' | CommunitySource,
   mcVersion: '',
-  loader: '' as '' | LoaderName
+  loader: '' as '' | LoaderName,
+  sort: 'relevance' as 'relevance' | 'downloads' | 'newest'
 })
+
+/** 排序选项 */
+const sortOptions = [
+  { value: 'relevance', label: '相关度' },
+  { value: 'downloads', label: '最多下载' },
+  { value: 'newest', label: '最新发布' }
+]
 
 // ---------------- 搜索与列表 ----------------
 const results = ref<CommunityResult[]>([])
@@ -108,6 +116,7 @@ async function doSearch(reset: boolean) {
       source: query.source,
       mcVersion: query.mcVersion || undefined,
       loader: query.loader || undefined,
+      sort: query.sort,
       offset: offset.value,
       limit: PAGE_SIZE
     })
@@ -138,6 +147,7 @@ function onReset() {
   query.source = 'all'
   query.mcVersion = ''
   query.loader = ''
+  query.sort = 'relevance'
   versionInput.value = ''
   void doSearch(true)
 }
@@ -339,6 +349,9 @@ async function confirmDownload() {
         </div>
         <select v-model="query.loader" class="select filter-select" @change="onFilterChange">
           <option v-for="o in loaderOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+        <select v-model="query.sort" class="select filter-select" @change="onFilterChange">
+          <option v-for="o in sortOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
       </div>
     </div>
