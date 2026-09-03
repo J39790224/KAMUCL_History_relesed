@@ -18,6 +18,8 @@ function defaults(): Settings {
     gameDir: path.join(app.getPath('appData'), '.kamucl'),
     javaPath: '',
     javaAuto: true,
+    javaCustom: [],
+    javaHidden: [],
     memoryMB: 4096,
     jvmArgs: '',
     resolution: { width: 854, height: 480, fullscreen: false },

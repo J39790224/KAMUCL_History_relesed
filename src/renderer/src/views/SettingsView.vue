@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { errText, getSettings, listJava, migrateGameDir, onGameDirDone, saveSettings, selectDir } from '../api'
+import { addCustomJava, errText, getSettings, hideJava, listJava, migrateGameDir, onGameDirDone, refreshJava, saveSettings, selectDir } from '../api'
 import { enterEditMode, progressOverall, store, toast } from '../store'
 import type { Settings } from '@shared/types'
 
@@ -78,6 +78,48 @@ function onToggleFeature(key: string, enabled: boolean) {
 const javas = ref<Awaited<ReturnType<typeof listJava>>>([])
 const javaLoading = ref(true)
 const javaError = ref('')
+const javaRefreshing = ref(false)
+const javaAdding = ref(false)
+const javaCustomInput = ref('')
+const javaAddError = ref('')
+
+async function onRefreshJava() {
+  javaRefreshing.value = true
+  try {
+    javas.value = await refreshJava()
+    toast('Java 扫描完成', 'success')
+  } catch (e) {
+    toast('扫描失败：' + errText(e), 'error')
+  } finally {
+    javaRefreshing.value = false
+  }
+}
+
+async function onAddJava() {
+  const p = javaCustomInput.value.trim()
+  if (!p || javaAdding.value) return
+  javaAdding.value = true
+  javaAddError.value = ''
+  try {
+    await addCustomJava(p)
+    javaCustomInput.value = ''
+    javas.value = await listJava()
+    toast('已添加 Java', 'success')
+  } catch (e) {
+    javaAddError.value = errText(e)
+  } finally {
+    javaAdding.value = false
+  }
+}
+
+async function onHideJava(p: string) {
+  try {
+    await hideJava(p)
+    javas.value = await listJava()
+  } catch (e) {
+    toast('操作失败：' + errText(e), 'error')
+  }
+}
 
 onMounted(async () => {
   try {
@@ -330,6 +372,39 @@ function saveResolution() {
           <p v-else-if="!javas.length" class="muted group-hint">
             未检测到本机 Java，将使用「自动选择」或在启动时自动下载。
           </p>
+
+          <!-- 已识别的 Java 列表（版本/位数/来源，支持移除） -->
+          <div v-if="javas.length" class="java-list">
+            <div class="java-list-head">
+              <span class="muted">已识别 {{ javas.length }} 个 Java</span>
+              <button class="btn btn-ghost btn-sm" :disabled="javaRefreshing" @click="onRefreshJava">
+                {{ javaRefreshing ? '扫描中…' : '重新扫描' }}
+              </button>
+            </div>
+            <div v-for="j in javas" :key="j.path" class="java-item">
+              <span class="tag" :class="j.source === 'manual' ? 'tag-accent' : ''">
+                {{ j.source === 'manual' ? '手动' : '自动' }}
+              </span>
+              <span class="java-item-ver">Java {{ j.major }}</span>
+              <span class="muted java-item-path" :title="j.path">{{ j.path }}</span>
+              <button class="java-item-hide" title="从列表隐藏" @click="onHideJava(j.path)">×</button>
+            </div>
+          </div>
+
+          <!-- 手动添加 Java -->
+          <div class="java-add-row">
+            <input
+              v-model="javaCustomInput"
+              class="input mono"
+              placeholder="手动添加 java 可执行文件完整路径…"
+              spellcheck="false"
+              @keyup.enter="onAddJava"
+            />
+            <button class="btn btn-ghost" :disabled="javaAdding" @click="onAddJava">
+              {{ javaAdding ? '校验中…' : '添加' }}
+            </button>
+          </div>
+          <p v-if="javaAddError" class="group-error">{{ javaAddError }}</p>
         </template>
       </div>
 
@@ -479,7 +554,60 @@ function saveResolution() {
   font-size: 15px;
   margin-bottom: 12px;
 }
-/* Java 自动管理开关行 */
+/* Java 列表 */
+.java-list {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.java-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--card-2);
+  font-size: 12px;
+}
+.java-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.java-item-ver {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.java-item-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+.java-item-hide {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+.java-item-hide:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.java-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
 .java-auto-row {
   display: flex;
   align-items: center;

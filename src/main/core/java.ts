@@ -5,9 +5,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execSync, spawnSync } from 'node:child_process'
+import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import type { JavaInfo, ProgressEvent } from '../../shared/types'
-import { getSettings } from './settings'
+import { getSettings, saveSettings } from './settings'
 import { runtimesDir } from './paths'
 import { downloadFile } from './download'
 import type { VersionJson } from './versions'
@@ -69,21 +70,43 @@ function candidatePaths(): string[] {
     /* 找不到时返回非零，忽略 */
   }
 
-  // 4. 常见安装目录（手动枚举，不引 glob 库）
+  // 4. 常见安装目录（所有磁盘分区逐个尝试）
   if (IS_WIN) {
-    const bases = [
-      'C:\\Program Files\\Java',
-      'C:\\Program Files\\Eclipse Adoptium',
-      'C:\\Program Files\\Microsoft',
-      'C:\\Program Files\\Zulu',
-      'C:\\Program Files\\Amazon Corretto'
+    const dirNames = [
+      'Java',
+      'Eclipse Adoptium',
+      'Microsoft',
+      'Zulu',
+      'Amazon Corretto',
+      'BellSoft\\Liberica',
+      'JavaSoft\\JRE'
     ]
-    for (const base of bases) {
-      try {
-        for (const sub of fs.readdirSync(base)) push(path.join(base, sub, 'bin', JAVA_EXE))
-      } catch {
-        /* 目录不存在 */
+    for (let c = 67; c <= 90; c++) {
+      const drive = String.fromCharCode(c)
+      for (const dn of dirNames) {
+        const base = `${drive}:\\Program Files\\${dn}`
+        try {
+          for (const sub of fs.readdirSync(base)) push(path.join(base, sub, 'bin', JAVA_EXE))
+        } catch {
+          /* 目录不存在 */
+        }
       }
+    }
+    // 官方启动器运行时目录（.minecraft/runtime/<name>/<arch>/<name>/bin/java.exe，两层结构）
+    const rtBase = path.join(app.getPath('appData'), '.minecraft', 'runtime')
+    try {
+      for (const l1 of fs.readdirSync(rtBase)) {
+        const l1p = path.join(rtBase, l1)
+        try {
+          for (const l2 of fs.readdirSync(l1p)) {
+            push(path.join(l1p, l2, l1, 'bin', JAVA_EXE))
+          }
+        } catch {
+          /* 非目录 */
+        }
+      }
+    } catch {
+      /* 无 runtime 目录 */
     }
   } else if (IS_MAC) {
     // macOS：系统 JDK 目录（*/Contents/Home/bin/java）与用户级目录
@@ -133,8 +156,14 @@ function candidatePaths(): string[] {
   return list
 }
 
-/** 扫描本机所有可用 Java，返回去重后的 JavaInfo[] */
-export function scanJava(): JavaInfo[] {
+/** 扫描本机所有可用 Java，返回去重后的 JavaInfo[]（5 分钟缓存，refresh 强制重扫） */
+let scanCache: { time: number; list: JavaInfo[] } | null = null
+const SCAN_TTL = 5 * 60 * 1000
+
+export function scanJava(refresh = false): JavaInfo[] {
+  if (!refresh && scanCache && Date.now() - scanCache.time < SCAN_TTL) {
+    return mergeCustom(scanCache.list)
+  }
   const seen = new Set<string>()
   const out: JavaInfo[] = []
   for (const p of candidatePaths()) {
@@ -148,9 +177,47 @@ export function scanJava(): JavaInfo[] {
     if (seen.has(real)) continue
     seen.add(real)
     const info = probeJava(p)
-    if (info) out.push(info)
+    if (info) out.push({ ...info, source: 'auto' })
   }
-  return out
+  scanCache = { time: Date.now(), list: out }
+  return mergeCustom(out)
+}
+
+/** 合并手动添加的 Java，并过滤隐藏项 */
+function mergeCustom(list: JavaInfo[]): JavaInfo[] {
+  const s = getSettings()
+  const hidden = new Set((s.javaHidden ?? []).map((p) => p.toLowerCase()))
+  const auto = list.filter((j) => !hidden.has(j.path.toLowerCase()))
+  const manual: JavaInfo[] = []
+  for (const p of s.javaCustom ?? []) {
+    if (hidden.has(p.toLowerCase())) continue
+    if (auto.some((j) => j.path.toLowerCase() === p.toLowerCase())) continue
+    if (manual.some((j) => j.path.toLowerCase() === p.toLowerCase())) continue
+    const info = probeJava(p)
+    if (info) manual.push({ ...info, source: 'manual' })
+  }
+  return [...manual, ...auto]
+}
+
+/** 手动添加一个 Java 路径（校验可用后加入 javaCustom） */
+export function addCustomJava(javaPath: string): void {
+  const info = probeJava(javaPath)
+  if (!info) throw new Error('该路径不是可用的 Java 可执行文件（java -version 校验失败）')
+  const s = getSettings()
+  const list = [...(s.javaCustom ?? [])]
+  if (!list.some((p) => p.toLowerCase() === javaPath.toLowerCase())) {
+    list.push(javaPath)
+  }
+  // 若曾被隐藏则取消隐藏
+  const hidden = (s.javaHidden ?? []).filter((p) => p.toLowerCase() !== javaPath.toLowerCase())
+  saveSettings({ javaCustom: list, javaHidden: hidden })
+}
+
+/** 从列表隐藏一个 Java（手动/自动均可） */
+export function hideJava(javaPath: string): void {
+  const s = getSettings()
+  const hidden = [...new Set([...(s.javaHidden ?? []), javaPath])]
+  saveSettings({ javaHidden: hidden })
 }
 
 /** 推断运行该版本所需的 Java 主版本号 */

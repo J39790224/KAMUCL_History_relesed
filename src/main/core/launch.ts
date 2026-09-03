@@ -214,10 +214,17 @@ export async function launch(
   if (!account) throw new Error('尚未选择账号，请先在账号页添加并选择一个账号')
   const validAccount = await getValidAccount(account)
 
-  // c) Java：自动管理模式自动检测/下载；手动模式用指定 Java 或仅扫描不下载
+  // c) Java：版本独立指定 > 手动指定 > 自动管理
   emit({ stage: 'java', progress: 0, text: '检查 Java 环境' })
   let javaPath: string
-  if (settings.javaAuto) {
+  const versionJava = readVersionJson(versionId)._javaPath
+  if (versionJava) {
+    if (!fs.existsSync(versionJava)) {
+      throw new Error(`该版本指定的 Java 不存在（${versionJava}），请在版本设置中重新选择`)
+    }
+    javaPath = versionJava
+    emit({ stage: 'java', progress: 1, text: '使用该版本指定的 Java' })
+  } else if (settings.javaAuto) {
     javaPath = await ensureJava(merged, emit)
   } else if (settings.javaPath) {
     if (!fs.existsSync(settings.javaPath)) {

@@ -86,6 +86,8 @@ export interface VersionJson {
   /** KAMUCL 自定义字段：来源整合包名称/版本 */
   _modpackName?: string
   _modpackVersion?: string
+  /** KAMUCL 自定义字段：版本独立指定 Java 路径 */
+  _javaPath?: string
 }
 
 // ---------------- rules 评估 ----------------
@@ -435,6 +437,7 @@ export function listInstalled(): InstalledVersion[] {
       if (j._loaderVersion) item.loaderVersion = j._loaderVersion
       if (j._modpackName) item.modpackName = j._modpackName
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
+      if (j._javaPath) item.javaPath = j._javaPath
       if (j._gameDir === true) item.isolated = true
       // 完整性校验：原版版本必须有客户端 jar；有 .part 残留或 jar 缺失 = 下载未完成
       if (!j.inheritsFrom) {
@@ -499,6 +502,16 @@ export function renameVersion(id: string, newName: string): void {
 }
 export function removeVersion(id: string): void {
   fs.rmSync(versionDir(id), { recursive: true, force: true })
+}
+
+/** 版本独立指定 Java（写入 _javaPath；空串恢复自动匹配） */
+export function setVersionJava(id: string, javaPath: string): void {
+  const jp = versionJsonPath(id)
+  const j = readVersionJson(id)
+  const p = javaPath.trim()
+  if (p) j._javaPath = p
+  else delete j._javaPath
+  fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
 }
 
 // ---------------- 版本隔离 ----------------

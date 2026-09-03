@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation } from '../api'
+import { errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
@@ -305,6 +305,42 @@ function goManage(view: 'mods' | 'packs' | 'shaders') {
 // ---------------- 实例重命名 ----------------
 const renameModal = reactive({ open: false, id: '', name: '', error: '', busy: false })
 
+// ---------------- 指定 Java ----------------
+const javaModal = reactive({
+  open: false,
+  id: '',
+  value: '',
+  list: [] as Awaited<ReturnType<typeof listJava>>,
+  busy: false
+})
+
+async function openJavaModal() {
+  javaModal.id = manageMenu.id
+  manageMenu.id = ''
+  javaModal.busy = true
+  javaModal.open = true
+  try {
+    javaModal.list = await listJava()
+    const cur = store.installed.find((v) => v.id === javaModal.id)
+    javaModal.value = cur?.javaPath ?? ''
+  } catch (e) {
+    toast('读取 Java 列表失败：' + errText(e), 'error')
+  } finally {
+    javaModal.busy = false
+  }
+}
+
+async function onConfirmJava() {
+  try {
+    await setVersionJava(javaModal.id, javaModal.value)
+    await refreshInstalled()
+    javaModal.open = false
+    toast(javaModal.value ? '已为该版本指定 Java' : '已恢复自动匹配 Java', 'success')
+  } catch (e) {
+    toast('设置失败：' + errText(e), 'error')
+  }
+}
+
 function openRename() {
   renameModal.id = manageMenu.id
   renameModal.name = manageMenu.id
@@ -591,6 +627,35 @@ async function onToggleIsolation(v: InstalledVersion) {
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
           重命名
         </button>
+        <button class="menu-item" @click="openJavaModal">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a3 3 0 0 1 0 6h-1M3 8h15v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M7 12h6M7 15h4"/></svg>
+          指定 Java
+        </button>
+      </div>
+    </Teleport>
+
+    <!-- 指定 Java 弹窗 -->
+    <Teleport to="body">
+      <div v-if="javaModal.open" class="modal-mask" @click.self="javaModal.open = false">
+        <div class="modal">
+          <h3 class="modal-title">指定 Java · {{ javaModal.id }}</h3>
+          <p class="modal-label">选择该版本使用的 Java（默认自动匹配）</p>
+          <div v-if="javaModal.busy" class="loaders-loading">
+            <span class="spin"></span><span class="muted">读取 Java 列表…</span>
+          </div>
+          <template v-else>
+            <select v-model="javaModal.value" class="select">
+              <option value="">自动匹配（按版本需求选择，推荐）</option>
+              <option v-for="j in javaModal.list" :key="j.path" :value="j.path">
+                Java {{ j.major }}（{{ j.source === 'manual' ? '手动' : '自动' }}）· {{ j.path }}
+              </option>
+            </select>
+          </template>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" @click="javaModal.open = false">取消</button>
+            <button class="btn btn-gold" @click="onConfirmJava">确定</button>
+          </div>
+        </div>
       </div>
     </Teleport>
 

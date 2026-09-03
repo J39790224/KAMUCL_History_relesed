@@ -83,6 +83,8 @@ export const installVersion = (id: string, opts?: InstallOptions) =>
 export const removeVersion = (id: string) => invoke<void>(IPC.versionsRemove, id)
 export const renameVersion = (id: string, newName: string) =>
   invoke<void>(IPC.versionsRename, id, newName)
+export const setVersionJava = (id: string, javaPath: string) =>
+  invoke<void>(IPC.versionsSetJava, id, javaPath)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
 export const listLoaders = (loader: LoaderName, mc: string) =>
@@ -114,6 +116,9 @@ export const communityDownload = (
 
 // ---------------- Java ----------------
 export const listJava = () => invoke<JavaInfo[]>(IPC.javaList)
+export const refreshJava = () => invoke<JavaInfo[]>(IPC.javaRefresh)
+export const addCustomJava = (path: string) => invoke<void>(IPC.javaAddCustom, path)
+export const hideJava = (path: string) => invoke<void>(IPC.javaHide, path)
 
 // ---------------- 皮肤/披风 ----------------
 /** 当前微软账号的皮肤/披风档案 */

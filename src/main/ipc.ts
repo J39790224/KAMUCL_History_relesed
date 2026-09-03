@@ -108,6 +108,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) =>
     versions.renameVersion(String(id ?? ''), String(newName ?? ''))
   )
+  ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
+    versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
+  )
   ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
     versions.setIsolation(String(versionId ?? ''), isolated === true)
   )
@@ -156,6 +159,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- Java ----------------
   ipcMain.handle(IPC.javaList, () => java.scanJava())
+  ipcMain.handle(IPC.javaAddCustom, (_e, p: string) => java.addCustomJava(String(p ?? '')))
+  ipcMain.handle(IPC.javaHide, (_e, p: string) => java.hideJava(String(p ?? '')))
+  ipcMain.handle(IPC.javaRefresh, () => java.scanJava(true))
 
   // ---------------- 皮肤/披风（同步 await 返回，错误经 invoke reject 给前端） ----------------
   ipcMain.handle(IPC.skinProfile, () => skins.getProfile())

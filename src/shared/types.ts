@@ -46,6 +46,8 @@ export interface InstalledVersion {
   isolated?: boolean
   /** 下载未完成的残缺版本（json 在但客户端 jar 缺失/有 .part 残留），不算正常已安装 */
   incomplete?: boolean
+  /** 版本独立指定的 Java 路径（空 = 自动匹配） */
+  javaPath?: string
 }
 
 export type LoaderName = 'forge' | 'fabric' | 'quilt' | 'neoforge'
@@ -72,6 +74,8 @@ export interface JavaInfo {
   major: number
   version: string
   is64Bit: boolean
+  /** 来源：自动扫描 / 手动添加 */
+  source?: 'auto' | 'manual'
 }
 
 // ---------------- 设置 ----------------
@@ -122,6 +126,10 @@ export interface Settings {
   javaPath: string
   /** Java 自动管理：自动检测版本所需 Java，缺失时自动下载（默认开启） */
   javaAuto: boolean
+  /** 手动添加的 Java 路径（展示来源标注「手动」） */
+  javaCustom: string[]
+  /** 从扫描结果中隐藏的 Java 路径 */
+  javaHidden: string[]
   memoryMB: number
   jvmArgs: string
   resolution: { width: number; height: number; fullscreen: boolean }
@@ -214,12 +222,16 @@ export const IPC = {
   versionsInstall: 'versions:install', // (versionId: string, opts?: InstallOptions) => void
   versionsRemove: 'versions:remove', // (versionId: string) => void
   versionsRename: 'versions:rename', // (id: string, newName: string) => void  重命名实例（目录+json id 同步改）
+  versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
   fabricApiList: 'loaders:fabricApi', // (mcVersion: string) => FabricApiVersion[]
 
   // Java
-  javaList: 'java:list', // () => JavaInfo[]
+  javaList: 'java:list', // () => JavaInfo[]（5 分钟缓存）
+  javaRefresh: 'java:refresh', // () => JavaInfo[]  强制重扫
+  javaAddCustom: 'java:addCustom', // (path: string) => void  手动添加（校验 java -version）
+  javaHide: 'java:hide', // (path: string) => void  从列表隐藏
 
   // 游戏
   gameLaunch: 'game:launch', // (versionId: string, serverAddress?: string) => void  带 serverAddress 时用 --quickPlayMultiplayer 直接进服
