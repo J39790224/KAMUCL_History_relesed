@@ -6,7 +6,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import AdmZip from 'adm-zip'
-import type { LoaderName, ModInfo } from '../../shared/types'
+import type { LoaderName, ModCrossDuplicate, ModDuplicateGroup, ModInfo } from '../../shared/types'
+import { readVersionJson } from './versions'
+import { gameDir, versionDir } from './paths'
 
 // ---------------- TOML æžç®€è§£æžï¼ˆæŒ‰è¡Œï¼Œä»…å¤Ÿæå– mods.toml å­—æ®µï¼‰ ----------------
 
@@ -350,4 +352,96 @@ export function expandJarPaths(paths: string[]): { files: string[]; skipped: str
     }
   }
   return { files, skipped }
+}
+
+// ---------------- ÖØ¸´ MOD ²éÖØ ----------------
+
+/** °æ±¾ mods Ä¿Â¼£¨×ñÑ­°æ±¾¸ôÀë£© */
+function modsDirOf(versionId: string): string {
+  try {
+    if (readVersionJson(versionId)._gameDir === true) return path.join(versionDir(versionId), 'mods')
+  } catch {
+    /* °´¹²ÏíÄ¿Â¼ */
+  }
+  return path.join(gameDir(), 'mods')
+}
+
+/** MOD °æ±¾ºÅ±È½Ï£¨Êý×Ö¶Î±È½Ï£¬ºöÂÔºó×º£© */
+function compareModVersion(a: string, b: string): number {
+  const norm = (s: string): number[] =>
+    s
+      .replace(/[+_].*$/, '')
+      .split(/[.-]/)
+      .map((x) => parseInt(x, 10) || 0)
+  const pa = norm(a)
+  const pb = norm(b)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/** µ¥°æ±¾²éÖØ£ºÍ¬ mod id ¶àÎÄ¼þ¹²´æ£¬°´°æ±¾ºÅÅÅÐò±ê³ö×îÐÂ°æ */
+export function findDuplicates(versionId: string): ModDuplicateGroup[] {
+  const dir = modsDirOf(versionId)
+  let jars: string[] = []
+  try {
+    jars = fs
+      .readdirSync(dir)
+      .filter((n) => n.toLowerCase().endsWith('.jar'))
+      .map((n) => path.join(dir, n))
+  } catch {
+    return []
+  }
+  const groups = new Map<string, ModDuplicateGroup>()
+  for (const jar of jars) {
+    const info = parseModFile(jar)
+    if (info.error || !info.id) continue
+    const key = info.id.toLowerCase()
+    if (!groups.has(key)) {
+      groups.set(key, { modId: info.id, name: info.name || info.id, files: [] })
+    }
+    groups.get(key)!.files.push({ fileName: info.fileName, version: info.version, latest: false })
+  }
+  const out: ModDuplicateGroup[] = []
+  for (const g of groups.values()) {
+    if (g.files.length < 2) continue
+    g.files.sort((a, b) => compareModVersion(b.version, a.version))
+    g.files.forEach((f, i) => (f.latest = i === 0))
+    out.push(g)
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** ¿ç°æ±¾²éÖØ£ºÍ¬Ò» mod id Í¬Ê±´æÔÚÓÚ¶à¸öËùÑ¡°æ±¾ */
+export function findCrossDuplicates(versionIds: string[]): ModCrossDuplicate[] {
+  const map = new Map<string, ModCrossDuplicate>()
+  for (const vid of versionIds) {
+    const dir = modsDirOf(vid)
+    let jars: string[] = []
+    try {
+      jars = fs
+        .readdirSync(dir)
+        .filter((n) => n.toLowerCase().endsWith('.jar'))
+        .map((n) => path.join(dir, n))
+    } catch {
+      continue
+    }
+    for (const jar of jars) {
+      const info = parseModFile(jar)
+      if (info.error || !info.id) continue
+      const key = info.id.toLowerCase()
+      if (!map.has(key)) {
+        map.set(key, { modId: info.id, name: info.name || info.id, presentIn: [] })
+      }
+      const g = map.get(key)!
+      if (!g.presentIn.some((p) => p.versionId === vid)) {
+        g.presentIn.push({ versionId: vid, fileName: info.fileName })
+      }
+    }
+  }
+  return [...map.values()]
+    .filter((g) => g.presentIn.length >= 2)
+    .sort((a, b) => b.presentIn.length - a.presentIn.length)
 }

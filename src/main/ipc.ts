@@ -234,8 +234,14 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     }
     return list
   })
-  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {
-    const vid = String(targetVersionId ?? '')
+  ipcMain.handle(IPC.modsDuplicates, (_e, versionId: string) =>
+    modinfo.findDuplicates(String(versionId ?? ''))
+  )
+  ipcMain.handle(IPC.modsCrossDuplicates, (_e, versionIds: string[]) =>
+    modinfo.findCrossDuplicates(Array.isArray(versionIds) ? versionIds.map(String) : [])
+  )
+
+  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {    const vid = String(targetVersionId ?? '')
     // 版本隔离时装入版本独立 mods 目录，否则共享目录
     let base = settings.getSettings().gameDir
     try {

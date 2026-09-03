@@ -7,6 +7,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { copyText, errText, listFs, openDir, removeFs } from '../api'
 import { refreshInstalled, store, toast } from '../store'
 import ConfirmModal from './ConfirmModal.vue'
+import DupCleanModal from './DupCleanModal.vue'
 import type { FsEntry } from '@shared/types'
 
 const props = defineProps<{
@@ -70,6 +71,9 @@ watch(effectiveRel, () => void load())
 watch(() => store.fsRefreshTick, () => void load())
 
 // ---------------- 路径显示（超长中间省略 + 点击复制） ----------------
+/** 清理重复 MOD 弹窗 */
+const dupOpen = ref(false)
+
 /** 中间省略的路径：versions/neo…2.0.75/mods */
 const displayPath = computed(() => {
   const p = effectiveRel.value
@@ -172,6 +176,12 @@ const fmtDate = (ts: number) => {
           </svg>
           刷新
         </button>
+        <button v-if="props.rel === 'mods'" class="btn btn-ghost" @click="dupOpen = true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6Z" />
+          </svg>
+          清理重复
+        </button>
         <button class="btn btn-gold" :disabled="opening" @click="onOpenDir">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
@@ -231,6 +241,16 @@ const fmtDate = (ts: number) => {
       :busy="delModal.busy"
       @cancel="delModal.open = false"
       @confirm="onConfirmRemove"
+    />
+
+    <!-- 清理重复 MOD（仅模组页） -->
+    <DupCleanModal
+      v-if="props.rel === 'mods'"
+      :open="dupOpen"
+      :version-id="currentVersion?.id ?? ''"
+      :rel="effectiveRel"
+      @close="dupOpen = false"
+      @deleted="load"
     />
   </div>
 </template>

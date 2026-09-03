@@ -237,6 +237,8 @@ export const IPC = {
   // MOD 拖入即装
   modsParse: 'mods:parse', // (paths: string[]) => ModInfo[]  支持文件/文件夹路径，静默解析元数据
   modsInstall: 'mods:install', // (files: string[], targetVersionId: string) => ModInstallResult[]  装入目标版本 mods 目录（遵循版本隔离）
+  modsDuplicates: 'mods:duplicates', // (versionId: string) => ModDuplicateGroup[]  单版本查重
+  modsCrossDuplicates: 'mods:crossDuplicates', // (versionIds: string[]) => ModCrossDuplicate[]  跨版本查重
 
   // 整合包
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
@@ -376,6 +378,21 @@ export interface ModInstallResult {
   fileName: string
   ok: boolean
   message: string
+}
+
+/** 单版本重复 MOD 组（同 mod id 多文件共存） */
+export interface ModDuplicateGroup {
+  modId: string
+  name: string
+  files: Array<{ fileName: string; version: string; /** 排序后的最新版（默认保留） */ latest: boolean }>
+}
+
+/** 跨版本重复：同一 mod id 同时存在于多个版本 */
+export interface ModCrossDuplicate {
+  modId: string
+  name: string
+  /** 出现该 MOD 的版本列表（版本 id + 文件名） */
+  presentIn: Array<{ versionId: string; fileName: string }>
 }
 
 export interface ServerPingResult {

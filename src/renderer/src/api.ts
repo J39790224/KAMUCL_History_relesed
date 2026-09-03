@@ -17,6 +17,8 @@ import type {
   JavaInfo,
   LaunchState,
   LoaderName,
+  ModCrossDuplicate,
+  ModDuplicateGroup,
   ModInfo,
   ModInstallResult,
   ModpackInfo,
@@ -149,6 +151,10 @@ export const pingServer = (address: string) =>
 export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)
 export const installMods = (files: string[], targetVersionId: string) =>
   invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId)
+export const findModDuplicates = (versionId: string) =>
+  invoke<ModDuplicateGroup[]>(IPC.modsDuplicates, versionId)
+export const findModCrossDuplicates = (versionIds: string[]) =>
+  invoke<ModCrossDuplicate[]>(IPC.modsCrossDuplicates, versionIds)
 
 // ---------------- 文件/目录 ----------------
 /** 用系统资源管理器打开游戏目录下的子目录（'' = 游戏根目录） */
