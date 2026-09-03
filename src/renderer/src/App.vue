@@ -413,9 +413,11 @@ onMounted(async () => {
       store.installing.delete(r.versionId)
       store.progress = null
       if (r.ok) {
+        store.failedInstalls.delete(r.versionId)
         toast(`版本 ${r.versionId} 安装完成`, 'success')
         void refreshInstalled()
       } else {
+        store.failedInstalls.add(r.versionId)
         toast('安装失败：' + (r.error ?? '未知错误'), 'error')
       }
     }),

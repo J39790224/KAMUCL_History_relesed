@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errText, formatSpeed, getManifest, installVersion, listFabricApi, listLoaders, openDir, removeVersion, setVersionIsolation } from '../api'
-import { displayVersionName, displayVersionSub, progressOverall, refreshInstalled, store, toast } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, progressOverall, refreshInstalled, store, toast } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import type {
   FabricApiVersion,
@@ -15,6 +15,15 @@ import type {
 const manifest = ref<RemoteVersion[]>([])
 const loading = ref(false)
 const loadError = ref('')
+
+/** 顶部 Tab：版本下载 / 已安装（消灭内层嵌套滚动，localStorage 记忆） */
+const TAB_KEY = 'kamucl.gameTab'
+const tab = ref<'download' | 'installed'>(
+  (localStorage.getItem(TAB_KEY) as 'download' | 'installed') === 'installed'
+    ? 'installed'
+    : 'download'
+)
+watch(tab, (t) => localStorage.setItem(TAB_KEY, t))
 
 async function load(refresh = false) {
   loading.value = true
@@ -215,6 +224,20 @@ const isoBusy = ref<string | null>(null)
 // ---------------- 管理快捷菜单 ----------------
 const manageMenu = reactive({ id: '', top: 0, left: 0 })
 
+/** 重试安装失败的版本 */
+function onRetry(versionId: string) {
+  store.failedInstalls.delete(versionId)
+  store.installing.add(versionId)
+  toast(`重新开始下载版本 ${versionId}…`, 'info')
+  void installVersion(versionId, {}).catch((e) => {
+    store.installing.delete(versionId)
+    toast('安装失败：' + errText(e), 'error')
+  })
+}
+
+/** 安装中的版本（进度条显示在已安装页顶部） */
+const installingVersions = computed(() => [...store.installing])
+
 function openManageMenu(e: MouseEvent, id: string) {
   if (manageMenu.id === id) {
     manageMenu.id = ''
@@ -262,6 +285,17 @@ async function onToggleIsolation(v: InstalledVersion) {
       <p class="page-sub">浏览、安装与管理 Minecraft 版本</p>
     </div>
 
+    <!-- 顶部 Tab：版本下载 / 已安装 -->
+    <div class="game-tabs">
+      <button class="game-tab" :class="{ active: tab === 'download' }" @click="tab = 'download'">
+        版本下载
+      </button>
+      <button class="game-tab" :class="{ active: tab === 'installed' }" @click="tab = 'installed'">
+        已安装<template v-if="store.installed.length">（{{ store.installed.length }}）</template>
+      </button>
+    </div>
+
+    <template v-if="tab === 'download'">
     <!-- 工具行 -->
     <div class="toolbar">
       <div class="tool-search">
@@ -341,12 +375,42 @@ async function onToggleIsolation(v: InstalledVersion) {
         </div>
       </div>
     </div>
+    </template>
 
     <!-- 已安装区 -->
+    <template v-else>
     <div class="card installed-card">
-      <h3 class="section-title">已安装（{{ store.installed.length }}）</h3>
-      <div v-if="!store.installed.length" class="empty installed-empty">
-        <span>还没有安装任何版本，从上方列表挑一个吧</span>
+      <!-- 安装中（进度显示） -->
+      <div v-if="installingVersions.length" class="installing-block">
+        <div v-for="id in installingVersions" :key="id" class="installed-row installing-row">
+          <div class="inst-names">
+            <span class="version-id">{{ id }}</span>
+            <span class="muted">正在下载安装…</span>
+          </div>
+          <div v-if="store.progress" class="row-progress">
+            <div class="row-bar">
+              <div class="row-bar-fill" :style="{ width: Math.round(progressOverall(store.progress) * 100) + '%' }"></div>
+            </div>
+            <span class="muted row-progress-text">
+              {{ Math.round(progressOverall(store.progress) * 100) }}%
+              {{ store.progress.speed ? '· ' + formatSpeed(store.progress.speed) : '' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 安装失败（重试入口） -->
+      <div v-for="id in [...store.failedInstalls].filter((x) => !installingVersions.includes(x))" :key="'fail-' + id" class="installed-row failed-row">
+        <div class="inst-names">
+          <span class="version-id">{{ id }}</span>
+          <span class="muted">上次安装失败</span>
+        </div>
+        <button class="btn btn-ghost btn-sm installed-folder" @click="onRetry(id)">重试</button>
+      </div>
+
+      <div v-if="!store.installed.length && !installingVersions.length" class="empty installed-empty">
+        <span>还没有安装任何版本</span>
+        <button class="btn btn-gold btn-sm" @click="tab = 'download'">去版本下载看看</button>
       </div>
       <div v-else class="installed-list">
         <div v-for="v in store.installed" :key="v.id" class="installed-row">
@@ -359,6 +423,7 @@ async function onToggleIsolation(v: InstalledVersion) {
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
           <span v-else-if="!v.loader" class="tag">纯净版</span>
           <span v-if="v.isolated" class="tag">已隔离</span>
+          <span class="muted played-text">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</span>
           <label
             v-if="!v.modpackName"
             class="iso-switch"
@@ -403,6 +468,7 @@ async function onToggleIsolation(v: InstalledVersion) {
         </div>
       </div>
     </div>
+    </template>
 
     <!-- 管理快捷菜单（模组/资源包/光影包） -->
     <Teleport to="body">
@@ -595,8 +661,9 @@ async function onToggleIsolation(v: InstalledVersion) {
   padding: 8px;
 }
 .version-list {
-  max-height: 400px;
-  overflow-y: auto;
+  /* 不再限制高度——整页单条外滚动，消灭内层嵌套滚动 */
+  display: flex;
+  flex-direction: column;
 }
 .version-row {
   display: flex;
@@ -688,12 +755,56 @@ async function onToggleIsolation(v: InstalledVersion) {
   font-family: ui-monospace, Consolas, monospace;
   word-break: break-all;
 }
+/* 顶部 Tab 分段 */
+.game-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-2);
+  align-self: flex-start;
+}
+.game-tab {
+  padding: 7px 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.game-tab:hover {
+  color: var(--text);
+}
+.game-tab.active {
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  box-shadow: 0 2px 8px var(--accent-soft);
+}
+
+/* 安装中/失败行 */
+.installing-block {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.failed-row .installed-folder {
+  margin-left: auto;
+}
+.played-text {
+  margin-left: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 /* 版本隔离开关 */
 .iso-switch {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   cursor: pointer;
 }
 .iso-label {
