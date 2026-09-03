@@ -232,14 +232,18 @@ async function cfFiles(
   )) as { data?: CfFile[] }
   return (data.data ?? []).map((f) => {
     const id = String(f.id ?? '')
+    const numId = Number(f.id ?? 0)
     const gameVersions = f.gameVersions ?? []
+    // downloadUrl 缺失时按 ForgeCDN 规则拼地址（media 403 / edge 可用）
+    const fallbackUrl =
+      Number.isFinite(numId) && numId > 0 && f.fileName
+        ? `https://edge.forgecdn.net/files/${Math.floor(numId / 1000)}/${numId % 1000}/${encodeURIComponent(f.fileName)}`
+        : undefined
     return {
       fileId: id,
       fileName: f.fileName ?? id,
       version: f.displayName ?? f.fileName ?? id,
-      url:
-        f.downloadUrl ??
-        `${CF_BASE}/mods/${encodeURIComponent(projectId)}/files/${id}/download`,
+      url: f.downloadUrl ?? fallbackUrl ?? '',
       sha1: f.hashes?.find((h) => h.algo === 1)?.value,
       size: f.fileLength ?? 0,
       releaseType:
