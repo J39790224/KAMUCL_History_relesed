@@ -638,7 +638,6 @@ const installedLoaderText = (v: InstalledVersion) =>
 .installed-folder {
   margin-left: auto;
 }
-}
 .installed-remove {
   flex-shrink: 0;
 }
