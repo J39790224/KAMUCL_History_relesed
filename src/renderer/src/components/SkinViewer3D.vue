@@ -362,6 +362,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  loadToken++ // 丢弃已卸载后才完成的纹理请求，避免重新创建 GPU 资源。
   cancelAnimationFrame(rafId)
   observer?.disconnect()
   onPointerUp() // 防止拖动中卸载残留全局监听

@@ -42,7 +42,10 @@ export function microsoftFetch(input: string, init: { method?: string; headers?:
         else chunks.push(chunk)
       })
       res.once('error', reject)
-      res.once('end', () => resolve(new Response(Buffer.concat(chunks), { status })))
+      res.once('end', () => {
+        try { resolve(new Response([204, 205, 304].includes(status) ? null : Buffer.concat(chunks), { status })) }
+        catch (error) { reject(error) }
+      })
     })
     req.setTimeout(30000, () => req.destroy(new Error('正版认证连接超时')))
     req.once('error', error => reject(certificateError(error)))

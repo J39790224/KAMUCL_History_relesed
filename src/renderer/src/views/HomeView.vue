@@ -546,7 +546,7 @@ onUnmounted(() => {
             <Avatar :size="54" />
             <div class="account-copy" data-edit="text">
               <strong>{{ accountName }}</strong>
-              <span><i></i>在线</span>
+              <span><i></i>{{ store.selectedAccount.type === 'offline' ? '离线账号' : '已登录' }}</span>
             </div>
             <button class="account-more" title="账户管理" @click="store.currentView = 'accounts'">
               <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
