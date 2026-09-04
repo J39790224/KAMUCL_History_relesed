@@ -44,6 +44,7 @@ import {
 import { exportLaunchLogs } from './core/exportLogs'
 import { ProgressEventGuard } from './core/progress'
 import { launcherLog } from './core/launcherLog'
+import * as gameFolders from './core/gameFolders'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -195,40 +196,31 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   )
 
   // ---------------- 游戏文件夹管理 ----------------
-  ipcMain.handle(IPC.foldersList, () => {
-    const s = settings.getSettings()
-    return { folders: s.folders, active: s.activeFolder }
-  })
-  ipcMain.handle(IPC.foldersAdd, (_e, p: string) => {
-    const dir = path.resolve(String(p ?? ''))
-    if (!fs.existsSync(dir)) throw new Error('文件夹不存在')
-    const s = settings.getSettings()
-    if (s.folders.some((f) => path.resolve(f.path) === dir)) return s.folders
-    return settings.saveSettings({
-      folders: [...s.folders, { path: dir, name: path.basename(dir), isDefault: false }]
-    }).folders
-  })
-  ipcMain.handle(IPC.foldersRemove, (_e, p: string) => {
-    const dir = path.resolve(String(p ?? ''))
-    const s = settings.getSettings()
-    const target = s.folders.find((f) => path.resolve(f.path) === dir)
-    if (target?.isDefault) throw new Error('默认文件夹不可移除（请先设其他文件夹为默认）')
-    return settings.saveSettings({
-      folders: s.folders.filter((f) => path.resolve(f.path) !== dir)
-    }).folders
-  })
-  ipcMain.handle(IPC.foldersSetDefault, (_e, p: string) => {
-    const dir = path.resolve(String(p ?? ''))
-    const s = settings.getSettings()
-    return settings.saveSettings({
-      folders: s.folders.map((f) => ({ ...f, isDefault: path.resolve(f.path) === dir }))
-    }).folders
-  })
-  ipcMain.handle(IPC.foldersSetActive, (_e, p: string) => {
-    const dir = path.resolve(String(p ?? ''))
-    const s = settings.getSettings()
-    if (!s.folders.some((f) => path.resolve(f.path) === dir)) throw new Error('文件夹未登记')
-    settings.saveSettings({ activeFolder: dir, gameDir: dir })
+  ipcMain.handle(IPC.foldersList, () => gameFolders.listGameFolders())
+  ipcMain.handle(IPC.foldersAdd, (_e, p: string) =>
+    gameFolders.addGameFolder(String(p ?? ''))
+  )
+  ipcMain.handle(IPC.foldersRemove, (_e, p: string) =>
+    gameFolders.removeGameFolder(String(p ?? ''))
+  )
+  ipcMain.handle(IPC.foldersRename, (_e, p: string, name: string) =>
+    gameFolders.renameGameFolder(String(p ?? ''), String(name ?? ''))
+  )
+  ipcMain.handle(IPC.foldersSetDefault, (_e, p: string) =>
+    gameFolders.setDefaultGameFolder(String(p ?? ''))
+  )
+  ipcMain.handle(IPC.foldersSetActive, (_e, p: string) =>
+    gameFolders.setActiveGameFolder(String(p ?? ''))
+  )
+  ipcMain.handle(IPC.foldersScan, (_e, p: string) =>
+    gameFolders.scanGameFolder(String(p ?? ''))
+  )
+  ipcMain.handle(IPC.foldersOpen, async (_e, p: string) => {
+    const state = gameFolders.listGameFolders()
+    const target = state.folders.find((folder) => folder.path === String(p ?? ''))
+    if (!target) throw new Error('文件夹未登记')
+    const error = await shell.openPath(target.path)
+    if (error) throw new Error(error)
   })
   ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
     versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))

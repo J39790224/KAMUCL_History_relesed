@@ -555,65 +555,115 @@ export function migrateDependencyVanilla(mcId: string): void {
 
 // ---------------- 已安装列表 / 删除 ----------------
 
-/** 沿 inheritsFrom 链解析到最底层的原版 MC 版本 id（链断时回退为当前已知 id；自定义命名的原版取 _mcVersion） */
-function resolveBaseMcId(j: VersionJson, fallback: string): string {
+function parseVersionFile(file: string): VersionJson {
+  return JSON.parse(fs.readFileSync(file, 'utf-8').replace(/^﻿/, '')) as VersionJson
+}
+
+function versionJsonInFolder(folder: string, id: string): string {
+  return path.join(folder, 'versions', id, `${id}.json`)
+}
+
+/** 沿 inheritsFrom 链解析原版版本，并把断链作为完整性错误返回。 */
+function resolveBaseMcId(
+  j: VersionJson,
+  fallback: string,
+  folder: string
+): { id: string; broken: boolean } {
   let cur = j
   let id = j.inheritsFrom ?? j._mcVersion ?? j.id ?? fallback
   let hops = 0
+  let broken = false
   while (cur.inheritsFrom && hops++ < 8) {
     try {
-      const parent = readVersionJson(cur.inheritsFrom)
+      const local = versionJsonInFolder(folder, cur.inheritsFrom)
+      const sharedBase = baseVersionJsonPath(cur.inheritsFrom)
+      let parent: VersionJson
+      if (fs.existsSync(local)) parent = parseVersionFile(local)
+      else if (fs.existsSync(sharedBase)) parent = parseVersionFile(sharedBase)
+      else throw new Error(`缺少继承版本 ${cur.inheritsFrom}`)
       id = parent.inheritsFrom ?? parent._mcVersion ?? parent.id ?? id
       cur = parent
     } catch {
+      broken = true
       break
     }
   }
-  return id
+  if (hops >= 8 && cur.inheritsFrom) broken = true
+  return { id, broken }
 }
 
-/** 扫描全部已登记游戏文件夹的 versions/*\/（标注所属文件夹并注册寻址映射） */
-export function listInstalled(): InstalledVersion[] {
+/** 扫描指定 Minecraft 根目录；损坏条目不会静默消失，而以 incomplete + errors 返回。 */
+export function scanInstalledFolder(folder: string): {
+  versions: InstalledVersion[]
+  errors: string[]
+} {
   const out: InstalledVersion[] = []
-  for (const { folder, dir } of allVersionsDirs()) {
-    if (!fs.existsSync(dir)) continue
-    for (const name of fs.readdirSync(dir)) {
-      const jp = path.join(dir, name, `${name}.json`)
-      if (!fs.existsSync(jp)) continue
-      try {
-        const j = readVersionJson(name)
-        registerVersionFolder(name, folder)
-        const item: InstalledVersion = {
-          id: name,
-          mcVersion: resolveBaseMcId(j, name),
-          folder
-        }
-        if (j._loader) item.loader = j._loader
-        else {
-          const mc = (j.mainClass ?? '').toLowerCase()
-          if (mc.includes('neoforged')) item.loader = 'neoforge'
-          else if (mc.includes('forge')) item.loader = 'forge'
-          else if (mc.includes('fabricmc')) item.loader = 'fabric'
-          else if (mc.includes('quiltmc')) item.loader = 'quilt'
-        }
-        if (j._loaderVersion) item.loaderVersion = j._loaderVersion
-        if (j._modpackName) item.modpackName = j._modpackName
-        if (j._modpackVersion) item.modpackVersion = j._modpackVersion
-        if (j._javaPath) item.javaPath = j._javaPath
-        if (j._icon) item.icon = j._icon
-        if (j._gameDir === true) item.isolated = true
-        if (!j.inheritsFrom) {
-          const jarOk = fs.existsSync(versionJarPath(name))
-          const hasPart = fs.existsSync(versionJarPath(name) + '.part')
-          if (!jarOk || hasPart) item.incomplete = true
-        }
-        if (fs.existsSync(installMarkPath(name))) item.failed = true
-        out.push(item)
-      } catch {
-        // 跳过损坏的 json
-      }
+  const errors: string[] = []
+  const root = path.resolve(folder)
+  const dir = path.join(root, 'versions')
+  if (!fs.existsSync(dir)) return { versions: out, errors }
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  } catch (error) {
+    return {
+      versions: out,
+      errors: [`无法读取 versions：${error instanceof Error ? error.message : String(error)}`]
     }
   }
+  // 只有活动根目录写入运行时寻址表；全局诊断扫描不能污染当前实例映射。
+  if (path.resolve(gameDir()) === root) {
+    for (const entry of entries) registerVersionFolder(entry.name, root)
+  }
+  for (const entry of entries) {
+    const name = entry.name
+    const jp = versionJsonInFolder(root, name)
+    if (!fs.existsSync(jp)) {
+      out.push({ id: name, mcVersion: '未知', folder: root, incomplete: true })
+      errors.push(`${name}：缺少版本描述 ${name}.json`)
+      continue
+    }
+    try {
+      const j = parseVersionFile(jp)
+      const resolved = resolveBaseMcId(j, name, root)
+      const item: InstalledVersion = { id: name, mcVersion: resolved.id, folder: root }
+      if (j._loader) item.loader = j._loader
+      else {
+        const mainClass = (j.mainClass ?? '').toLowerCase()
+        if (mainClass.includes('neoforged')) item.loader = 'neoforge'
+        else if (mainClass.includes('forge')) item.loader = 'forge'
+        else if (mainClass.includes('fabricmc')) item.loader = 'fabric'
+        else if (mainClass.includes('quiltmc')) item.loader = 'quilt'
+      }
+      if (j._loaderVersion) item.loaderVersion = j._loaderVersion
+      else if (item.loader === 'forge') item.loaderVersion = /-forge-(.+)$/i.exec(name)?.[1]
+      else if (item.loader === 'neoforge') item.loaderVersion = /(?:^|-)(?:neoforge)-(.+)$/i.exec(name)?.[1]
+      else if (item.loader === 'fabric') item.loaderVersion = /^fabric-loader-(.+?)-\d/i.exec(name)?.[1]
+      else if (item.loader === 'quilt') item.loaderVersion = /^quilt-loader-(.+?)-\d/i.exec(name)?.[1]
+      if (j._modpackName) item.modpackName = j._modpackName
+      if (j._modpackVersion) item.modpackVersion = j._modpackVersion
+      if (j._javaPath) item.javaPath = j._javaPath
+      if (j._icon) item.icon = j._icon
+      if (j._gameDir === true) item.isolated = true
+      if (resolved.broken) {
+        item.incomplete = true
+        errors.push(`${name}：继承的版本 ${j.inheritsFrom ?? '未知'} 缺失或损坏`)
+      }
+      if (!j.inheritsFrom) {
+        const jar = path.join(dir, name, `${name}.jar`)
+        if (!fs.existsSync(jar) || fs.existsSync(jar + '.part')) item.incomplete = true
+      }
+      if (fs.existsSync(path.join(dir, name, '.installing'))) item.failed = true
+      out.push(item)
+    } catch (error) {
+      out.push({ id: name, mcVersion: '未知', folder: root, incomplete: true })
+      errors.push(`${name}：版本描述损坏（${error instanceof Error ? error.message : String(error)}）`)
+    }
+  }
+  return { versions: sortInstalled(out), errors }
+}
+
+function sortInstalled(out: InstalledVersion[]): InstalledVersion[] {
   // 实例排序：按 MC 版本分组（新→旧），同版本内纯净版在前、加载器实例按 id 字母序
   out.sort((a, b) => {
     if (a.mcVersion !== b.mcVersion) {
@@ -623,6 +673,18 @@ export function listInstalled(): InstalledVersion[] {
     return a.id.localeCompare(b.id)
   })
   return out
+}
+
+/** 当前活动游戏文件夹中的版本；切换文件夹后 UI 只看到该根目录。 */
+export function listInstalled(): InstalledVersion[] {
+  return sortInstalled(scanInstalledFolder(gameDir()).versions)
+}
+
+/** 诊断与全局查重使用；常规 UI 不调用，避免混淆相同 id 的多目录版本。 */
+export function listAllInstalled(): InstalledVersion[] {
+  const out: InstalledVersion[] = []
+  for (const { folder } of allVersionsDirs()) out.push(...scanInstalledFolder(folder).versions)
+  return sortInstalled(out)
 }
 
 /** 实例名校验：非法字符与保留名（返回错误文案，合法返回 null） */

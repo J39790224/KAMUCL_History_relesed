@@ -1,11 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { cleanupPartialInstall, errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
+import {
+  addFolder,
+  cleanupPartialInstall,
+  errText,
+  formatSpeed,
+  getManifest,
+  getSettings,
+  installVersion,
+  listFabricApi,
+  listFolders,
+  listJava,
+  listLoaders,
+  openDir,
+  openGameFolder,
+  removeFolder,
+  removeVersion,
+  renameFolder,
+  renameVersion,
+  saveSettings,
+  scanFolder,
+  selectDir,
+  setActiveFolder,
+  setDefaultFolder,
+  setVersionIsolation,
+  setVersionJava
+} from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import IconPickerModal from '../components/IconPickerModal.vue'
 import type {
   FabricApiVersion,
+  FolderScanResult,
+  GameFolder,
   InstallOptions,
   InstalledVersion,
   LoaderName,
@@ -38,7 +65,151 @@ async function load(refresh = false) {
   }
 }
 
-onMounted(() => load())
+// ---------------- 游戏文件夹（统一管理入口） ----------------
+const folders = ref<GameFolder[]>([])
+const activeFolder = ref('')
+const folderScan = ref<FolderScanResult | null>(null)
+const folderBusy = ref(false)
+const folderRename = reactive({ open: false, name: '', busy: false, error: '' })
+const folderRemove = reactive({ open: false, busy: false })
+
+const currentFolder = computed(() =>
+  folders.value.find((folder) => folder.path === activeFolder.value)
+)
+
+async function refreshFolderScan(syncList = true) {
+  if (!activeFolder.value) return
+  folderBusy.value = true
+  try {
+    const result = await scanFolder(activeFolder.value)
+    folderScan.value = result
+    if (syncList) store.installed = result.versions
+  } catch (error) {
+    folderScan.value = null
+    toast(`扫描游戏文件夹失败：${errText(error)}`, 'error')
+  } finally {
+    folderBusy.value = false
+  }
+}
+
+async function loadFolderState() {
+  try {
+    const state = await listFolders()
+    folders.value = state.folders
+    activeFolder.value = state.active
+    await refreshFolderScan()
+  } catch (error) {
+    toast(`读取游戏文件夹失败：${errText(error)}`, 'error')
+  }
+}
+
+async function chooseFolder(event: Event) {
+  const selected = (event.target as HTMLSelectElement).value
+  if (!selected || selected === activeFolder.value || folderBusy.value) return
+  folderBusy.value = true
+  try {
+    activeFolder.value = await setActiveFolder(selected)
+    store.settings = await getSettings()
+    store.resourceVersionId = ''
+    await refreshInstalled()
+    await refreshFolderScan(false)
+    toast(`已切换到「${currentFolder.value?.name ?? '游戏文件夹'}」`, 'success')
+  } catch (error) {
+    toast(`切换失败：${errText(error)}`, 'error')
+    await loadFolderState()
+  } finally {
+    folderBusy.value = false
+  }
+}
+
+async function addGameFolder() {
+  try {
+    const selected = await selectDir()
+    if (!selected) return
+    folderBusy.value = true
+    const added = await addFolder(selected)
+    await setActiveFolder(added.folder.path)
+    const state = await listFolders()
+    folders.value = state.folders
+    activeFolder.value = state.active
+    store.settings = await getSettings()
+    await refreshInstalled()
+    await refreshFolderScan(false)
+    const count = folderScan.value?.versions.length ?? 0
+    toast(`已添加并切换游戏文件夹，识别到 ${count} 个版本`, 'success')
+  } catch (error) {
+    toast(`添加失败：${errText(error)}`, 'error')
+  } finally {
+    folderBusy.value = false
+  }
+}
+
+async function markCurrentDefault() {
+  if (!activeFolder.value || currentFolder.value?.isDefault) return
+  folderBusy.value = true
+  try {
+    folders.value = await setDefaultFolder(activeFolder.value)
+    store.settings = await getSettings()
+    toast('已设为默认游戏文件夹', 'success')
+  } catch (error) {
+    toast(`设置失败：${errText(error)}`, 'error')
+  } finally {
+    folderBusy.value = false
+  }
+}
+
+function openFolderRename() {
+  if (!currentFolder.value) return
+  folderRename.name = currentFolder.value.name
+  folderRename.error = ''
+  folderRename.open = true
+}
+
+async function confirmFolderRename() {
+  if (!activeFolder.value || folderRename.busy) return
+  folderRename.busy = true
+  folderRename.error = ''
+  try {
+    folders.value = await renameFolder(activeFolder.value, folderRename.name)
+    folderRename.open = false
+    store.settings = await getSettings()
+    toast('显示名称已更新', 'success')
+  } catch (error) {
+    folderRename.error = errText(error)
+  } finally {
+    folderRename.busy = false
+  }
+}
+
+async function confirmFolderRemove() {
+  if (!activeFolder.value || folderRemove.busy) return
+  folderRemove.busy = true
+  try {
+    await removeFolder(activeFolder.value)
+    folderRemove.open = false
+    await loadFolderState()
+    store.settings = await getSettings()
+    toast('已解除文件夹绑定；磁盘中的游戏、存档和 MOD 均未删除', 'success')
+  } catch (error) {
+    toast(`解除绑定失败：${errText(error)}`, 'error')
+  } finally {
+    folderRemove.busy = false
+  }
+}
+
+async function revealCurrentFolder() {
+  if (!activeFolder.value) return
+  try {
+    await openGameFolder(activeFolder.value)
+  } catch (error) {
+    toast(`打开文件夹失败：${errText(error)}`, 'error')
+  }
+}
+
+onMounted(() => {
+  void load()
+  void loadFolderState()
+})
 
 // ---------------- 搜索与筛选（搜索框联动顶栏 store.searchKeyword） ----------------
 type TypeFilter = 'all' | 'release' | 'snapshot' | 'old'
@@ -449,6 +620,74 @@ async function onToggleIsolation(v: InstalledVersion) {
       <p class="page-sub">浏览、安装与管理 Minecraft 版本</p>
     </div>
 
+    <!-- 当前游戏文件夹：版本列表与安装目标都由这里唯一控制。 -->
+    <section class="card folder-manager">
+      <div class="folder-manager-main">
+        <div class="folder-select-wrap">
+          <span class="folder-caption">当前游戏文件夹</span>
+          <select
+            class="select folder-select"
+            :value="activeFolder"
+            :disabled="folderBusy || !folders.length"
+            @change="chooseFolder"
+          >
+            <option v-for="folder in folders" :key="folder.path" :value="folder.path">
+              {{ folder.name }}{{ folder.isDefault ? '（默认）' : '' }}
+            </option>
+          </select>
+          <span class="muted folder-current-path" :title="activeFolder">{{ activeFolder }}</span>
+        </div>
+        <div class="folder-manager-actions">
+          <button class="btn btn-gold btn-sm" :disabled="folderBusy" @click="addGameFolder">
+            + 添加文件夹
+          </button>
+          <button class="btn btn-ghost btn-sm" :disabled="folderBusy" @click="refreshFolderScan()">
+            <span v-if="folderBusy" class="spin"></span>
+            {{ folderBusy ? '扫描中' : '刷新' }}
+          </button>
+          <button class="btn btn-ghost btn-sm" :disabled="!activeFolder" @click="revealCurrentFolder">
+            打开
+          </button>
+          <button class="btn btn-ghost btn-sm" :disabled="!currentFolder" @click="openFolderRename">
+            重命名
+          </button>
+          <button
+            v-if="currentFolder && !currentFolder.isDefault"
+            class="btn btn-ghost btn-sm"
+            :disabled="folderBusy"
+            @click="markCurrentDefault"
+          >
+            设为默认
+          </button>
+          <button
+            class="btn btn-danger btn-sm"
+            :disabled="folderBusy || folders.length <= 1"
+            title="只解除 KAMUCL 登记，不删除磁盘文件"
+            @click="folderRemove.open = true"
+          >
+            解除绑定
+          </button>
+        </div>
+      </div>
+      <div class="folder-scan-state" :class="folderScan?.status">
+        <template v-if="folderBusy">
+          <span class="spin"></span><span>正在扫描版本与完整性…</span>
+        </template>
+        <template v-else-if="folderScan">
+          <span class="folder-state-dot"></span>
+          <span>
+            {{ folderScan.structure === 'kamucl' ? 'KAMUCL 游戏根目录' : folderScan.structure === 'minecraft' ? 'Minecraft 根目录' : folderScan.structure === 'empty' ? '空游戏目录' : '目录不可用' }}
+            · 已识别 {{ folderScan.versions.length }} 个版本
+            · {{ folderScan.durationMs }} ms
+          </span>
+          <span v-if="folderScan.errors.length" class="folder-scan-error" :title="folderScan.errors.join('\n')">
+            {{ folderScan.errors[0] }}{{ folderScan.errors.length > 1 ? `（另有 ${folderScan.errors.length - 1} 项）` : '' }}
+          </span>
+        </template>
+        <span v-else class="muted">尚未扫描</span>
+      </div>
+    </section>
+
     <!-- 顶部 Tab：版本下载 / 已安装 -->
     <div class="game-tabs">
       <button class="game-tab" :class="{ active: tab === 'download' }" @click="tab = 'download'">
@@ -795,6 +1034,39 @@ async function onToggleIsolation(v: InstalledVersion) {
       @close="iconModal.open = false"
     />
 
+    <!-- 游戏文件夹显示名称 -->
+    <Teleport to="body">
+      <div v-if="folderRename.open" class="modal-mask" @click.self="folderRename.open = false">
+        <div class="modal">
+          <h3 class="modal-title">重命名游戏文件夹</h3>
+          <p class="modal-label">只修改 KAMUCL 中的显示名称，不会改动磁盘路径。</p>
+          <input
+            v-model="folderRename.name"
+            class="input"
+            maxlength="64"
+            autofocus
+            @keyup.enter="confirmFolderRename"
+          />
+          <p v-if="folderRename.error" class="loaders-error">{{ folderRename.error }}</p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" @click="folderRename.open = false">取消</button>
+            <button class="btn btn-gold" :disabled="folderRename.busy" @click="confirmFolderRename">
+              {{ folderRename.busy ? '保存中…' : '保存名称' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <ConfirmModal
+      :open="folderRemove.open"
+      title="解除游戏文件夹绑定"
+      :message="`只会从 KAMUCL 移除「${currentFolder?.name ?? ''}」的登记。磁盘目录 ${activeFolder} 以及其中的游戏、存档、MOD 和配置都将完整保留。`"
+      :busy="folderRemove.busy"
+      @cancel="folderRemove.open = false"
+      @confirm="confirmFolderRemove"
+    />
+
     <!-- 删除版本二次确认 -->
     <ConfirmModal
       :open="removeModal.open"
@@ -896,6 +1168,90 @@ async function onToggleIsolation(v: InstalledVersion) {
   gap: 16px;
   max-width: 940px;
   margin: 0 auto;
+}
+
+/* 游戏文件夹统一管理 */
+.folder-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.folder-manager-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+.folder-select-wrap {
+  display: grid;
+  grid-template-columns: minmax(210px, 320px);
+  gap: 5px;
+  min-width: 0;
+}
+.folder-caption {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.folder-select {
+  width: 100%;
+}
+.folder-current-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+}
+.folder-manager-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.folder-scan-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.folder-state-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #3fb950;
+}
+.folder-scan-state.warning .folder-state-dot {
+  background: #e6a23c;
+}
+.folder-scan-state.error .folder-state-dot {
+  background: var(--danger);
+}
+.folder-scan-error {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1120px) {
+  .folder-manager-main {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .folder-select-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .folder-manager-actions {
+    justify-content: flex-start;
+  }
 }
 
 /* 工具行 */

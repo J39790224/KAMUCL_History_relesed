@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { app, dialog, type BrowserWindow } from 'electron'
 import { getSettings } from './settings'
 import { gameDir } from './paths'
-import { readVersionJson, listInstalled } from './versions'
+import { readVersionJson, listAllInstalled } from './versions'
 import { getLastLaunch } from './launch'
 import { selectedAccount } from './accounts'
 import { launcherLogPath } from './launcherLog'
@@ -139,9 +139,9 @@ export async function exportLaunchLogs(
   versionId: string
 ): Promise<string | null> {
   // 扫描会同时建立“版本 -> 游戏文件夹”映射，避免活动目录切换后收错实例日志。
-  let installed: ReturnType<typeof listInstalled> = []
+  let installed: ReturnType<typeof listAllInstalled> = []
   try {
-    installed = listInstalled()
+    installed = listAllInstalled()
   } catch {
     // 单个来源缺失不阻断导出。
   }
@@ -151,10 +151,12 @@ export async function exportLaunchLogs(
   const folder = item?.folder || gameDir()
   const versionRoot = path.join(folder, 'versions', vid)
   let isolated = item?.isolated === true
-  try {
-    isolated = readVersionJson(vid)._gameDir === true
-  } catch {
-    // 使用列表扫描结果。
+  if (!item) {
+    try {
+      isolated = readVersionJson(vid)._gameDir === true
+    } catch {
+      // 使用默认值。
+    }
   }
   const effectiveGameDir =
     last?.versionId === vid && last.effectiveGameDir

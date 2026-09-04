@@ -11,6 +11,7 @@ import type {
   CommunityResult,
   CommunitySource,
   FabricApiVersion,
+  FolderScanResult,
   FsEntry,
   GameFolder,
   InstallOptions,
@@ -93,11 +94,19 @@ export const cleanupPartialInstall = (id: string) =>
 // ---------------- 游戏文件夹管理 ----------------
 export const listFolders = () =>
   invoke<{ folders: GameFolder[]; active: string }>(IPC.foldersList)
-export const addFolder = (path: string) => invoke<GameFolder[]>(IPC.foldersAdd, path)
+export const addFolder = (path: string) =>
+  invoke<{ folders: GameFolder[]; folder: GameFolder; structure: FolderScanResult['structure'] }>(
+    IPC.foldersAdd,
+    path
+  )
 export const removeFolder = (path: string) => invoke<GameFolder[]>(IPC.foldersRemove, path)
+export const renameFolder = (path: string, displayName: string) =>
+  invoke<GameFolder[]>(IPC.foldersRename, path, displayName)
 export const setDefaultFolder = (path: string) =>
   invoke<GameFolder[]>(IPC.foldersSetDefault, path)
-export const setActiveFolder = (path: string) => invoke<void>(IPC.foldersSetActive, path)
+export const setActiveFolder = (path: string) => invoke<string>(IPC.foldersSetActive, path)
+export const scanFolder = (path: string) => invoke<FolderScanResult>(IPC.foldersScan, path)
+export const openGameFolder = (path: string) => invoke<void>(IPC.foldersOpen, path)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
 /** 设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认） */

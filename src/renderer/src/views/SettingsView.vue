@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { addCustomJava, addFolder, errText, getSettings, hideJava, listFolders, listJava, migrateGameDir, onGameDirDone, pickAddJava, refreshJava, removeFolder, saveSettings, selectDir, setActiveFolder, setDefaultFolder } from '../api'
-import { enterEditMode, progressMono, refreshInstalled, store, toast } from '../store'
-import type { GameFolder, Settings } from '@shared/types'
+import { computed, onMounted, ref } from 'vue'
+import {
+  addCustomJava,
+  errText,
+  hideJava,
+  listJava,
+  pickAddJava,
+  refreshJava,
+  saveSettings
+} from '../api'
+import { enterEditMode, store, toast } from '../store'
+import type { Settings } from '@shared/types'
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
@@ -11,51 +19,6 @@ async function save(patch: Partial<Settings>) {
   } catch (e) {
     toast('保存设置失败：' + errText(e), 'error')
   }
-}
-
-// ---------------- 游戏目录迁移 ----------------
-const pickingDir = ref(false)
-const migrateModal = reactive({
-  open: false,
-  newDir: '',
-  migrating: false,
-  migrateData: true
-})
-
-/** 迁移进度（复用全局 progress 事件 stage=migrate） */
-const migratingProgress = computed(() =>
-  migrateModal.migrating && store.progress?.stage === 'migrate'
-    ? `${store.progress.text} ${Math.round(progressMono(store.progress) * 100)}%`
-    : ''
-)
-
-async function browseDir() {
-  pickingDir.value = true
-  try {
-    const dir = await selectDir()
-    if (!dir) return
-    if (dir === store.settings?.gameDir) {
-      toast('新目录与当前目录相同', 'info')
-      return
-    }
-    migrateModal.newDir = dir
-    migrateModal.migrateData = true
-    migrateModal.open = true
-  } catch (e) {
-    toast('选择目录失败：' + errText(e), 'error')
-  } finally {
-    pickingDir.value = false
-  }
-}
-
-/** 确认执行迁移（或从零开始）；完成/失败由 App.vue 订阅的 gameDirDone 统一收尾 */
-function onConfirmMigrate() {
-  migrateModal.open = false
-  migrateModal.migrating = true
-  void migrateGameDir(migrateModal.newDir, migrateModal.migrateData).catch((e) => {
-    migrateModal.migrating = false
-    toast('目录迁移失败：' + errText(e), 'error')
-  })
 }
 
 // ---------------- 功能管理 ----------------
@@ -72,63 +35,6 @@ function onToggleFeature(key: string, enabled: boolean) {
   const cur = store.settings?.disabledFeatures ?? []
   const next = enabled ? cur.filter((k) => k !== key) : [...new Set([...cur, key])]
   void save({ disabledFeatures: next })
-}
-
-// ---------------- 游戏文件夹 ----------------
-const folders = ref<GameFolder[]>([])
-const activeFolder = ref('')
-
-async function loadFolders() {
-  try {
-    const r = await listFolders()
-    folders.value = r.folders
-    activeFolder.value = r.active
-  } catch (e) {
-    toast('读取游戏文件夹失败：' + errText(e), 'error')
-  }
-}
-
-async function onAddFolder() {
-  const dir = await selectDir()
-  if (!dir) return
-  try {
-    folders.value = await addFolder(dir)
-    await refreshInstalled()
-    toast('已添加文件夹，其中版本已纳入列表', 'success')
-  } catch (e) {
-    toast('添加失败：' + errText(e), 'error')
-  }
-}
-
-async function onSetActive(p: string) {
-  try {
-    await setActiveFolder(p)
-    activeFolder.value = p
-    store.settings = await getSettings()
-    await refreshInstalled()
-    toast('已切换活动文件夹', 'success')
-  } catch (e) {
-    toast('切换失败：' + errText(e), 'error')
-  }
-}
-
-async function onSetDefault(p: string) {
-  try {
-    folders.value = await setDefaultFolder(p)
-    toast('已设为默认文件夹', 'success')
-  } catch (e) {
-    toast('设置失败：' + errText(e), 'error')
-  }
-}
-
-async function onRemoveFolder(p: string) {
-  try {
-    folders.value = await removeFolder(p)
-    await refreshInstalled()
-    toast('已移除登记（文件保留）', 'success')
-  } catch (e) {
-    toast('移除失败：' + errText(e), 'error')
-  }
 }
 
 // ---------------- 预设主题 ----------------
@@ -220,7 +126,6 @@ async function onHideJava(p: string) {
 }
 
 onMounted(async () => {
-  void loadFolders()
   try {
     javas.value = await listJava()
   } catch (e) {
@@ -228,20 +133,7 @@ onMounted(async () => {
   } finally {
     javaLoading.value = false
   }
-  // 目录迁移收尾：成功 → 重新拉取设置并提示；失败 → 配置已回滚，仅提示
-  offGameDirDone = onGameDirDone(async (r) => {
-    migrateModal.migrating = false
-    if (r.ok) {
-      store.settings = await getSettings()
-      toast('游戏目录已切换，数据已刷新', 'success')
-    } else {
-      toast(`迁移失败：${r.error ?? '未知错误'}（配置未变更）`, 'error')
-    }
-  })
 })
-
-let offGameDirDone: (() => void) | null = null
-onUnmounted(() => offGameDirDone?.())
 
 const javaLabel = (j: { major: number; path: string; version: string }) =>
   `Java ${j.major}（${j.version}）· ${j.path}`
@@ -415,49 +307,18 @@ function saveResolution() {
       <!-- 首页布局与背景（个性化） -->
       <HomeLayoutEditor />
 
-      <!-- 游戏文件夹（多目录体系） -->
+      <!-- 游戏文件夹统一在版本页管理，设置页只显示当前状态，避免双入口冲突。 -->
       <div class="card group">
         <h3 class="group-title">游戏文件夹</h3>
         <p class="muted group-hint">
-          登记多个游戏文件夹（官方 .minecraft、其他启动器目录等），版本按所属文件夹管理；「默认」文件夹承接新安装与共享库，「活动」为当前操作目标。
+          游戏文件夹的添加、切换、重命名、刷新与解除绑定已统一到“游戏版本”页面。
         </p>
-        <div v-if="!folders.length" class="muted">加载中…</div>
-        <div v-for="f in folders" :key="f.path" class="folder-row">
-          <div class="folder-meta">
-            <div class="folder-name-row">
-              <span class="folder-name">{{ f.name }}</span>
-              <span v-if="f.isDefault" class="tag tag-gold">默认</span>
-              <span v-if="f.path === activeFolder" class="tag">活动中</span>
-            </div>
-            <span class="muted folder-path" :title="f.path">{{ f.path }}</span>
-          </div>
-          <div class="folder-actions">
-            <button v-if="f.path !== activeFolder" class="btn btn-ghost btn-sm" @click="onSetActive(f.path)">切换</button>
-            <button v-if="!f.isDefault" class="btn btn-ghost btn-sm" @click="onSetDefault(f.path)">设为默认</button>
-            <button v-if="!f.isDefault" class="btn btn-danger btn-sm" @click="onRemoveFolder(f.path)">移除</button>
-          </div>
-        </div>
-        <button class="btn btn-ghost" style="align-self: flex-start; margin-top: 8px" @click="onAddFolder">
-          + 添加已有文件夹…
-        </button>
-      </div>
-
-      <!-- 游戏目录 -->
-      <div class="card group">
-        <h3 class="group-title">游戏安装目录</h3>
         <div class="dir-row">
-          <input class="input mono" :value="store.settings.gameDir" readonly title="游戏目录" />
-          <button class="btn btn-ghost dir-btn" :disabled="pickingDir || migrateModal.migrating" @click="browseDir">
-            {{ pickingDir ? '选择中…' : '更改…' }}
+          <input class="input mono" :value="store.settings.activeFolder" readonly title="当前游戏文件夹" />
+          <button class="btn btn-gold dir-btn" @click="store.currentView = 'game'">
+            前往管理
           </button>
         </div>
-        <p class="muted group-hint">
-          默认位于系统盘（%AppData%\.kamucl）。更改时可选择将已有游戏文件完整迁移到新目录。
-        </p>
-        <p v-if="migrateModal.migrating" class="migrate-status">
-          <span class="spin"></span>
-          {{ migratingProgress || '正在迁移游戏文件…' }}
-        </p>
       </div>
 
       <!-- 默认版本隔离 -->
@@ -669,35 +530,6 @@ function saveResolution() {
       </div>
     </template>
 
-    <!-- 游戏目录迁移确认弹窗 -->
-    <Teleport to="body">
-      <div v-if="migrateModal.open" class="modal-mask" @click.self="migrateModal.open = false">
-        <div class="modal">
-          <h3 class="modal-title">更改游戏安装目录</h3>
-          <p class="modal-label">新目录</p>
-          <input class="input mono" :value="migrateModal.newDir" readonly />
-          <p class="modal-label">已有游戏文件</p>
-          <label class="migrate-option" :class="{ active: migrateModal.migrateData }">
-            <input v-model="migrateModal.migrateData" type="radio" :value="true" />
-            <span>
-              <strong>迁移到新目录（推荐）</strong>
-              <span class="muted">完整迁移 versions、模组、存档等全部游戏数据，迁移前自动校验磁盘空间与权限；旧目录数据保留作备份。</span>
-            </span>
-          </label>
-          <label class="migrate-option" :class="{ active: !migrateModal.migrateData }">
-            <input v-model="migrateModal.migrateData" type="radio" :value="false" />
-            <span>
-              <strong>新目录从零开始</strong>
-              <span class="muted">不迁移任何数据，新目录下的启动器从空白开始。</span>
-            </span>
-          </label>
-          <div class="modal-actions">
-            <button class="btn btn-ghost" @click="migrateModal.open = false">取消</button>
-            <button class="btn btn-gold" @click="onConfirmMigrate">确认更改</button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -772,43 +604,6 @@ function saveResolution() {
   gap: 8px;
   margin-top: 10px;
 }
-/* 游戏文件夹列表 */
-.folder-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
-}
-.folder-row:last-of-type {
-  border-bottom: none;
-}
-.folder-meta {
-  flex: 1;
-  min-width: 0;
-}
-.folder-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.folder-name {
-  font-size: 13.5px;
-  font-weight: 600;
-}
-.folder-path {
-  font-size: 11.5px;
-  font-family: ui-monospace, Consolas, monospace;
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.folder-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
 .java-auto-row {
   display: flex;
   align-items: center;
@@ -838,44 +633,6 @@ function saveResolution() {
 .select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-}
-/* 迁移状态与选项 */
-.migrate-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 12.5px;
-  color: var(--accent-2);
-}
-.migrate-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card-2);
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-.migrate-option.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.migrate-option input {
-  margin-top: 3px;
-  accent-color: var(--accent);
-}
-.migrate-option span strong {
-  display: block;
-  font-size: 13.5px;
-  margin-bottom: 3px;
-}
-.migrate-option span .muted {
-  font-size: 12px;
-  line-height: 1.6;
 }
 .feature-row {
   display: flex;

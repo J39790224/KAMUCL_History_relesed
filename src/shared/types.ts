@@ -43,6 +43,16 @@ export interface GameFolder {
   isDefault: boolean
 }
 
+export interface FolderScanResult {
+  folder: GameFolder
+  structure: 'minecraft' | 'kamucl' | 'empty' | 'missing'
+  status: 'ready' | 'warning' | 'error'
+  versions: InstalledVersion[]
+  errors: string[]
+  scannedAt: string
+  durationMs: number
+}
+
 export interface InstalledVersion {
   id: string
   /** 基于的原版版本（加载器版本等于对应 mc 版本） */
@@ -357,10 +367,13 @@ export const IPC = {
 
   // 游戏文件夹管理
   foldersList: 'folders:list', // () => { folders: GameFolder[]; active: string }
-  foldersAdd: 'folders:add', // (path: string) => GameFolder[]  添加已有文件夹（校验存在）
-  foldersRemove: 'folders:remove', // (path: string) => GameFolder[]  移除登记（不删文件；默认文件夹不可移除）
+  foldersAdd: 'folders:add', // (path: string) => { folders, folder, structure }，解析真实路径并去重
+  foldersRemove: 'folders:remove', // (path: string) => GameFolder[]，只解除登记、绝不删除磁盘文件
+  foldersRename: 'folders:rename', // (path: string, displayName: string) => GameFolder[]
   foldersSetDefault: 'folders:setDefault', // (path: string) => GameFolder[]
   foldersSetActive: 'folders:setActive', // (path: string) => void  切换活动文件夹（gameDir 跟随）
+  foldersScan: 'folders:scan', // (path: string) => FolderScanResult
+  foldersOpen: 'folders:open', // (path: string) => void
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
 
