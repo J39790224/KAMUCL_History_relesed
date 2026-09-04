@@ -300,7 +300,8 @@ export async function installVanilla(
   versionId: string,
   emit: ProgressEmit,
   dest: 'versions' | 'base' = 'versions',
-  instanceName?: string
+  instanceName?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const finalId = dest === 'versions' ? instanceName?.trim() || versionId : versionId
   const dir = dest === 'base' ? baseVersionDir(versionId) : versionDir(finalId)
@@ -337,7 +338,8 @@ export async function installVanilla(
           source: sourceText
         }),
       8,
-      mirror
+      mirror,
+      signal
     )
 
     // 2. 客户端 jar
@@ -354,7 +356,8 @@ export async function installVanilla(
             source: sourceText
           }),
         client.sha1,
-        mirror
+        mirror,
+        signal
       )
     }
 
@@ -393,7 +396,8 @@ export async function installVanilla(
             source: sourceText
           }),
         8,
-        mirror
+        mirror,
+        signal
       )
 
       // legacy 版本需要把资源复制到 assets/virtual/legacy 下
@@ -428,7 +432,8 @@ export async function installVanilla(
 export async function installVersion(
   versionId: string,
   opts: InstallOptions = {},
-  emit: ProgressEmit
+  emit: ProgressEmit,
+  signal?: AbortSignal
 ): Promise<string> {
   if (opts.loader) {
     // 动态 import 避免与 loaders.ts 的循环依赖
@@ -439,14 +444,14 @@ export async function installVersion(
       loaderVersion = list[0]
       if (!loaderVersion) throw new Error(`${opts.loader} 没有适配 ${versionId} 的版本`)
     }
-    const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit, opts.instanceName)
+    const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit, opts.instanceName, signal)
     // Fabric：可选同时安装 Fabric API 到 mods 文件夹
     if (opts.loader === 'fabric' && opts.fabricApi) {
       await installFabricApi(versionId, opts.fabricApi, emit)
     }
     return installedId
   }
-  return await installVanilla(versionId, emit, 'versions', opts.instanceName)
+  return await installVanilla(versionId, emit, 'versions', opts.instanceName, signal)
 }
 
 /** 链底客户端 jar 的实际位置（versions 区优先，缺省时取 .kamucl/base 依赖原版区） */

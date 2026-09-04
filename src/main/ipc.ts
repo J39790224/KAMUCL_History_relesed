@@ -33,6 +33,7 @@ import { folderOfVersion, instanceIconsDir, versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
+import { registerTask, cancelTask, finishTask, isCancelError } from './core/tasks'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -94,38 +95,60 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     versions.fetchVersionManifest(settings.getSettings().mirror, refresh === true)
   )
   ipcMain.handle(IPC.versionsInstalled, () => versions.listInstalled())
-  // 异步执行，不阻塞返回；进度经 event:progress 推送，结束经 event:installDone 推送
+  // 异步执行，不阻塞返回；进度经 event:progress（带 taskId）推送，结束经 event:installDone 推送
   ipcMain.handle(IPC.versionsInstall, (_e, versionId: string, opts?: InstallOptions) => {
-    void versions
-      .installVersion(versionId, opts ?? {}, emit)
-      .then((installedId) => {
-        // 设置项生效：新版本默认开启版本隔离（整合包实例本身强制隔离，无需处理）
-        try {
-          if (settings.getSettings().defaultIsolation) {
-            versions.setIsolation(installedId, true)
+    const vid = String(versionId ?? '')
+      const task = registerTask(`安装版本 ${vid}${opts?.loader ? ` + ${opts.loader}` : ''}`, 'version')
+      let lastStage = ''
+      const taskEmit = (e: ProgressEvent): void => {
+        lastStage = e.stage
+        emit({ ...e, taskId: task.id, taskTitle: task.title })
+      }
+      const taskDone = (ok: boolean, error?: string, cancelled = false): void =>
+        send(IPC_EVENT.taskDone, { taskId: task.id, ok, error, cancelled, stage: ok ? undefined : lastStage })
+      void versions
+        .installVersion(vid, opts ?? {}, taskEmit, task.controller.signal)
+        .then((installedId) => {
+          // 设置项生效：新版本默认开启版本隔离（整合包实例本身强制隔离，无需处理）
+          try {
+            if (settings.getSettings().defaultIsolation) {
+              versions.setIsolation(installedId, true)
+            }
+          } catch (e) {
+            console.error('[KAMUCL] 默认隔离设置失败:', e)
           }
-        } catch (e) {
-          console.error('[KAMUCL] 默认隔离设置失败:', e)
-        }
-        send(IPC_EVENT.installDone, { versionId, installedId, ok: true })
-      })
-      .catch((err) => {
-        const text = errText(err)
-        emit({ stage: 'error', progress: 0, text: `安装失败: ${text}` })
-        // 事务清理：删除安装失败产生的文件（.installing 标记在则目录是失败产物）
-        try {
-          versions.cleanupPartialInstall(versionId)
-          // 加载器实例目录（若已生成）一并清理
-          const installed = versions.listInstalled()
-          for (const v of installed) {
-            if (v.failed) versions.cleanupPartialInstall(v.id)
+          taskDone(true)
+          send(IPC_EVENT.installDone, { versionId: vid, installedId, ok: true, taskId: task.id })
+        })
+        .catch((err) => {
+          const cancelled = isCancelError(err)
+          const text = cancelled ? '已取消' : errText(err)
+          if (!cancelled) taskEmit({ stage: 'error', progress: 0, text: `安装失败: ${text}` })
+          // 事务清理：删除安装失败产生的文件（.installing 标记在则目录是失败产物）
+          try {
+            versions.cleanupPartialInstall(vid)
+            // 加载器实例目录（若已生成）一并清理
+            const installed = versions.listInstalled()
+            for (const v of installed) {
+              if (v.failed) versions.cleanupPartialInstall(v.id)
+            }
+          } catch {
+            /* 清理失败不阻断错误上报 */
           }
-        } catch {
-          /* 清理失败不阻断错误上报 */
-        }
-        send(IPC_EVENT.installDone, { versionId, ok: false, error: text })
-      })
-  })
+          taskDone(false, text, cancelled)
+          send(IPC_EVENT.installDone, {
+            versionId: vid,
+            ok: false,
+            error: text,
+            taskId: task.id,
+            cancelled,
+            stage: lastStage
+          })
+        })
+        .finally(() => finishTask(task.id))
+    })
+  // 取消进行中的后台任务（版本安装/整合包导入/资源下载）
+  ipcMain.handle(IPC.tasksCancel, (_e, taskId: string) => cancelTask(String(taskId ?? '')))
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
   ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) => {
     const vid = String(id ?? '')
@@ -228,21 +251,42 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modpackProbe, (_e, filePath: string) =>
     modpacks.probeModpack(String(filePath ?? ''))
   )
-  // 异步执行，不阻塞返回；进度经 event:progress 推送，结束经 event:installDone 推送（versionId = 实例 id）
+  // 异步执行，不阻塞返回；进度经 event:progress（带 taskId）推送，结束经 event:installDone 推送（versionId = 实例 id）
   ipcMain.handle(
     IPC.modpackInstall,
     (_e, filePath: string, opts?: { nameSource?: 'file' | 'inner' }) => {
+      const fp = String(filePath ?? '')
       const clean: modpacks.ModpackInstallOpts = {
         nameSource: opts?.nameSource === 'inner' ? 'inner' : 'file'
       }
+      const task = registerTask(`导入整合包 ${path.basename(fp)}`, 'modpack')
+      clean.signal = task.controller.signal
+      let lastStage = ''
+      const taskEmit = (e: ProgressEvent): void => {
+        lastStage = e.stage
+        emit({ ...e, taskId: task.id, taskTitle: task.title })
+      }
       void modpacks
-        .installModpack(String(filePath ?? ''), emit, clean)
-        .then((id) => send(IPC_EVENT.installDone, { versionId: id, ok: true }))
-        .catch((err) => {
-          const text = errText(err)
-          emit({ stage: 'error', progress: 0, text: `整合包安装失败: ${text}` })
-          send(IPC_EVENT.installDone, { versionId: '', ok: false, error: text })
+        .installModpack(fp, taskEmit, clean)
+        .then((id) => {
+          send(IPC_EVENT.taskDone, { taskId: task.id, ok: true })
+          send(IPC_EVENT.installDone, { versionId: id, ok: true, taskId: task.id })
         })
+        .catch((err) => {
+          const cancelled = isCancelError(err)
+          const text = cancelled ? '已取消' : errText(err)
+          if (!cancelled) taskEmit({ stage: 'error', progress: 0, text: `整合包安装失败: ${text}` })
+          send(IPC_EVENT.taskDone, { taskId: task.id, ok: false, error: text, cancelled, stage: lastStage })
+          send(IPC_EVENT.installDone, {
+            versionId: '',
+            ok: false,
+            error: text,
+            taskId: task.id,
+            cancelled,
+            stage: lastStage
+          })
+        })
+        .finally(() => finishTask(task.id))
     }
   )
 
@@ -255,8 +299,49 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   )
   ipcMain.handle(
     IPC.communityDownload,
-    (_e, file: CommunityFile, target: { versionId: string; kind: CommunityKind }) =>
-      community.communityDownload(file, target, emit, (r) => send(IPC_EVENT.installDone, r))
+    async (_e, file: CommunityFile, target: { versionId: string; kind: CommunityKind }) => {
+      const task = registerTask(`下载 ${file.fileName ?? '资源'}`, 'download')
+      let lastStage = ''
+      const taskEmit = (e: ProgressEvent): void => {
+        lastStage = e.stage
+        emit({ ...e, taskId: task.id, taskTitle: task.title })
+      }
+      try {
+        const r = await community.communityDownload(file, target, taskEmit, (done) => {
+          const cancelled = done.error === '已取消'
+          send(IPC_EVENT.taskDone, {
+            taskId: task.id,
+            ok: done.ok,
+            error: done.error,
+            cancelled,
+            stage: done.ok ? undefined : lastStage
+          })
+          send(IPC_EVENT.installDone, {
+            ...done,
+            taskId: task.id,
+            cancelled,
+            stage: done.ok ? undefined : lastStage
+          })
+          finishTask(task.id)
+        }, task.controller.signal)
+        // 非整合包：invoke 返回即完成；整合包：完成回调在后台安装结束时触发
+        if (target.kind === 'modpack') return r
+        send(IPC_EVENT.taskDone, { taskId: task.id, ok: true })
+        finishTask(task.id)
+        return r
+      } catch (err) {
+        const cancelled = isCancelError(err)
+        send(IPC_EVENT.taskDone, {
+          taskId: task.id,
+          ok: false,
+          error: cancelled ? '已取消' : errText(err),
+          cancelled,
+          stage: lastStage
+        })
+        finishTask(task.id)
+        throw err
+      }
+    }
   )
 
   // ---------------- Java ----------------

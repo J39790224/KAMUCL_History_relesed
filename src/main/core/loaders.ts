@@ -128,8 +128,8 @@ async function pickJavaForInstaller(mcVersion: string, emit: ProgressEmit): Prom
   return await ensureJava(vj, emit)
 }
 
-/** 运行 forge/neoforge 安装器：全量输出落盘 installer.log；失败带最后 30 行；--mirror= 等号形式，失败降级去 mirror 重试 */
-function runInstaller(javaPath: string, jar: string, emit: ProgressEmit): Promise<void> {
+/** 运行 forge/neoforge 安装器：全量输出落盘 installer.log；失败带最后 30 行；--mirror= 等号形式，失败降级去 mirror 重试；signal 取消时杀掉安装器进程 */
+function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?: AbortSignal): Promise<void> {
   const useMirror = getSettings().mirror === 'bmclapi'
 
   const buildArgs = (withMirror: boolean): string[] => {
@@ -141,6 +141,22 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit): Promis
   const runOnce = (args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const proc = spawn(javaPath, args, { windowsHide: true })
+      const onAbort = () => {
+        try {
+          proc.kill()
+        } catch {
+          /* 忽略 */
+        }
+        reject(new Error('已取消'))
+      }
+      if (signal) {
+        if (signal.aborted) {
+          proc.kill()
+          reject(new Error('已取消'))
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
       const allLines: string[] = []
       let tail = ''
       const onData = (d: Buffer): void => {
@@ -220,12 +236,13 @@ export async function installLoader(
   mcVersion: string,
   loaderVersion: string,
   emit: ProgressEmit,
-  instanceName?: string
+  instanceName?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   emit({ stage: 'loader', progress: 0, text: `检查原版 ${mcVersion}` })
   const vanillaPreExisted = fs.existsSync(versionJsonPath(mcVersion))
   const installerBased = loader === 'forge' || loader === 'neoforge'
-  await installVanilla(mcVersion, emit, vanillaPreExisted || installerBased ? 'versions' : 'base')
+  await installVanilla(mcVersion, emit, vanillaPreExisted || installerBased ? 'versions' : 'base', undefined, signal)
 
   // ---- fabric / quilt：profile json 直写 ----
   if (loader === 'fabric' || loader === 'quilt') {
@@ -257,7 +274,8 @@ export async function installLoader(
           speed
         }),
       8,
-      mirror
+      mirror,
+      signal
     )
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
     registerVersionFolder(id, gameDir()) // fabric/quilt 实例注册到当前活动文件夹
@@ -287,16 +305,17 @@ export async function installLoader(
           stage: 'loader',
           progress: 0.2 + (t ? (d / t) * 0.4 : 0),
           text: `下载安装器 ${(d / 1024 / 1024).toFixed(1)}MB`
-        })
+        }), undefined, undefined, signal
       )
     } catch {
-      // 官方源失败回退 BMCLAPI
+      // 官方源失败回退 BMCLAPI（取消除外）
+      if (signal?.aborted) throw new Error('已取消')
       await downloadFile(mirrorUrlB, jarPath, (d, t) =>
         emit({
           stage: 'loader',
           progress: 0.2 + (t ? (d / t) * 0.4 : 0),
           text: `下载安装器(镜像) ${(d / 1024 / 1024).toFixed(1)}MB`
-        })
+        }), undefined, undefined, signal
       )
     }
 
@@ -307,7 +326,7 @@ export async function installLoader(
       fs.writeFileSync(lp, JSON.stringify({ profiles: {}, settings: {}, version: 3 }, null, 2), 'utf-8')
     }
     emit({ stage: 'loader', progress: 0.7, text: '运行安装器（可能需要几分钟）…' })
-    await runInstaller(javaPath, jarPath, emit)
+    await runInstaller(javaPath, jarPath, emit, signal)
 
     const id0 = findInstalledDir(loader, mcVersion, loaderVersion)
     if (!id0) throw new Error('安装器运行结束，但未找到生成的版本目录')
@@ -338,7 +357,8 @@ export async function installLoader(
             speed
           }),
         8,
-        getSettings().mirror
+        getSettings().mirror,
+        signal
       )
     }
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })

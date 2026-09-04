@@ -208,12 +208,24 @@ export const onLaunchState = (cb: (s: LaunchState) => void) =>
 export const onMsLoginDone = (cb: (account: Account | null) => void) =>
   subscribe<Account | null>(IPC_EVENT.msLoginDone, cb)
 export const onInstallDone = (
-  cb: (r: { versionId: string; installedId?: string; ok: boolean; error?: string }) => void
+  cb: (r: { versionId: string; installedId?: string; ok: boolean; error?: string; taskId?: string; cancelled?: boolean; stage?: string }) => void
 ) =>
-  subscribe<{ versionId: string; installedId?: string; ok: boolean; error?: string }>(
+  subscribe<{ versionId: string; installedId?: string; ok: boolean; error?: string; taskId?: string; cancelled?: boolean; stage?: string }>(
     IPC_EVENT.installDone,
     cb
   )
+
+/** 所有后台任务的统一完成通知（版本安装/整合包导入/资源下载） */
+export const onTaskDone = (
+  cb: (r: { taskId: string; ok: boolean; error?: string; cancelled?: boolean; stage?: string }) => void
+) =>
+  subscribe<{ taskId: string; ok: boolean; error?: string; cancelled?: boolean; stage?: string }>(
+    IPC_EVENT.taskDone,
+    cb
+  )
+
+/** 取消进行中的后台任务 */
+export const cancelTask = (taskId: string) => invoke<boolean>(IPC.tasksCancel, taskId)
 
 // ---------------- 工具 ----------------
 /** 把 invoke 抛出的错误转成适合 toast 展示的短文本 */

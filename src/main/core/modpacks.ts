@@ -14,12 +14,15 @@ import { getSettings } from './settings'
 import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { gameDir } from './paths'
 import { installVersion } from './versions'
+import { throwIfCancelled } from './tasks'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
 /** 实例命名来源：file = 压缩包文件名；inner = 包内名称 */
 export interface ModpackInstallOpts {
   nameSource?: 'file' | 'inner'
+  /** 任务取消信号（下载中心取消按钮） */
+  signal?: AbortSignal
 }
 
 // ---------------- 清单结构（只取需要的字段） ----------------
@@ -656,6 +659,7 @@ export async function installModpack(
   // 2) 解析清单
   emit({ stage: 'modpack', progress: 0, text: '解析整合包信息…' })
   const parsed = detected.format === 'mrpack' ? parseMrpack(zip) : parseCurseForge(zip)
+  throwIfCancelled(opts?.signal)
   const { meta } = parsed
   const loaderText = meta.loader ? ` + ${meta.loader} ${meta.loaderVersion ?? ''}` : ''
   emit({
@@ -673,7 +677,8 @@ export async function installModpack(
   const baseVersionId = await installVersion(
     meta.mcVersion,
     meta.loader ? { loader: meta.loader, loaderVersion: meta.loaderVersion } : {},
-    emit
+    emit,
+    opts?.signal
   )
 
   // 5) 创建实例版本
@@ -740,7 +745,8 @@ export async function installModpack(
           })
         },
         8,
-        getSettings().mirror
+        getSettings().mirror,
+        opts?.signal
       )
     } catch (e) {
       throw new Error(`整合包文件下载失败：${errText(e)}`)
@@ -749,6 +755,7 @@ export async function installModpack(
 
   // 7) 解压 overrides 覆盖到实例目录
   emit({ stage: 'modpack', progress: 0.96, text: '解压覆盖文件…' })
+  throwIfCancelled(opts?.signal)
   extractOverrides(zip, meta.overridesPrefix, instDir)
 
   // 8) 完成

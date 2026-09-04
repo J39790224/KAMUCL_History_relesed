@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, probeModpack, selectFile } from './api'
-import { exitEditMode, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, store, toast } from './store'
+import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, onTaskDone, probeModpack, selectFile, cancelTask } from './api'
+import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
 import Toasts from './components/Toasts.vue'
@@ -276,6 +276,18 @@ function toggleNotices() {
   if (noticeOpen.value) markNoticesRead()
 }
 
+// ---------------- 下载中心 ----------------
+const dlOpen = ref(false)
+const activeTaskCount = computed(() => store.tasks.filter((t) => t.status === 'running').length)
+
+async function onCancelTask(id: string) {
+  try {
+    await cancelTask(id)
+  } catch (e) {
+    toast('取消失败：' + errText(e), 'error')
+  }
+}
+
 function fmtNoticeTime(ts: number): string {
   const d = new Date(ts)
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -445,17 +457,26 @@ onMounted(async () => {
   offs.push(
     onProgress((e) => {
       store.progress = e
+      upsertTaskProgress(e)
+    }),
+    onTaskDone((r) => {
+      finalizeTask(r)
+      if (r.cancelled) toast('任务已取消', 'info')
     }),
     onInstallDone((r) => {
       store.installing.delete(r.versionId)
       store.progress = null
+      finalizeTask(r)
       if (r.ok) {
         store.failedInstalls.delete(r.versionId)
         toast(`版本 ${r.versionId} 安装完成`, 'success')
         void refreshInstalled()
+      } else if (r.cancelled) {
+        // 用户主动取消：不记失败、不弹错误（taskDone 已提示）
+        void refreshInstalled()
       } else {
         store.failedInstalls.add(r.versionId)
-        toast('安装失败：' + (r.error ?? '未知错误'), 'error')
+        toast(`安装失败${r.stage ? `（${stageLabel(r.stage)}）` : ''}：` + (r.error ?? '未知错误'), 'error')
       }
     }),
     // 游戏目录迁移完成：立即全局刷新（版本列表/最近游戏/资源管理），全程无需重启
@@ -618,13 +639,14 @@ onUnmounted(() => {
         </div>
 
         <div class="top-actions">
-          <button class="top-btn" @click="store.currentView = 'game'">
+          <button class="top-btn dl-toggle" @click="dlOpen = !dlOpen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v11" />
               <path d="m7 10 5 5 5-5" />
               <path d="M4 21h16" />
             </svg>
             下载
+            <span v-if="activeTaskCount" class="dl-badge">{{ activeTaskCount }}</span>
           </button>
           <button class="top-btn" @click="onImportClick">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -676,6 +698,44 @@ onUnmounted(() => {
                 <div class="notice-body">
                   <p class="notice-text">{{ n.text }}</p>
                   <span class="notice-time">{{ fmtNoticeTime(n.time) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 下载中心下拉：版本安装/整合包导入/资源下载统一任务列表，支持取消 -->
+        <Teleport to="body">
+          <div v-if="dlOpen" class="notice-mask" @click="dlOpen = false"></div>
+          <div v-if="dlOpen" class="notice-panel dl-panel">
+            <div class="notice-head">
+              <span class="notice-title">下载中心</span>
+              <button class="btn btn-ghost btn-sm" @click="dlOpen = false; store.currentView = 'game'">
+                去版本下载
+              </button>
+            </div>
+            <div v-if="!store.tasks.length" class="notice-empty">没有进行中的任务</div>
+            <div v-else class="notice-list">
+              <div v-for="t in store.tasks" :key="t.id" class="dl-item" :class="'dl-' + t.status">
+                <div class="dl-item-head">
+                  <span class="dl-title" :title="t.title">{{ t.title }}</span>
+                  <button v-if="t.status === 'running'" class="btn btn-ghost btn-sm" @click="onCancelTask(t.id)">
+                    取消
+                  </button>
+                  <button v-else class="dl-dismiss" title="移除记录" @click="dismissTask(t.id)">×</button>
+                </div>
+                <div class="dl-sub muted">
+                  <template v-if="t.status === 'running'">
+                    {{ stageLabel(t.stage) }} · {{ t.text }} · {{ Math.round(t.progress * 100) }}%
+                  </template>
+                  <template v-else-if="t.status === 'done'">已完成</template>
+                  <template v-else-if="t.status === 'cancelled'">已取消</template>
+                  <template v-else>
+                    失败于「{{ stageLabel(t.stage || 'error') }}」阶段：{{ t.error }}
+                  </template>
+                </div>
+                <div v-if="t.status === 'running'" class="dl-bar">
+                  <div class="dl-bar-fill" :style="{ width: Math.round(t.progress * 100) + '%' }"></div>
                 </div>
               </div>
             </div>
@@ -1130,6 +1190,77 @@ onUnmounted(() => {
 }
 .notice-list {
   overflow-y: auto;
+}
+/* 下载中心 */
+.dl-toggle {
+  position: relative;
+}
+.dl-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dl-panel {
+  width: 380px;
+}
+.dl-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.dl-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dl-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dl-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.dl-error .dl-title {
+  color: var(--danger);
+}
+.dl-bar {
+  margin-top: 7px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--card-2);
+  overflow: hidden;
+}
+.dl-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.3s ease;
+}
+.dl-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.dl-dismiss:hover {
+  color: var(--text);
 }
 .notice-item {
   display: flex;

@@ -309,6 +309,10 @@ export interface ProgressEvent {
   speed?: number
   /** 当前下载源（BMCLAPI 镜像 / 官方源） */
   source?: string
+  /** 所属后台任务 id（下载中心按任务聚合；无 = 全局进度条） */
+  taskId?: string
+  /** 任务展示名（随首条进度事件下发） */
+  taskTitle?: string
 }
 
 export interface LaunchState {
@@ -394,6 +398,8 @@ export const IPC = {
   communityFiles: 'community:files', // (source: 'modrinth'|'curseforge', projectId: string) => CommunityFile[]
   communityDownload: 'community:download', // (file: CommunityFile, target: { versionId: string; kind: CommunityKind }) => string  同步下载完成返回保存路径；kind=modpack 时下载后自动进入整合包安装流程
 
+  tasksCancel: 'tasks:cancel', // (taskId: string) => boolean  取消进行中的后台任务（版本安装/整合包导入/资源下载）
+
   // 皮肤/披风（均需当前选中账号为微软正版账号）
   skinProfile: 'skin:profile', // () => ProfileSkins  拉取当前账号皮肤/披风档案
   skinUpload: 'skin:upload', // (filePath: string, variant: SkinVariant) => ProfileSkins  上传并返回最新档案
@@ -422,7 +428,8 @@ export const IPC_EVENT = {
   launchLog: 'event:launchLog', // (line: string)
   launchState: 'event:launchState', // (s: LaunchState)
   msLoginDone: 'event:msLoginDone', // (account: Account | null)  null = 失败/取消
-  installDone: 'event:installDone', // (r: { versionId: string; installedId?: string; ok: boolean; error?: string })  installedId = 实际实例 id（含加载器后缀，成功时存在）
+  installDone: 'event:installDone', // (r: { versionId: string; installedId?: string; ok: boolean; error?: string; taskId?: string; cancelled?: boolean; stage?: string })  installedId = 实际实例 id（含加载器后缀，成功时存在）；stage = 失败阶段；cancelled = 用户取消
+  taskDone: 'event:taskDone', // (r: { taskId: string; ok: boolean; error?: string; cancelled?: boolean; stage?: string })  所有后台任务（含普通资源下载）的统一完成通知
   gameDirDone: 'event:gameDirDone' // (r: { ok: boolean; error?: string; gameDir?: string })  目录迁移结束（配置已切换/失败已回滚）
 } as const
 

@@ -100,8 +100,98 @@ export const store = reactive({
   noticesUnread: false,
   /** 整合包导入处理器（App.vue 注册，供任意页面触发导入确认弹窗） */
   importHandler: null as ((filePath: string) => void) | null,
+  /** 后台任务列表（版本安装/整合包导入/资源下载），驱动顶栏下载中心 */
+  tasks: [] as TaskItem[],
   toasts: [] as ToastItem[]
 })
+
+// ---------------- 后台任务（下载中心） ----------------
+export interface TaskItem {
+  id: string
+  title: string
+  stage: string
+  text: string
+  /** 0-1 */
+  progress: number
+  speed?: number
+  status: 'running' | 'done' | 'error' | 'cancelled'
+  error?: string
+  /** 完成时间戳（用于完成态短暂展示后清理） */
+  finishedAt?: number
+}
+
+/** 阶段名 → 中文阶段标签 */
+const STAGE_LABEL: Record<string, string> = {
+  'version-json': '解析版本信息',
+  libraries: '下载依赖库',
+  client: '下载游戏本体',
+  assets: '下载资源文件',
+  loader: '安装加载器',
+  'fabric-api': '安装 Fabric API',
+  repair: '修复文件',
+  modpack: '安装整合包',
+  java: '准备 Java',
+  download: '下载文件',
+  launch: '启动',
+  done: '完成',
+  error: '失败'
+}
+
+export function stageLabel(stage: string): string {
+  return STAGE_LABEL[stage] ?? stage
+}
+
+/** 进度事件驱动任务 upsert（无 taskId 的全局进度不入任务列表） */
+export function upsertTaskProgress(e: ProgressEvent) {
+  if (!e.taskId) return
+  let t = store.tasks.find((x) => x.id === e.taskId)
+  if (!t) {
+    t = {
+      id: e.taskId,
+      title: e.taskTitle ?? '后台任务',
+      stage: e.stage,
+      text: e.text,
+      progress: e.progress,
+      status: 'running'
+    }
+    store.tasks.unshift(t)
+  }
+  if (t.status !== 'running') return // 已终态不再更新
+  t.stage = e.stage
+  t.text = e.text
+  t.progress = e.progress
+  t.speed = e.speed
+}
+
+/** 任务终态（成功/失败/取消），失败保留阶段与原因 */
+export function finalizeTask(r: {
+  taskId?: string
+  ok: boolean
+  error?: string
+  cancelled?: boolean
+  stage?: string
+}) {
+  if (!r.taskId) return
+  const t = store.tasks.find((x) => x.id === r.taskId)
+  if (!t || t.status !== 'running') return
+  t.status = r.cancelled ? 'cancelled' : r.ok ? 'done' : 'error'
+  t.error = r.error
+  t.progress = r.ok ? 1 : t.progress
+  t.finishedAt = Date.now()
+  if (r.ok) {
+    // 成功任务 8 秒后自动移除
+    setTimeout(() => {
+      const i = store.tasks.findIndex((x) => x.id === t.id && x.status === 'done')
+      if (i >= 0) store.tasks.splice(i, 1)
+    }, 8000)
+  }
+}
+
+/** 手动关闭一条终态任务记录 */
+export function dismissTask(taskId: string) {
+  const i = store.tasks.findIndex((x) => x.id === taskId && x.status !== 'running')
+  if (i >= 0) store.tasks.splice(i, 1)
+}
 
 // ---------------- toast ----------------
 let toastSeq = 0
