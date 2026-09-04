@@ -297,11 +297,20 @@ async function onExportLogs() {
 
 // ---------------- 下载中心 ----------------
 const dlOpen = ref(false)
-const activeTaskCount = computed(() => store.tasks.filter((t) => t.status === 'running').length)
+const activeTaskCount = computed(
+  () => store.tasks.filter((t) => t.status === 'running' || t.status === 'cancelling').length
+)
 
 async function onCancelTask(id: string) {
+  const task = store.tasks.find((t) => t.id === id)
+  if (!task || task.status !== 'running') return
+  task.status = 'cancelling'
   try {
-    await cancelTask(id)
+    const found = await cancelTask(id)
+    if (!found) {
+      finalizeTask({ taskId: id, ok: false, cancelled: true, error: '任务已结束' })
+      toast('任务已结束或不存在', 'info')
+    }
   } catch (e) {
     toast('取消失败：' + errText(e), 'error')
   }
@@ -761,19 +770,23 @@ onUnmounted(() => {
                   <button v-if="t.status === 'running'" class="btn btn-ghost btn-sm" @click="onCancelTask(t.id)">
                     取消
                   </button>
+                  <button v-else-if="t.status === 'cancelling'" class="btn btn-ghost btn-sm" disabled>
+                    正在取消…
+                  </button>
                   <button v-else class="dl-dismiss" title="移除记录" @click="dismissTask(t.id)">×</button>
                 </div>
                 <div class="dl-sub muted">
                   <template v-if="t.status === 'running'">
                     {{ taskSubText(t) }} · {{ Math.round(t.progress * 100) }}%
                   </template>
+                  <template v-else-if="t.status === 'cancelling'">正在停止网络与后台任务…</template>
                   <template v-else-if="t.status === 'done'">已完成</template>
                   <template v-else-if="t.status === 'cancelled'">已取消</template>
                   <template v-else>
                     失败于「{{ stageLabel(t.stage || 'error') }}」阶段：{{ t.error }}
                   </template>
                 </div>
-                <div v-if="t.status === 'running'" class="dl-bar">
+                <div v-if="t.status === 'running' || t.status === 'cancelling'" class="dl-bar">
                   <div class="dl-bar-fill" :style="{ width: Math.round(t.progress * 100) + '%' }"></div>
                 </div>
               </div>

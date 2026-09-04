@@ -399,7 +399,7 @@ export const IPC = {
   communityFiles: 'community:files', // (source: 'modrinth'|'curseforge', projectId: string) => CommunityFile[]
   communityDownload: 'community:download', // (file: CommunityFile, target: { versionId: string; kind: CommunityKind }) => string  同步下载完成返回保存路径；kind=modpack 时下载后自动进入整合包安装流程
 
-  tasksCancel: 'tasks:cancel', // (taskId: string) => boolean  取消进行中的后台任务（版本安装/整合包导入/资源下载）
+  tasksCancel: 'tasks:cancel', // (taskId: string) => Promise<boolean>  底层退出并清理完成后才返回
 
   // 皮肤/披风（均需当前选中账号为微软正版账号）
   skinProfile: 'skin:profile', // () => ProfileSkins  拉取当前账号皮肤/披风档案

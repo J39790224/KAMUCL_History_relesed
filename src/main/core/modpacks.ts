@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import AdmZip from 'adm-zip'
 import type { LoaderName, ModpackInfo, ProgressEvent } from '../../shared/types'
-import { downloadAll, type DownloadTask } from './download'
+import { downloadAll, fetchSignal, type DownloadTask } from './download'
 import { getSettings } from './settings'
 import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { gameDir } from './paths'
@@ -477,13 +477,14 @@ function planFullpackExtract(zip: AdmZip, det: FullpackDetected, instDir: string
 }
 
 /** 全量包安装：注册游戏版本 + 游戏文件入实例目录 + 写实例 json */
-function installFullpack(
+async function installFullpack(
   zip: AdmZip,
   det: FullpackDetected,
   fileName: string,
   nameSource: 'file' | 'inner',
-  emit: ProgressEmit
-): string {
+  emit: ProgressEmit,
+  signal?: AbortSignal
+): Promise<string> {
   emit({ stage: 'modpack', progress: 0, text: '解析整合包信息…' })
   const meta = parseFullpack(zip, det)
   const name = (nameSource === 'inner' ? meta.vid : fileName) || meta.vid
@@ -506,40 +507,53 @@ function installFullpack(
   const ops = planFullpackExtract(zip, det, instDir)
   const total = ops.length
   let done = 0
-  for (const op of ops) {
-    done++
-    if (!(op.skipIfExists && fs.existsSync(op.dest))) {
-      fs.mkdirSync(path.dirname(op.dest), { recursive: true })
-      fs.writeFileSync(op.dest, op.entry.getData())
+  const createdFiles: string[] = []
+  try {
+    for (const op of ops) {
+      throwIfCancelled(signal)
+      done++
+      if (!(op.skipIfExists && fs.existsSync(op.dest))) {
+        fs.mkdirSync(path.dirname(op.dest), { recursive: true })
+        fs.writeFileSync(op.dest, op.entry.getData())
+        createdFiles.push(op.dest)
+      }
+      if (done % 8 === 0 || done === total) {
+        emit({
+          stage: 'modpack',
+          progress: 0.05 + (total ? (done / total) * 0.9 : 0.9),
+          text: `解压游戏文件 ${done}/${total}`
+        })
+        // 让主进程有机会处理“取消”IPC，避免大量同步 ZIP 条目饿死事件循环。
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
     }
-    if (done % 8 === 0 || done === total) {
-      emit({
-        stage: 'modpack',
-        progress: 0.05 + (total ? (done / total) * 0.9 : 0.9),
-        text: `解压游戏文件 ${done}/${total}`
-      })
+
+    // 版本注册校验：版本 json 必须就位（zip 内必有，除非被意外跳过）
+    if (!fs.existsSync(versionJsonPath(meta.vid))) {
+      throw new Error('游戏版本注册失败：包内缺少有效的版本描述文件')
     }
-  }
 
-  // 版本注册校验：版本 json 必须就位（zip 内必有，除非被意外跳过）
-  if (!fs.existsSync(versionJsonPath(meta.vid))) {
-    throw new Error('游戏版本注册失败：包内缺少有效的版本描述文件')
-  }
+    throwIfCancelled(signal)
+    emit({ stage: 'modpack', progress: 0.97, text: '创建游戏实例…' })
+    const instanceJson = {
+      id,
+      inheritsFrom: meta.vid,
+      ...(meta.loader ? { _loader: meta.loader, _loaderVersion: meta.loaderVersion } : {}),
+      _gameDir: true,
+      _modpackName: name,
+      _modpackVersion: meta.vid
+    }
+    fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
+    registerVersionFolder(id, gameDir())
 
-  emit({ stage: 'modpack', progress: 0.97, text: '创建游戏实例…' })
-  const instanceJson = {
-    id,
-    inheritsFrom: meta.vid,
-    ...(meta.loader ? { _loader: meta.loader, _loaderVersion: meta.loaderVersion } : {}),
-    _gameDir: true,
-    _modpackName: name,
-    _modpackVersion: meta.vid
+    emit({ stage: 'done', progress: 1, text: `${name} 安装完成` })
+    return id
+  } catch (e) {
+    // 只回滚本次新建文件；skipIfExists 的用户既有版本文件绝不删除。
+    for (const file of createdFiles.reverse()) fs.rmSync(file, { force: true })
+    fs.rmSync(instDir, { recursive: true, force: true })
+    throw e
   }
-  fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
-  registerVersionFolder(id, gameDir())
-
-  emit({ stage: 'done', progress: 1, text: `${name} 安装完成` })
-  return id
 }
 
 // ---------------- CurseForge 文件地址解析（MCIM 国内镜像，免 key） ----------------
@@ -549,12 +563,13 @@ const MCIM_CF = 'https://mod.mcimirror.top/curseforge/v1'
 /** 先取文件信息（fileName + downloadUrl）；失败退回直接下载端点（302 到文件） */
 async function resolveCfFile(
   projectID: number,
-  fileID: number
+  fileID: number,
+  signal?: AbortSignal
 ): Promise<{ url: string; fileName: string }> {
   const fallbackUrl = `${MCIM_CF}/mods/${projectID}/files/${fileID}/download`
   try {
     const res = await fetch(`${MCIM_CF}/mods/${projectID}/files/${fileID}`, {
-      signal: AbortSignal.timeout(15000)
+      signal: fetchSignal(signal)
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = (await res.json()) as {
@@ -564,6 +579,7 @@ async function resolveCfFile(
     if (!fileName) throw new Error('镜像返回缺少 fileName')
     return { url: json.data?.downloadUrl || fallbackUrl, fileName }
   } catch {
+    if (signal?.aborted) throw new Error('已取消')
     return { url: fallbackUrl, fileName: `${projectID}-${fileID}.jar` }
   }
 }
@@ -572,12 +588,14 @@ async function resolveCfFile(
 async function mapPool<T, R>(
   items: T[],
   limit: number,
-  fn: (item: T, index: number) => Promise<R>
+  fn: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal
 ): Promise<R[]> {
   const out = new Array<R>(items.length)
   let idx = 0
   const worker = async (): Promise<void> => {
     while (idx < items.length) {
+      throwIfCancelled(signal)
       const i = idx++
       out[i] = await fn(items[i], i)
     }
@@ -587,11 +605,17 @@ async function mapPool<T, R>(
 }
 
 /** 只解压 overrides 前缀下的条目到实例目录（含 .. 的可疑条目跳过），返回文件数 */
-function extractOverrides(zip: AdmZip, prefix: string | null, destDir: string): number {
+async function extractOverrides(
+  zip: AdmZip,
+  prefix: string | null,
+  destDir: string,
+  signal?: AbortSignal
+): Promise<number> {
   if (!prefix) return 0
   const pre = prefix.replace(/[\\/]+/g, '/').replace(/\/+$/, '') + '/'
   let count = 0
   for (const entry of zip.getEntries()) {
+    throwIfCancelled(signal)
     const name = entry.entryName.replace(/\\/g, '/')
     if (entry.isDirectory || !name.startsWith(pre)) continue
     const dest = safeJoin(destDir, name.slice(pre.length))
@@ -599,6 +623,7 @@ function extractOverrides(zip: AdmZip, prefix: string | null, destDir: string): 
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.writeFileSync(dest, entry.getData())
     count++
+    if (count % 8 === 0) await new Promise<void>((resolve) => setImmediate(resolve))
   }
   return count
 }
@@ -653,7 +678,7 @@ export async function installModpack(
 
   // 全量包：解压即玩，无需下载
   if (detected.format === 'fullpack') {
-    return installFullpack(zip, detected.full, fileName, nameSource, emit)
+    return await installFullpack(zip, detected.full, fileName, nameSource, emit, opts?.signal)
   }
 
   // 2) 解析清单
@@ -671,6 +696,8 @@ export async function installModpack(
   // 3) 实例 id（清洗 + 冲突追加序号）
   const id = uniqueInstanceId(nameSource === 'inner' ? meta.name : fileName)
   const instDir = versionDir(id)
+
+  try {
 
   // 4) 安装游戏本体与加载器（已有的文件自动跳过）
   emit({ stage: 'modpack', progress: 0.05, text: '安装游戏本体与加载器…' })
@@ -703,7 +730,7 @@ export async function installModpack(
     const cfFiles = parsed.files
     let resolved = 0
     const infos = await mapPool(cfFiles, 8, async (f) => {
-      const info = await resolveCfFile(f.projectID, f.fileID)
+      const info = await resolveCfFile(f.projectID, f.fileID, opts?.signal)
       resolved++
       emit({
         stage: 'modpack',
@@ -711,7 +738,7 @@ export async function installModpack(
         text: `解析下载地址 ${resolved}/${cfFiles.length}`
       })
       return info
-    })
+    }, opts?.signal)
     pending = infos.map((info) => ({ rel: `mods/${info.fileName}`, url: info.url, size: 0 }))
   }
 
@@ -756,9 +783,14 @@ export async function installModpack(
   // 7) 解压 overrides 覆盖到实例目录
   emit({ stage: 'modpack', progress: 0.96, text: '解压覆盖文件…' })
   throwIfCancelled(opts?.signal)
-  extractOverrides(zip, meta.overridesPrefix, instDir)
+  await extractOverrides(zip, meta.overridesPrefix, instDir, opts?.signal)
 
   // 8) 完成
   emit({ stage: 'done', progress: 1, text: `${meta.name} 安装完成` })
   return id
+  } catch (e) {
+    // id 由 uniqueInstanceId 生成，本次流程独占；失败/取消时可安全整目录回滚。
+    fs.rmSync(instDir, { recursive: true, force: true })
+    throw e
+  }
 }

@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types'
 import { downloadAll, downloadFile, fetchSignal, mirrorUrl, type DownloadTask, type MirrorPref } from './download'
 import { getSettings } from './settings'
+import { abortableDelay, throwIfCancelled } from './tasks'
 import {
   allVersionsDirs,
   assetIndexPath,
@@ -177,7 +178,7 @@ export async function fetchVersionManifest(
       } catch (e) {
         if (signal?.aborted) throw new Error('已取消')
         lastErr = e
-        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)))
+        await abortableDelay(800 * (attempt + 1), signal)
       }
     }
     if (!data) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
@@ -383,7 +384,7 @@ export async function installVanilla(
     // 3. 资源索引与资源文件
     if (vj.assetIndex?.url) {
       const idxPath = assetIndexPath(vj.assetIndex.id)
-      await downloadFile(vj.assetIndex.url, idxPath, undefined, vj.assetIndex.sha1, mirror)
+      await downloadFile(vj.assetIndex.url, idxPath, undefined, vj.assetIndex.sha1, mirror, signal)
 
       const idx = JSON.parse(fs.readFileSync(idxPath, 'utf-8')) as {
         virtual?: boolean
@@ -422,7 +423,9 @@ export async function installVanilla(
       // legacy 版本需要把资源复制到 assets/virtual/legacy 下
       if (idx.virtual === true || idx.map_to_resources === true) {
         emit({ stage: 'assets', progress: 1, text: '复制 legacy 资源' })
+        let copied = 0
         for (const [name, o] of Object.entries(objects)) {
+          throwIfCancelled(signal)
           if (!o?.hash) continue
           const from = assetObjectPath(o.hash)
           const to = path.join(virtualLegacyDir(), ...name.split('/'))
@@ -430,6 +433,7 @@ export async function installVanilla(
             fs.mkdirSync(path.dirname(to), { recursive: true })
             fs.copyFileSync(from, to)
           }
+          if (++copied % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve))
         }
       }
     }
@@ -466,7 +470,7 @@ export async function installVersion(
     const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit, opts.instanceName, signal)
     // Fabric：可选同时安装 Fabric API 到 mods 文件夹
     if (opts.loader === 'fabric' && opts.fabricApi) {
-      await installFabricApi(versionId, opts.fabricApi, emit)
+      await installFabricApi(versionId, opts.fabricApi, emit, signal)
     }
     return installedId
   }

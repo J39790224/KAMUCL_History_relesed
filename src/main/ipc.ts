@@ -33,7 +33,7 @@ import { folderOfVersion, instanceIconsDir, versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
-import { registerTask, cancelTask, finishTask, isCancelError } from './core/tasks'
+import { registerTask, cancelTaskAndWait, finishTask, isCancelError } from './core/tasks'
 import { exportLaunchLogs } from './core/exportLogs'
 
 function errText(err: unknown): string {
@@ -149,7 +149,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         .finally(() => finishTask(task.id))
     })
   // 取消进行中的后台任务（版本安装/整合包导入/资源下载）
-  ipcMain.handle(IPC.tasksCancel, (_e, taskId: string) => cancelTask(String(taskId ?? '')))
+  ipcMain.handle(IPC.tasksCancel, (_e, taskId: string) =>
+    cancelTaskAndWait(String(taskId ?? ''))
+  )
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
   ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) => {
     const vid = String(id ?? '')

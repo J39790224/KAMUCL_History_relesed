@@ -7,6 +7,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
 import { downloadAll, downloadFile, fetchSignal } from './download'
+import { isCancelError } from './tasks'
 import { getSettings } from './settings'
 import { gameDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { ensureJava, scanJava } from './java'
@@ -147,21 +148,22 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
   const runOnce = (args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const proc = spawn(javaPath, args, { windowsHide: true })
+      let cancelled = false
+      let spawnError: Error | null = null
       const onAbort = () => {
+        cancelled = true
         try {
           proc.kill()
         } catch {
           /* 忽略 */
         }
-        reject(new Error('已取消'))
       }
       if (signal) {
         if (signal.aborted) {
-          proc.kill()
-          reject(new Error('已取消'))
-          return
+          onAbort()
+        } else {
+          signal.addEventListener('abort', onAbort, { once: true })
         }
-        signal.addEventListener('abort', onAbort, { once: true })
       }
       const allLines: string[] = []
       let tail = ''
@@ -174,8 +176,12 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
       }
       proc.stdout.on('data', onData)
       proc.stderr.on('data', onData)
-      proc.on('error', reject)
-      proc.on('exit', (code) => {
+      proc.on('error', (e) => {
+        spawnError = e
+      })
+      // close 保证 stdout/stderr 已关闭；取消 IPC 只有到这里才可确认安装器真正停止。
+      proc.on('close', (code) => {
+        signal?.removeEventListener('abort', onAbort)
         if (tail.trim()) allLines.push(tail)
         // 全量输出落盘，便于排查
         try {
@@ -189,7 +195,9 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
         } catch {
           /* 日志写盘失败不影响流程 */
         }
-        if (code === 0) resolve()
+        if (cancelled || signal?.aborted) reject(new Error('已取消'))
+        else if (spawnError) reject(spawnError)
+        else if (code === 0) resolve()
         else {
           const last = allLines.slice(-30).join('\n')
           reject(new Error(`安装器退出码 ${code}（完整日志见 kamucl-logs/installer.log）\n${last}`))
@@ -198,6 +206,7 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
     })
 
   return runOnce(buildArgs(useMirror)).catch((err) => {
+    if (signal?.aborted || isCancelError(err)) throw new Error('已取消')
     if (!useMirror) throw err
     emit({ stage: 'loader', progress: 0.7, text: '镜像模式安装失败，改用官方源重试…' })
     return runOnce(buildArgs(false))
@@ -407,7 +416,10 @@ interface ModrinthVersion {
 /** 按 mc 版本缓存查询结果，避免列表与下载两次请求 */
 const fabricApiCache = new Map<string, ModrinthVersion[]>()
 
-async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersion[]> {
+async function fetchFabricApiVersions(
+  mcVersion: string,
+  signal?: AbortSignal
+): Promise<ModrinthVersion[]> {
   const cached = fabricApiCache.get(mcVersion)
   if (cached) return cached
   const gv = encodeURIComponent(JSON.stringify([mcVersion]))
@@ -417,7 +429,7 @@ async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersio
     try {
       const res = await fetch(`${base}/project/fabric-api/version?game_versions=${gv}&loaders=${ld}`, {
         headers: MODRINTH_UA,
-        signal: AbortSignal.timeout(30000)
+        signal: fetchSignal(signal)
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const arr = (await res.json()) as ModrinthVersion[]
@@ -425,6 +437,7 @@ async function fetchFabricApiVersions(mcVersion: string): Promise<ModrinthVersio
       fabricApiCache.set(mcVersion, arr)
       return arr
     } catch (e) {
+      if (signal?.aborted) throw new Error('已取消')
       lastErr = e
     }
   }
@@ -443,10 +456,11 @@ export async function listFabricApiVersions(mcVersion: string): Promise<FabricAp
 export async function installFabricApi(
   mcVersion: string,
   version: string,
-  emit: ProgressEmit
+  emit: ProgressEmit,
+  signal?: AbortSignal
 ): Promise<void> {
   emit({ stage: 'fabric-api', progress: 0, text: `查询 Fabric API ${version}` })
-  const arr = await fetchFabricApiVersions(mcVersion)
+  const arr = await fetchFabricApiVersions(mcVersion, signal)
   const v = arr.find((x) => x.version_number === version)
   const file = v?.files?.find((f) => f.primary) ?? v?.files?.[0]
   if (!file?.url || !file.filename) {
@@ -454,6 +468,6 @@ export async function installFabricApi(
   }
   const dest = path.join(gameDir(), 'mods', file.filename)
   emit({ stage: 'fabric-api', progress: 0.2, text: `下载 Fabric API ${version}` })
-  await downloadFile(file.url, dest, undefined, file.hashes?.sha1, 'official')
+  await downloadFile(file.url, dest, undefined, file.hashes?.sha1, 'official', signal)
   emit({ stage: 'fabric-api', progress: 1, text: `Fabric API 已放入 mods 文件夹` })
 }

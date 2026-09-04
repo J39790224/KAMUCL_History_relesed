@@ -63,20 +63,24 @@ export function fetchSignal(extSignal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(30000)
   if (!extSignal) return timeout
   if (extSignal.aborted) return extSignal
-  const c = new AbortController()
-  timeout.addEventListener('abort', () => c.abort(timeout.reason))
-  extSignal.addEventListener('abort', () => c.abort(extSignal.reason))
-  return c.signal
+  // Electron 33 / Node 20 支持 AbortSignal.any；组合信号会自行解除来源监听，
+  // 避免每次 fetch 都把永久监听器挂在任务 signal 上。
+  return AbortSignal.any([timeout, extSignal])
 }
 
 /** 计算文件 sha1（hex 小写） */
-function sha1Of(file: string): Promise<string> {
+function sha1Of(file: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha1')
-    fs.createReadStream(file)
+    const stream = fs.createReadStream(file)
+    const onAbort = (): void => stream.destroy(new DOMException('已取消', 'AbortError'))
+    stream
       .on('error', reject)
       .on('data', (d) => hash.update(d))
       .on('end', () => resolve(hash.digest('hex')))
+      .on('close', () => signal?.removeEventListener('abort', onAbort))
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -89,22 +93,21 @@ async function doDownload(
 ): Promise<void> {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   if (extSignal?.aborted) throw new Error('已取消')
-  // 合并超时与外部取消信号
-  let signal: AbortSignal = AbortSignal.timeout(30000)
-  if (extSignal) {
-    const c = new AbortController()
-    const timeout = AbortSignal.timeout(30000)
-    timeout.addEventListener('abort', () => c.abort(timeout.reason))
-    extSignal.addEventListener('abort', () => c.abort(extSignal.reason))
-    signal = c.signal
-  }
+  const signal = fetchSignal(extSignal)
   const res = await fetch(url, { signal, redirect: 'follow' })
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}: ${url}`)
 
   const total = Number(res.headers.get('content-length') ?? 0)
   const tmp = dest + '.part'
   const ws = fs.createWriteStream(tmp)
+  // destroy(error) 必须有常驻 error 监听；finish/drain 的 once 仍会收到并 reject。
+  ws.on('error', () => undefined)
   const reader = res.body.getReader()
+  const onAbort = (): void => {
+    void reader.cancel(extSignal?.reason).catch(() => undefined)
+    ws.destroy(new DOMException('已取消', 'AbortError'))
+  }
+  extSignal?.addEventListener('abort', onAbort, { once: true })
   let received = 0
   try {
     for (;;) {
@@ -119,11 +122,18 @@ async function doDownload(
     }
     ws.end()
     await once(ws, 'finish')
+    if (extSignal?.aborted) throw new Error('已取消')
     fs.renameSync(tmp, dest)
   } catch (e) {
+    void reader.cancel().catch(() => undefined)
     ws.destroy()
+    // Windows 上写流关闭前直接 rm 可能留下被占用的 .part；确认 close 后再删。
+    if (!ws.closed) await once(ws, 'close').catch(() => undefined)
     fs.rmSync(tmp, { force: true })
+    if (extSignal?.aborted) throw new Error('已取消')
     throw e
+  } finally {
+    extSignal?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -143,7 +153,7 @@ export async function downloadFile(
 ): Promise<void> {
   if (fs.existsSync(dest)) {
     if (!sha1) return
-    const h = await sha1Of(dest)
+    const h = await sha1Of(dest, extSignal)
     if (h === sha1.toLowerCase()) return
     fs.rmSync(dest, { force: true })
   }
@@ -162,13 +172,15 @@ export async function downloadFile(
     : undefined
 
   let lastErr: unknown = null
+  let downloaded = false
   for (let attempt = 0; attempt < 3; attempt++) {
     if (extSignal?.aborted) throw new Error('已取消')
     const u = candidates[attempt % candidates.length]
     try {
       await doDownload(u, dest, monoOnProgress, extSignal)
+      downloaded = true
       if (sha1) {
-        const h = await sha1Of(dest)
+        const h = await sha1Of(dest, extSignal)
         if (h !== sha1.toLowerCase()) {
           fs.rmSync(dest, { force: true })
           throw new Error(`sha1 校验失败: ${path.basename(dest)}`)
@@ -176,7 +188,11 @@ export async function downloadFile(
       }
       return
     } catch (e) {
-      if (extSignal?.aborted) throw new Error('已取消')
+      if (extSignal?.aborted) {
+        if (downloaded) fs.rmSync(dest, { force: true })
+        fs.rmSync(dest + '.part', { force: true })
+        throw new Error('已取消')
+      }
       lastErr = e
     }
   }
@@ -218,29 +234,44 @@ export async function downloadAll(
       onProgress?.(done, total, speed)
     }
   }, 500)
+  const poolController = new AbortController()
+  const poolSignal = extSignal
+    ? AbortSignal.any([extSignal, poolController.signal])
+    : poolController.signal
+  let firstError: unknown = null
   const worker = async (): Promise<void> => {
     while (idx < tasks.length) {
-      if (extSignal?.aborted) throw new Error('已取消')
+      if (poolSignal.aborted) throw new Error('已取消')
       const t = tasks[idx++]
       let lastReceived = 0
-      await downloadFile(
-        t.url,
-        t.dest,
-        (received) => {
-          bytesTotal += received - lastReceived
-          lastReceived = received
-        },
-        t.sha1,
-        mirror,
-        extSignal
-      )
+      try {
+        await downloadFile(
+          t.url,
+          t.dest,
+          (received) => {
+            bytesTotal += received - lastReceived
+            lastReceived = received
+          },
+          t.sha1,
+          mirror,
+          poolSignal
+        )
+      } catch (e) {
+        if (firstError == null) firstError = e
+        poolController.abort(e)
+        throw e
+      }
       done++
       onProgress?.(done, total, speed)
     }
   }
   try {
     const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker())
-    await Promise.all(workers)
+    await Promise.allSettled(workers)
+    if (firstError != null) {
+      if (extSignal?.aborted) throw new Error('已取消')
+      throw firstError
+    }
   } finally {
     clearInterval(timer)
   }

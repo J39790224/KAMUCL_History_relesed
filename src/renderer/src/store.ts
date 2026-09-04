@@ -114,7 +114,7 @@ export interface TaskItem {
   /** 0-1 */
   progress: number
   speed?: number
-  status: 'running' | 'done' | 'error' | 'cancelled'
+  status: 'running' | 'cancelling' | 'done' | 'error' | 'cancelled'
   error?: string
   /** 完成时间戳（用于完成态短暂展示后清理） */
   finishedAt?: number
@@ -173,7 +173,7 @@ export function finalizeTask(r: {
 }) {
   if (!r.taskId) return
   const t = store.tasks.find((x) => x.id === r.taskId)
-  if (!t || t.status !== 'running') return
+  if (!t || (t.status !== 'running' && t.status !== 'cancelling')) return
   t.status = r.cancelled ? 'cancelled' : r.ok ? 'done' : 'error'
   t.error = r.error
   t.progress = r.ok ? 1 : t.progress
