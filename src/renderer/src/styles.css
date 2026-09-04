@@ -2,26 +2,26 @@
    KAMUCL 全局样式 —— 六套主题共用的组件基线（色板由 App.vue 注入）
    ============================================================ */
 
-/* -------- 蓝白主题的首帧回退值（设置加载后由主题色板覆盖） -------- */
+/* -------- 图一深色绿玻璃的首帧回退值（设置加载后由主题色板覆盖） -------- */
 :root {
-  --bg: #edf0f7;
-  --bg-2: #f5f7fb;
-  --card: #ffffff;
-  --card-2: #f2f5fa;
-  --border: #e1e6f0;
-  --text: #1b2437;
-  --text-dim: #68718a;
-  --accent: #2563eb;
-  --accent-2: #4a86ff;
-  --accent-deep: #1d4fd0;
-  --accent-grad: linear-gradient(135deg, #4a86ff 0%, #2563eb 55%, #1d4fd0 100%);
-  --accent-soft: rgba(37, 99, 235, 0.12);
+  --bg: #10191b;
+  --bg-2: rgba(13, 23, 26, 0.72);
+  --card: rgba(23, 34, 37, 0.66);
+  --card-2: rgba(37, 50, 52, 0.58);
+  --border: rgba(194, 214, 203, 0.18);
+  --text: #f4f8f5;
+  --text-dim: #abb8b0;
+  --accent: #55c96b;
+  --accent-2: #7bdf88;
+  --accent-deep: #349d4c;
+  --accent-grad: linear-gradient(135deg, #71dc83 0%, #55c96b 55%, #349d4c 100%);
+  --accent-soft: rgba(85, 201, 107, 0.16);
   --on-accent: #ffffff;
-  --danger: #dc2626;
-  --ok: #16a34a;
-  --shadow: 0 2px 12px rgba(30, 50, 90, 0.07);
-  --shadow-lg: 0 10px 30px rgba(30, 50, 90, 0.12);
-  --hover: rgba(27, 36, 55, 0.05);
+  --danger: #ff7278;
+  --ok: #67d77d;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.46);
+  --hover: rgba(255, 255, 255, 0.07);
   /* 派生语义色 */
   --border-strong: #cbd3e3;
   --scroll: rgba(27, 36, 55, 0.2);
@@ -33,8 +33,8 @@
   --mask: rgba(32, 42, 66, 0.4);
   --radius: 14px;
   /* 布局与语义默认值（自定义主题可 inline 覆盖） */
-  --sidebar-w: 248px;
-  --banner-h: 300px;
+  --sidebar-w: 208px;
+  --banner-h: 430px;
   --sidebar-text: var(--text-dim);
   --bn-text: #ffffff;
 }
@@ -83,13 +83,14 @@ body,
 #app {
   height: 100%;
   overflow: hidden;
+  background: transparent;
 }
 
 body {
   font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   font-size: 14px;
   color: var(--text);
-  background: var(--bg);
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }

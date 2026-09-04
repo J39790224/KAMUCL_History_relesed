@@ -9,7 +9,8 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 
-const props = withDefaults(defineProps<{ src: string; variant?: 'classic' | 'slim' }>(), {
+const props = withDefaults(defineProps<{ src?: string; variant?: 'classic' | 'slim' }>(), {
+  src: '',
   variant: 'classic'
 })
 
@@ -34,6 +35,8 @@ let parts: {
 /** 当前模型占用的几何体/材质/纹理，重建或卸载时统一 dispose */
 let disposables: { dispose(): void }[] = []
 let baseTex: THREE.Texture | null = null
+/** 无皮肤或远端纹理不可用时使用本地生成的像素角色，外层需关闭以免遮住基础层 */
+let fallbackTextureActive = false
 /** 皮肤加载失败回调的过期令牌（src 变化后忽略旧回调） */
 let loadToken = 0
 let observer: ResizeObserver | null = null
@@ -120,37 +123,90 @@ function buildModel() {
   const head = new THREE.Group()
   head.position.set(0, 24, 0) // 颈部
   head.add(buildPart(8, 8, 8, 8, 8, 'bottom', false))
-  head.add(buildPart(8, 8, 8, 40, 8, 'bottom', true)) // hat
+  if (!fallbackTextureActive) head.add(buildPart(8, 8, 8, 40, 8, 'bottom', true)) // hat
 
   const body = new THREE.Group()
   body.add(at(buildPart(8, 12, 4, 20, 20, 'center', false), 0, 18, 0))
-  body.add(at(buildPart(8, 12, 4, 20, 36, 'center', true), 0, 18, 0)) // jacket
+  if (!fallbackTextureActive) {
+    body.add(at(buildPart(8, 12, 4, 20, 36, 'center', true), 0, 18, 0)) // jacket
+  }
 
   const armR = new THREE.Group()
   armR.position.set(-armX, 24, 0) // 右肩（角色右手边 = -x）
   armR.add(buildPart(armW, 12, 4, 44, 20, 'top', false))
-  armR.add(buildPart(armW, 12, 4, 44, 36, 'top', true)) // 右袖
+  if (!fallbackTextureActive) armR.add(buildPart(armW, 12, 4, 44, 36, 'top', true)) // 右袖
 
   const armL = new THREE.Group()
   armL.position.set(armX, 24, 0) // 左肩
   armL.add(buildPart(armW, 12, 4, 36, 52, 'top', false))
-  armL.add(buildPart(armW, 12, 4, 52, 52, 'top', true)) // 左袖
+  if (!fallbackTextureActive) armL.add(buildPart(armW, 12, 4, 52, 52, 'top', true)) // 左袖
 
   const legR = new THREE.Group()
   legR.position.set(-2, 12, 0) // 右髋
   legR.add(buildPart(4, 12, 4, 4, 20, 'top', false))
-  legR.add(buildPart(4, 12, 4, 4, 36, 'top', true)) // 右裤腿
+  if (!fallbackTextureActive) legR.add(buildPart(4, 12, 4, 4, 36, 'top', true)) // 右裤腿
 
   const legL = new THREE.Group()
   legL.position.set(2, 12, 0) // 左髋
   legL.add(buildPart(4, 12, 4, 20, 52, 'top', false))
-  legL.add(buildPart(4, 12, 4, 4, 52, 'top', true)) // 左裤腿
+  if (!fallbackTextureActive) legL.add(buildPart(4, 12, 4, 4, 52, 'top', true)) // 左裤腿
 
   root.add(head, body, armR, armL, legR, legL)
   root.rotation.y = INITIAL_ROT_Y
   model = root
   parts = { head, armL, armR, legL, legR }
   scene.add(root)
+}
+
+/**
+ * 生成一张完整的 64×64 本地皮肤纹理。它只用于没有账号皮肤或网络加载失败时，
+ * 让首页的可拖动/行走 3D 组件仍可工作；有真实档案后会立即替换。
+ */
+function createFallbackTexture(): THREE.DataTexture {
+  const size = 64
+  const pixels = new Uint8Array(size * size * 4)
+  const paint = (x: number, y: number, w: number, h: number, rgba: [number, number, number, number]) => {
+    for (let py = y; py < y + h; py++) {
+      for (let px = x; px < x + w; px++) {
+        const index = (py * size + px) * 4
+        pixels[index] = rgba[0]
+        pixels[index + 1] = rgba[1]
+        pixels[index + 2] = rgba[2]
+        pixels[index + 3] = rgba[3]
+      }
+    }
+  }
+
+  // 基础层全部不透明，按原版 64×64 UV 区域绘制克制的绿色外套角色。
+  paint(0, 0, 64, 64, [190, 139, 98, 255])
+  paint(16, 16, 24, 16, [61, 116, 78, 255]) // 躯干
+  paint(40, 16, 16, 16, [54, 105, 70, 255]) // 右臂
+  paint(32, 48, 16, 16, [54, 105, 70, 255]) // 左臂
+  paint(0, 16, 16, 16, [43, 50, 58, 255]) // 右腿
+  paint(16, 48, 16, 16, [43, 50, 58, 255]) // 左腿
+  paint(0, 0, 32, 8, [73, 48, 36, 255]) // 发顶和头部侧面
+  paint(8, 8, 8, 3, [78, 50, 37, 255]) // 刘海
+  paint(8, 11, 8, 5, [201, 151, 107, 255]) // 脸
+  paint(9, 12, 2, 1, [49, 42, 38, 255])
+  paint(13, 12, 2, 1, [49, 42, 38, 255])
+  paint(11, 15, 2, 1, [139, 78, 66, 255])
+
+  const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat)
+  texture.flipY = true
+  texture.magFilter = THREE.NearestFilter
+  texture.minFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.needsUpdate = true
+  return texture
+}
+
+function useFallbackTexture() {
+  const old = baseTex
+  baseTex = createFallbackTexture()
+  fallbackTextureActive = true
+  buildModel()
+  old?.dispose()
 }
 
 function disposeModel() {
@@ -167,13 +223,12 @@ function disposeModel() {
 /** 加载皮肤纹理并重建人偶；src / variant 变化时调用 */
 function rebuild() {
   const src = props.src
-  if (!renderer || !src) {
-    disposeModel()
-    baseTex?.dispose()
-    baseTex = null
+  const token = ++loadToken
+  if (!renderer) return
+  if (!src) {
+    useFallbackTexture()
     return
   }
-  const token = ++loadToken
   new THREE.TextureLoader().load(
     src,
     (tex) => {
@@ -189,19 +244,14 @@ function rebuild() {
       tex.colorSpace = THREE.SRGBColorSpace
       const old = baseTex
       baseTex = tex
+      fallbackTextureActive = false
       buildModel()
       old?.dispose()
     },
     undefined,
     () => {
       if (token !== loadToken) return
-      // 皮肤加载失败：用 1×1 素色纹理建模型，避免一片空白
-      const fallback = new THREE.DataTexture(new Uint8Array([143, 148, 168, 255]), 1, 1)
-      fallback.needsUpdate = true
-      const old = baseTex
-      baseTex = fallback
-      buildModel()
-      old?.dispose()
+      useFallbackTexture()
     }
   )
 }
@@ -287,7 +337,8 @@ onMounted(() => {
     supported.value = false
     return
   }
-  renderer.setPixelRatio(window.devicePixelRatio)
+  // 高 DPI 保持清晰，同时限制像素比，避免大窗口动画造成不必要的 GPU 压力。
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.setClearColor(0x000000, 0) // 透明背景，透出 --card-2 底色
   el.appendChild(renderer.domElement)
 
@@ -342,7 +393,7 @@ watch([() => props.src, () => props.variant], rebuild)
   width: 100%;
   height: var(--sv3d-height, 340px);
   border-radius: 12px;
-  background: var(--card-2);
+  background: var(--sv3d-surface, var(--card-2));
   overflow: hidden;
   cursor: grab;
   user-select: none;

@@ -46,7 +46,7 @@ function defaults(): Settings {
     mirror: 'bmclapi',
     defaultIsolation: true,
     msClientId: DEFAULT_MS_CLIENT_ID,
-    theme: 'blue-white',
+    theme: 'transparent',
     custom: structuredClone(DEFAULT_CUSTOM_THEME),
     disabledFeatures: [],
     favoriteVersions: [],

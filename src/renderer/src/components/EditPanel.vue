@@ -5,17 +5,15 @@
  */
 import { computed, ref } from 'vue'
 import { copyText, errText, saveSettings } from '../api'
-import { exitEditMode, setBannerAlign, store, toast } from '../store'
+import { exitEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME } from '@shared/types'
 import type { CustomTheme, Settings } from '@shared/types'
 
 type ColorKey = keyof CustomTheme['colors']
-type LayoutKey = keyof CustomTheme['layout']
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
 const colors = computed(() => store.settings?.custom.colors ?? DEFAULT_CUSTOM_THEME.colors)
-const layout = computed(() => store.settings?.custom.layout ?? DEFAULT_CUSTOM_THEME.layout)
 
 // ---------------- 板块分组定义（key 对应界面元素的 data-edit） ----------------
 interface GroupDef {
@@ -23,10 +21,6 @@ interface GroupDef {
   title: string
   hint?: string
   colors: Array<{ key: ColorKey; label: string }>
-  /** 含 Banner 高度滑块 */
-  bannerHeight?: boolean
-  /** 含 Banner 文字对齐选择 */
-  align?: boolean
 }
 
 const GROUPS: GroupDef[] = [
@@ -46,7 +40,7 @@ const GROUPS: GroupDef[] = [
       { key: 'border', label: '边框' }
     ]
   },
-  { key: 'banner', title: 'Banner', colors: [], bannerHeight: true, align: true },
+  { key: 'banner', title: '启动展示卡', colors: [] },
   {
     key: 'bannerText',
     title: 'Banner 文字',
@@ -122,28 +116,6 @@ function onHexBlur(key: ColorKey, e: Event) {
   if (!HEX_RE.test(el.value.trim())) el.value = colors.value[key]
 }
 
-// ---------------- 布局滑块 ----------------
-const BANNER_H = { key: 'bannerHeight' as LayoutKey, label: 'Banner 高度', min: 220, max: 420 }
-const BOTTOM_SLIDERS: Array<{ key: LayoutKey; label: string; min: number; max: number }> = [
-  { key: 'radius', label: '界面圆角', min: 0, max: 24 },
-  { key: 'sidebarWidth', label: '侧栏宽度', min: 200, max: 300 }
-]
-
-function onSlide(key: LayoutKey, e: Event) {
-  const c = store.settings?.custom
-  if (!c) return
-  const v = Number((e.target as HTMLInputElement).value)
-  if (Number.isNaN(v)) return
-  applyCustom({ ...c, layout: { ...c.layout, [key]: v } })
-}
-
-/* 已填充段 = accent 渐变 */
-function sliderFill(key: LayoutKey, min: number, max: number) {
-  const v = layout.value[key]
-  const pct = Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100))
-  return `linear-gradient(90deg, var(--accent-2), var(--accent) ${pct}%, var(--card-2) ${pct}%)`
-}
-
 // ---------------- 恢复默认 ----------------
 function resetAll() {
   if (saveTimer) {
@@ -170,10 +142,10 @@ function decodeCode(code: string): unknown {
   return JSON.parse(atob(s))
 }
 
-/** 当前自定义主题的实时主题码（随颜色/布局改动自动更新） */
+/** 当前自定义主题的实时主题码（图一结构固定，只分享颜色）。 */
 const themeCode = computed(() => {
   const c = store.settings?.custom ?? DEFAULT_CUSTOM_THEME
-  return encodeCode({ colors: c.colors, layout: c.layout })
+  return encodeCode({ colors: c.colors })
 })
 
 async function copyCode() {
@@ -191,24 +163,16 @@ function applyCode() {
     return
   }
   try {
-    const parsed = decodeCode(raw) as Partial<{ colors: unknown; layout: unknown }>
+    const parsed = decodeCode(raw) as Partial<{ colors: unknown }>
     const def = DEFAULT_CUSTOM_THEME
-    // 白名单校验：颜色必须 #rrggbb，布局数值限定范围
+    // 白名单校验：主题码只能改变颜色，不能改变图一固定结构。
     const src = (parsed.colors ?? {}) as Record<string, unknown>
     const colors = { ...def.colors }
     for (const key of Object.keys(colors) as Array<keyof typeof colors>) {
       const v = src[key]
       if (typeof v === 'string' && HEX_RE.test(v)) colors[key] = v.toLowerCase()
     }
-    const srcL = (parsed.layout ?? {}) as Record<string, unknown>
-    const clamp = (v: unknown, min: number, max: number, fb: number): number =>
-      typeof v === 'number' && Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : fb
-    const layout = {
-      sidebarWidth: clamp(srcL.sidebarWidth, 200, 300, def.layout.sidebarWidth),
-      bannerHeight: clamp(srcL.bannerHeight, 220, 420, def.layout.bannerHeight),
-      radius: clamp(srcL.radius, 0, 24, def.layout.radius)
-    }
-    void save({ theme: 'custom', custom: { colors, layout } })
+    void save({ theme: 'custom', custom: { colors, layout: def.layout } })
     codeInput.value = ''
     toast('主题码已套用', 'success')
   } catch {
@@ -257,38 +221,6 @@ function applyCode() {
               @blur="onHexBlur(f.key, $event)"
             />
           </div>
-          <div v-if="activeGroup.bannerHeight" class="slider-row">
-            <span class="color-name">{{ BANNER_H.label }}</span>
-            <input
-              type="range"
-              class="slider"
-              :min="BANNER_H.min"
-              :max="BANNER_H.max"
-              :value="layout[BANNER_H.key]"
-              :style="{ background: sliderFill(BANNER_H.key, BANNER_H.min, BANNER_H.max) }"
-              @input="onSlide(BANNER_H.key, $event)"
-            />
-            <span class="slider-value">{{ layout[BANNER_H.key] }} px</span>
-          </div>
-          <div v-if="activeGroup.align" class="field-row">
-            <span class="color-name">文字位置</span>
-            <div class="seg">
-              <button
-                class="seg-btn"
-                :class="{ active: store.bannerAlign === 'start' }"
-                @click="setBannerAlign('start')"
-              >
-                靠左下
-              </button>
-              <button
-                class="seg-btn"
-                :class="{ active: store.bannerAlign === 'center' }"
-                @click="setBannerAlign('center')"
-              >
-                居中
-              </button>
-            </div>
-          </div>
         </section>
       </template>
 
@@ -299,7 +231,7 @@ function applyCode() {
             <path d="m4 4 7 17 2.5-7.5L21 11Z" />
             <path d="M13.5 13.5 19 19" />
           </svg>
-          <p>用鼠标左键点击界面中的板块（侧栏 / 顶栏 / Banner / 按钮 / 卡片 / 文字），选中后即可在这里调整颜色与布局。</p>
+          <p>用鼠标左键点击界面中的板块（侧栏 / 顶栏 / 启动卡 / 按钮 / 卡片 / 文字），选中后即可调整颜色；全部主题始终沿用图一布局。</p>
         </div>
         <details v-for="g in GROUPS" :key="g.key" class="ep-details">
           <summary class="ep-summary">{{ g.title }}</summary>
@@ -321,43 +253,11 @@ function applyCode() {
                 @blur="onHexBlur(f.key, $event)"
               />
             </div>
-            <div v-if="g.bannerHeight" class="slider-row">
-              <span class="color-name">{{ BANNER_H.label }}</span>
-              <input
-                type="range"
-                class="slider"
-                :min="BANNER_H.min"
-                :max="BANNER_H.max"
-                :value="layout[BANNER_H.key]"
-                :style="{ background: sliderFill(BANNER_H.key, BANNER_H.min, BANNER_H.max) }"
-                @input="onSlide(BANNER_H.key, $event)"
-              />
-              <span class="slider-value">{{ layout[BANNER_H.key] }} px</span>
-            </div>
-            <div v-if="g.align" class="field-row">
-              <span class="color-name">文字位置</span>
-              <div class="seg">
-                <button
-                  class="seg-btn"
-                  :class="{ active: store.bannerAlign === 'start' }"
-                  @click="setBannerAlign('start')"
-                >
-                  靠左下
-                </button>
-                <button
-                  class="seg-btn"
-                  :class="{ active: store.bannerAlign === 'center' }"
-                  @click="setBannerAlign('center')"
-                >
-                  居中
-                </button>
-              </div>
-            </div>
           </div>
         </details>
       </template>
 
-      <!-- 底部常驻：主题码 + 布局滑块 + 恢复默认 -->
+      <!-- 底部常驻：主题码 + 恢复默认 -->
       <div class="ep-sep"></div>
       <section class="ep-group">
         <h3 class="ep-group-title">主题码</h3>
@@ -375,23 +275,6 @@ function applyCode() {
             @keyup.enter="applyCode"
           />
           <button class="btn btn-ghost btn-sm code-btn" @click="applyCode">套用</button>
-        </div>
-      </section>
-      <div class="ep-sep"></div>
-      <section class="ep-group">
-        <h3 class="ep-group-title">位置与布局</h3>
-        <div v-for="s in BOTTOM_SLIDERS" :key="s.key" class="slider-row">
-          <span class="color-name">{{ s.label }}</span>
-          <input
-            type="range"
-            class="slider"
-            :min="s.min"
-            :max="s.max"
-            :value="layout[s.key]"
-            :style="{ background: sliderFill(s.key, s.min, s.max) }"
-            @input="onSlide(s.key, $event)"
-          />
-          <span class="slider-value">{{ layout[s.key] }} px</span>
         </div>
       </section>
       <button class="btn btn-ghost reset-btn" @click="resetAll">恢复默认</button>

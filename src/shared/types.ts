@@ -210,7 +210,7 @@ export interface GameResolution {
   fullscreen: boolean
 }
 
-/** 自定义主题：模块化颜色 + 布局位置（theme === 'custom' 时生效） */
+/** 自定义主题：颜色实时生效；layout 字段仅用于兼容旧主题码与旧配置。 */
 export interface CustomTheme {
   colors: {
     accent: string // 主色调（按钮/选中/链接）
@@ -243,8 +243,8 @@ export const DEFAULT_CUSTOM_THEME: CustomTheme = {
     bannerText: '#ffffff'
   },
   layout: {
-    sidebarWidth: 248,
-    bannerHeight: 300,
+    sidebarWidth: 208,
+    bannerHeight: 430,
     radius: 14
   }
 }
@@ -255,7 +255,7 @@ export const THEME_PRESETS: Record<
   { label: string; colors: CustomTheme['colors']; description: string }
 > = {
   'blue-white': {
-    label: '蓝白',
+    label: '白蓝',
     description: '清爽明亮的蓝白玻璃界面',
     colors: {
       accent: '#2563eb',
@@ -270,7 +270,7 @@ export const THEME_PRESETS: Record<
     }
   },
   'black-orange': {
-    label: '黑橙',
+    label: '橙黑',
     description: '深色底与克制的暖橙强调色',
     colors: {
       accent: '#f97316',
@@ -285,7 +285,7 @@ export const THEME_PRESETS: Record<
     }
   },
   'white-pink': {
-    label: '白粉',
+    label: '粉白',
     description: '柔和浅色底与粉色强调色',
     colors: {
       accent: '#ec4899',
@@ -300,7 +300,7 @@ export const THEME_PRESETS: Record<
     }
   },
   'black-pink': {
-    label: '黑粉',
+    label: '粉黑',
     description: '深色底与柔亮粉色强调色',
     colors: {
       accent: '#f472b6',
@@ -315,8 +315,8 @@ export const THEME_PRESETS: Record<
     }
   },
   transparent: {
-    label: '透明',
-    description: 'Minecraft 风景背景上的深色磨砂玻璃',
+    label: '默认 · 透明',
+    description: '图一深色绿调的系统桌面磨砂玻璃',
     colors: {
       accent: '#55c96b',
       bg: '#10191b',
@@ -331,7 +331,7 @@ export const THEME_PRESETS: Record<
   }
 }
 
-/** 兼容 0.6.x 与早期预设 key，未知值安全回退到蓝白。 */
+/** 兼容 0.6.x 与早期预设 key，未知值安全回退到图一默认主题。 */
 export function normalizeThemeName(value: unknown): ThemeName {
   const aliases: Record<string, ThemeName> = {
     light: 'blue-white',
@@ -352,7 +352,7 @@ export function normalizeThemeName(value: unknown): ThemeName {
   ) {
     return raw
   }
-  return 'blue-white'
+  return 'transparent'
 }
 
 export interface Settings {

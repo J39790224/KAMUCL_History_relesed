@@ -1,9 +1,6 @@
 <script setup lang="ts">
-/**
- * 首页布局编辑器：两列模块拖拽排序 + 显隐开关 + 恢复默认。
- * 布局存 settings.homeLayout（main=主列，side=右栏，数组顺序即渲染顺序）。
- */
-import { reactive, ref } from 'vue'
+/** 图一固定布局下的个性化背景与启动卡图片管理。 */
+import { ref } from 'vue'
 import {
   errText,
   importBackground,
@@ -14,8 +11,7 @@ import {
 } from '../api'
 import { store, toast } from '../store'
 import { managedImageUrl } from '../managedAssets'
-import { DEFAULT_HOME_LAYOUT, HOME_MODULE_LABELS } from '@shared/types'
-import type { BackgroundSettings, HomeLayout, ImageFit, Settings } from '@shared/types'
+import type { BackgroundSettings, ImageFit, Settings } from '@shared/types'
 
 function save(patch: Partial<Settings>) {
   void saveSettings(patch)
@@ -24,40 +20,9 @@ function save(patch: Partial<Settings>) {
   )
 }
 
-// ---------------- 拖拽排序 ----------------
-const dragState = reactive({ col: '' as 'main' | 'side' | '', idx: -1 })
-
-function onDragStart(col: 'main' | 'side', idx: number) {
-  dragState.col = col
-  dragState.idx = idx
-}
-
-function onDrop(col: 'main' | 'side', target: number) {
-  if (dragState.col !== col || dragState.idx < 0 || !store.settings) return
-  const arr = [...store.settings.homeLayout[col]]
-  const [moved] = arr.splice(dragState.idx, 1)
-  arr.splice(target, 0, moved)
-  save({ homeLayout: { ...store.settings.homeLayout, [col]: arr } as HomeLayout })
-  dragState.idx = -1
-  dragState.col = ''
-}
-
-function onToggleVisible(col: 'main' | 'side', idx: number) {
-  if (!store.settings) return
-  const arr = store.settings.homeLayout[col].map((m, i) =>
-    i === idx ? { ...m, visible: !m.visible } : m
-  )
-  save({ homeLayout: { ...store.settings.homeLayout, [col]: arr } as HomeLayout })
-}
-
-function resetLayout() {
-  save({ homeLayout: structuredClone(DEFAULT_HOME_LAYOUT) })
-  toast('已恢复默认布局', 'success')
-}
-
 // ---------------- 背景 ----------------
 const bgModes = [
-  { value: 'none', label: '默认底色' },
+  { value: 'none', label: '系统桌面' },
   { value: 'color', label: '纯色' },
   { value: 'image', label: '图片' }
 ] as const
@@ -141,42 +106,13 @@ function setLaunchFit(fit: ImageFit) {
 </script>
 
 <template>
-  <!-- 首页布局 -->
-  <div class="card group">
-    <div class="layout-head">
-      <h3 class="group-title" style="margin-bottom: 0">首页布局</h3>
-      <button class="btn btn-ghost btn-sm" @click="resetLayout">恢复默认布局</button>
-    </div>
-    <p class="muted group-hint">拖动 ☰ 手柄调整模块顺序，开关控制显示/隐藏，即时生效。</p>
-
-    <div class="layout-cols">
-      <div v-for="col in (['main', 'side'] as const)" :key="col" class="layout-col">
-        <h4 class="layout-col-title">{{ col === 'main' ? '主列（左侧内容区）' : '右栏（信息面板）' }}</h4>
-        <div
-          v-for="(m, idx) in store.settings?.homeLayout?.[col] ?? []"
-          :key="m.key"
-          class="layout-item"
-          :class="{ dragging: dragState.col === col && dragState.idx === idx }"
-          draggable="true"
-          @dragstart="onDragStart(col, idx)"
-          @dragover.prevent
-          @drop="onDrop(col, idx)"
-        >
-          <span class="layout-grip" title="拖动排序">☰</span>
-          <span class="layout-name" :class="{ off: !m.visible }">{{ HOME_MODULE_LABELS[m.key] ?? m.key }}</span>
-          <span class="switch">
-            <input type="checkbox" :checked="m.visible" @change="onToggleVisible(col, idx)" />
-            <span class="switch-ui"></span>
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- 背景 -->
   <div class="card group">
     <div class="layout-head">
-      <h3 class="group-title" style="margin-bottom: 0">背景</h3>
+      <div>
+        <h3 class="group-title" style="margin-bottom: 2px">窗口背景</h3>
+        <p class="muted group-hint" style="margin: 0">默认透出并模糊真实系统桌面；图片模式仅在你主动选择时启用。</p>
+      </div>
       <button class="btn btn-ghost btn-sm" @click="resetBg">恢复默认</button>
     </div>
 
@@ -322,49 +258,6 @@ function setLaunchFit(fit: ImageFit) {
   justify-content: space-between;
   margin-bottom: 12px;
 }
-.layout-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 8px;
-}
-.layout-col-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-.layout-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  margin-bottom: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card-2);
-  cursor: grab;
-  transition: border-color 0.15s ease, opacity 0.15s ease;
-}
-.layout-item.dragging {
-  opacity: 0.4;
-  border-color: var(--accent);
-}
-.layout-grip {
-  color: var(--text-dim);
-  cursor: grab;
-  font-size: 13px;
-  user-select: none;
-}
-.layout-name {
-  flex: 1;
-  font-size: 13px;
-}
-.layout-name.off {
-  color: var(--text-dim);
-  text-decoration: line-through;
-}
-
 /* 背景 */
 .bg-modes {
   display: flex;

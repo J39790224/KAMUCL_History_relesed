@@ -29,7 +29,6 @@ import type {
   YggdrasilProviderInput
 } from '@shared/types'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
-import transparentWallpaper from './assets/banner1.png'
 import { managedImageUrl } from './managedAssets'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
@@ -43,6 +42,9 @@ import SkinsView from './views/SkinsView.vue'
 import CommunityView from './views/CommunityView.vue'
 import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
+
+// Vite 的全局 define 在 script 中解析；模板直接访问会被 Vue 当作组件实例字段。
+const appVersion = __APP_VERSION__
 import AccountsView from './views/AccountsView.vue'
 import ModDropModal from './components/ModDropModal.vue'
 import WorldImportModal from './components/WorldImportModal.vue'
@@ -155,6 +157,31 @@ const inResourceGroup = computed(() =>
 
 const win = (action: 'minimize' | 'maximize' | 'close') => {
   window.kamucl.send(`window:${action}`)
+}
+
+// 自绘标题栏中的返回按钮使用真实视图历史；不伪造“返回”入口。
+const viewHistory = ref<ViewName[]>([])
+let navigatingBack = false
+watch(
+  () => store.currentView,
+  (next, previous) => {
+    if (navigatingBack) {
+      navigatingBack = false
+      return
+    }
+    if (previous && previous !== next) {
+      viewHistory.value = [...viewHistory.value.slice(-19), previous]
+    }
+  },
+  { flush: 'sync' }
+)
+const canGoBack = computed(() => viewHistory.value.length > 0)
+function goBack() {
+  const target = viewHistory.value.at(-1)
+  if (!target) return
+  viewHistory.value = viewHistory.value.slice(0, -1)
+  navigatingBack = true
+  store.currentView = target
 }
 
 // ---------------- 全局拖拽导入整合包 ----------------
@@ -495,6 +522,15 @@ const activeTaskCount = computed(
       (t) => t.status === 'running' || t.status === 'paused' || t.status === 'cancelling'
     ).length
 )
+const launcherHealth = computed(() => {
+  if (store.launchState?.status === 'error') {
+    return { tone: 'error', text: '最近启动出现异常' }
+  }
+  if (activeTaskCount.value) {
+    return { tone: 'busy', text: `${activeTaskCount.value} 项后台任务进行中` }
+  }
+  return { tone: 'ok', text: '全部系统运行正常' }
+})
 
 async function onPauseTask(id: string) {
   const task = store.tasks.find((t) => t.id === id)
@@ -572,18 +608,13 @@ watch(
   { immediate: true }
 )
 
-/** 自定义背景层；透明主题在未指定图片时使用启动器内置风景资源。 */
+/**
+ * 用户显式选择的个性化背景层。默认不生成内部壁纸：桌面透视由透明
+ * BrowserWindow + Windows DWM Acrylic 提供。
+ */
 const bgStyle = computed(() => {
   const bg = store.settings?.background
-  if (!bg || bg.mode === 'none') {
-    if (store.settings?.theme !== 'transparent') return null
-    return {
-      backgroundImage: `url("${transparentWallpaper}")`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      opacity: '1'
-    }
-  }
+  if (!bg || bg.mode === 'none') return null
   if (bg.mode === 'color') {
     return {
       background: bg.color,
@@ -601,14 +632,6 @@ const bgStyle = computed(() => {
       backgroundRepeat: 'no-repeat',
       opacity: String(bg.opacity),
       filter: bg.blur > 0 ? `blur(${bg.blur}px)` : 'none'
-    }
-  }
-  if (store.settings?.theme === 'transparent') {
-    return {
-      backgroundImage: `url("${transparentWallpaper}")`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      opacity: '1'
     }
   }
   return null
@@ -671,13 +694,13 @@ function clearCustomVars() {
 /** 把 settings.custom 映射为 documentElement 上的 inline CSS 变量覆盖 */
 function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   const st = document.documentElement.style
-  const { colors, layout } = custom
+  const { colors } = custom
   const accent = colors.accent
   const dark = hexLuminance(colors.bg) < 0.46
   const transparent = theme === 'transparent'
-  const cardOpacity = transparent ? 66 : dark ? 82 : 91
-  const raisedOpacity = transparent ? 55 : dark ? 72 : 82
-  const sideOpacity = transparent ? 62 : dark ? 86 : 88
+  const cardOpacity = transparent ? 78 : dark ? 78 : 88
+  const raisedOpacity = transparent ? 66 : dark ? 68 : 80
+  const sideOpacity = transparent ? 84 : dark ? 86 : 88
   const accent2 = `color-mix(in srgb, ${accent} 72%, white)`
   const accentDeep = `color-mix(in srgb, ${accent} 78%, black)`
   st.setProperty('--accent', accent)
@@ -713,12 +736,13 @@ function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   st.setProperty('--shadow-lg', dark ? '0 20px 55px rgba(0, 0, 0, 0.42)' : '0 20px 55px rgba(31, 50, 85, 0.18)')
   st.setProperty(
     '--shell-surface',
-    `color-mix(in srgb, ${colors.bg} ${transparent ? 55 : dark ? 88 : 90}%, transparent)`
+    `color-mix(in srgb, ${colors.bg} ${transparent ? 84 : dark ? 86 : 88}%, transparent)`
   )
-  st.setProperty('--glass-blur', transparent ? '22px' : '14px')
-  st.setProperty('--sidebar-w', `${layout.sidebarWidth}px`)
-  st.setProperty('--banner-h', `${layout.bannerHeight}px`)
-  st.setProperty('--radius', `${layout.radius}px`)
+  st.setProperty('--glass-blur', '28px')
+  // 图一布局是全部主题共享的固定骨架；旧 layout 字段只保留兼容，不再改变结构。
+  st.setProperty('--sidebar-w', '208px')
+  st.setProperty('--banner-h', '430px')
+  st.setProperty('--radius', '14px')
 }
 
 /**
@@ -726,14 +750,14 @@ function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
  */
 function applyTheme(theme?: ThemeName, custom?: CustomTheme) {
   const root = document.documentElement
-  const selected = theme ?? 'blue-white'
+  const selected = theme ?? 'transparent'
   clearCustomVars()
   root.dataset.theme = selected
   if (selected === 'custom') {
     applyCustomVars(custom ?? DEFAULT_CUSTOM_THEME, selected)
     return
   }
-  const preset = THEME_PRESETS[selected] ?? THEME_PRESETS['blue-white']
+  const preset = THEME_PRESETS[selected] ?? THEME_PRESETS.transparent
   applyCustomVars(
     { colors: preset.colors, layout: DEFAULT_CUSTOM_THEME.layout },
     selected
@@ -912,20 +936,17 @@ onUnmounted(() => {
     <aside class="sidebar" data-edit="sidebar">
       <!-- Logo 区 -->
       <div class="logo-area">
-        <svg class="logo-svg" viewBox="0 0 48 48" fill="none">
-          <defs>
-            <linearGradient id="logo-g" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse">
-              <stop offset="0" style="stop-color: var(--accent-2)" />
-              <stop offset="0.55" style="stop-color: var(--accent)" />
-              <stop offset="1" style="stop-color: var(--accent-deep)" />
-            </linearGradient>
-          </defs>
-          <path d="M24 3.5 42 13.75v20.5L24 44.5 6 34.25v-20.5Z" stroke="url(#logo-g)" stroke-width="2.4" stroke-linejoin="round" />
-          <path d="M24 3.5v20.25M24 23.75 42 13.75M24 23.75 6 13.75" stroke="url(#logo-g)" stroke-width="1.6" opacity="0.75" stroke-linejoin="round" />
+        <svg class="logo-svg" viewBox="0 0 48 48" aria-hidden="true">
+          <polygon points="24,4 43,13.5 24,23 5,13.5" fill="#75bd46" />
+          <polygon points="5,13.5 24,23 24,29 5,19.5" fill="#57953a" />
+          <polygon points="24,23 43,13.5 43,19.5 24,29" fill="#437c31" />
+          <polygon points="5,19.5 24,29 24,44 5,34.5" fill="#875a35" />
+          <polygon points="24,29 43,19.5 43,34.5 24,44" fill="#69452a" />
+          <path d="m8 24 5 2.5v4L8 28Zm9 3.5 4 2v5l-4-2Zm17-2 6-3v4l-6 3Zm-6 8 5-2.5v5l-5 2.5Z" fill="#5b3a24" opacity=".72" />
         </svg>
         <div class="logo-text">
           <span class="logo-name">KAMUCL</span>
-          <span class="logo-sub">Minecraft 启动器</span>
+          <span class="logo-version">v{{ appVersion }}</span>
         </div>
       </div>
 
@@ -975,13 +996,33 @@ onUnmounted(() => {
           </template>
         </template>
       </nav>
+
+      <button
+        class="sidebar-health"
+        :class="`is-${launcherHealth.tone}`"
+        title="打开通知中心"
+        @click="toggleNotices"
+      >
+        <i></i>
+        <span>{{ launcherHealth.text }}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+      </button>
     </aside>
 
     <!-- ============ 右侧（顶栏 + 内容） ============ -->
     <div class="main-area">
       <!-- 顶部栏（可拖拽） -->
       <header class="topbar" data-edit="topbar">
-        <div class="search-box">
+        <button
+          v-if="store.currentView === 'home'"
+          class="top-back"
+          :disabled="!canGoBack"
+          title="返回上一个页面"
+          @click="goBack"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+        </button>
+        <div v-else class="search-box">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7" />
             <path d="m21 21-4.3-4.3" />
@@ -994,7 +1035,7 @@ onUnmounted(() => {
         </div>
 
         <div class="top-actions">
-          <button class="top-btn dl-toggle" @click="dlOpen = !dlOpen">
+          <button v-if="store.currentView !== 'home'" class="top-btn dl-toggle" @click="dlOpen = !dlOpen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v11" />
               <path d="m7 10 5 5 5-5" />
@@ -1003,13 +1044,22 @@ onUnmounted(() => {
             下载
             <span v-if="activeTaskCount" class="dl-badge">{{ activeTaskCount }}</span>
           </button>
-          <button class="top-btn" @click="onImportClick">
+          <button v-if="store.currentView !== 'home'" class="top-btn" @click="onImportClick">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 15V4" />
               <path d="m7 8 5-5 5 5" />
               <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
             </svg>
             导入
+          </button>
+          <button
+            v-if="store.currentView === 'home' && activeTaskCount"
+            class="top-icon-btn dl-toggle"
+            title="下载中心"
+            @click="dlOpen = !dlOpen"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></svg>
+            <span class="dl-badge compact">{{ activeTaskCount }}</span>
           </button>
           <button class="top-icon-btn" title="通知" @click="toggleNotices">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1311,12 +1361,18 @@ onUnmounted(() => {
 <style scoped>
 .shell {
   display: flex;
-  height: 100%;
-  background: var(--bg);
+  width: calc(100% - 28px);
+  height: calc(100% - 28px);
+  margin: 14px;
+  background: var(--shell-surface);
   position: relative;
   z-index: 1;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 20px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
 }
 /* 自定义背景层：垫底铺满，不拦截交互 */
 .app-bg {
@@ -1331,16 +1387,9 @@ onUnmounted(() => {
   backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
 }
-:global(html[data-theme='transparent']) .shell {
-  width: calc(100% - 28px);
-  height: calc(100% - 28px);
-  margin: 14px;
-  border-radius: 20px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
-}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .shell.has-bg {
-    background: color-mix(in srgb, var(--bg) 88%, transparent);
+  .shell {
+    background: color-mix(in srgb, var(--bg) 78%, transparent);
   }
 }
 
@@ -1350,7 +1399,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
   border-right: 1px solid var(--border);
 }
 
@@ -1358,47 +1407,51 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 84px;
-  padding: 0 20px;
+  height: 104px;
+  padding: 0 17px;
   flex-shrink: 0;
 }
 .logo-svg {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   flex-shrink: 0;
 }
 .logo-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
 }
 .logo-name {
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: 2px;
+  font-family: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2.2px;
   color: var(--text);
 }
-.logo-sub {
-  font-size: 12px;
-  color: var(--text-dim);
+.logo-version {
+  align-self: flex-end;
+  padding-right: 2px;
+  font-size: 9px;
+  color: var(--accent-2);
+  opacity: 0.85;
 }
 
 .nav {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 5px;
+  padding: 4px 12px 12px;
   overflow-y: auto;
 }
 .nav-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 44px;
-  padding: 0 14px;
+  height: 48px;
+  padding: 0 15px;
   border: none;
-  border-radius: 12px;
+  border-radius: 11px;
   background: transparent;
   color: var(--sidebar-text);
   font-size: 14px;
@@ -1412,8 +1465,9 @@ onUnmounted(() => {
   background: var(--hover);
 }
 .nav-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--card-2));
+  color: color-mix(in srgb, var(--text) 84%, var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .nav-icon {
   display: flex;
@@ -1483,6 +1537,54 @@ onUnmounted(() => {
   height: 16px;
 }
 
+.sidebar-health {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  margin: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card) 48%, transparent);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.sidebar-health:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+.sidebar-health i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+.sidebar-health.is-busy i {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.sidebar-health.is-error i {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.sidebar-health span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-health svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ---------------- 右侧区域 ---------------- */
 .main-area {
   flex: 1;
@@ -1497,12 +1599,39 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 64px;
+  height: 78px;
   flex-shrink: 0;
-  padding: 0 16px 0 22px;
+  padding: 0 14px 0 22px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
   -webkit-app-region: drag;
+}
+
+.top-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.top-back:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.top-back:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+.top-back svg {
+  width: 16px;
+  height: 16px;
 }
 
 .search-box {
@@ -1605,6 +1734,14 @@ onUnmounted(() => {
   background: var(--accent);
   border: 1.5px solid var(--bg-2);
 }
+.dl-badge.compact {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 14px;
+  height: 14px;
+  font-size: 9px;
+}
 
 /* 通知中心面板（Teleport 到 body，fixed 定位） */
 .notice-mask {
@@ -1614,8 +1751,8 @@ onUnmounted(() => {
 }
 .notice-panel {
   position: fixed;
-  top: 60px;
-  right: 90px;
+  top: 82px;
+  right: 92px;
   width: 320px;
   max-height: 420px;
   z-index: 9001;
@@ -1822,7 +1959,25 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 22px 24px 28px;
+  padding: 16px 18px 22px;
+}
+
+@media (max-width: 1080px) {
+  .shell {
+    width: calc(100% - 16px);
+    height: calc(100% - 16px);
+    margin: 8px;
+    border-radius: 16px;
+  }
+  .content {
+    padding: 12px 14px 18px;
+  }
+  .topbar {
+    height: 68px;
+  }
+  .logo-area {
+    height: 92px;
+  }
 }
 
 /* ---------------- 整合包拖入遮罩 ---------------- */

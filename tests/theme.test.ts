@@ -24,14 +24,14 @@ function contrast(a: string, b: string): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
-test('旧主题 key 无损迁移到六主题体系，未知值回退蓝白', () => {
+test('旧主题 key 无损迁移到六主题体系，未知值回退图一默认主题', () => {
   assert.equal(normalizeThemeName('light'), 'blue-white')
   assert.equal(normalizeThemeName('dark'), 'black-orange')
   assert.equal(normalizeThemeName('pink-white'), 'white-pink')
   assert.equal(normalizeThemeName('pink-black'), 'black-pink')
   assert.equal(normalizeThemeName('custom'), 'custom')
   assert.equal(normalizeThemeName('transparent'), 'transparent')
-  assert.equal(normalizeThemeName('not-a-theme'), 'blue-white')
+  assert.equal(normalizeThemeName('not-a-theme'), 'transparent')
 })
 
 test('五套固定色板齐全且正文、次要文字具有可读对比度', () => {
@@ -47,4 +47,9 @@ test('五套固定色板齐全且正文、次要文字具有可读对比度', ()
     assert.ok(contrast(theme.colors.textDim, theme.colors.card) >= 4, `${key} 次要文字对比度不足`)
     assert.notEqual(theme.colors.accent.toLowerCase(), theme.colors.card.toLowerCase())
   }
+  assert.equal(THEME_PRESETS['blue-white'].label, '白蓝')
+  assert.equal(THEME_PRESETS['black-orange'].label, '橙黑')
+  assert.equal(THEME_PRESETS['black-pink'].label, '粉黑')
+  assert.equal(THEME_PRESETS['white-pink'].label, '粉白')
+  assert.equal(THEME_PRESETS.transparent.label, '默认 · 透明')
 })

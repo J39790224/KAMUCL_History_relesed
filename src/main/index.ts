@@ -5,6 +5,7 @@ import { registerIpc } from './ipc'
 import { authorizeManagedImage } from './core/appearanceAssets'
 import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
+import { windowAppearance } from './windowAppearance'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -18,12 +19,7 @@ let win: BrowserWindow | null = null
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 1120,
-    height: 700,
-    minWidth: 960,
-    minHeight: 620,
-    frame: false,
-    backgroundColor: '#0d0f14',
+    ...windowAppearance(),
     icon: join(__dirname, '../../build/icon.png'),
     show: false,
     title: 'KAMUCL',
@@ -34,6 +30,18 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+
+  // Electron 33 会把 backgroundMaterial 交给 DWM；显式重设一次可覆盖部分
+  // Windows 恢复窗口状态时丢失材质的情况。旧版 Windows 会安全忽略该调用。
+  if (process.platform === 'win32') {
+    try {
+      win.setBackgroundMaterial('acrylic')
+    } catch (error) {
+      launcherLog(
+        `Acrylic material unavailable, using translucent fallback: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
 
   win.on('ready-to-show', () => win?.show())
   win.webContents.setWindowOpenHandler(({ url }) => {

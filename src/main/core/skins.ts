@@ -133,6 +133,17 @@ function appendLauncherLog(line: string): void {
 export async function getProfile(): Promise<ProfileSkins> {
   const account = selectedAccount()
   if (!account) throw new Error('请先选择账号')
+  if (account.type === 'offline') {
+    // 离线账号没有官方档案；复用头像服务的公开用户名皮肤接口给首页 3D 预览。
+    // 请求失败时返回空皮肤列表，由渲染器显示本地生成的可动画角色，不阻断首页。
+    const url = `https://minotar.net/skin/${encodeURIComponent(account.username)}`
+    const dataUrl = await fetchDataUrl(url)
+    return {
+      username: account.username,
+      skins: dataUrl ? [{ variant: 'classic', url, dataUrl, state: 'ACTIVE' }] : [],
+      capes: []
+    }
+  }
   if (account.type === 'yggdrasil') {
     const valid = await getValidAccount(account)
     const profile = await externalProfile(valid)

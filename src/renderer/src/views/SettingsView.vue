@@ -14,7 +14,6 @@ import {
 import { enterEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
 import type { Settings, ThemeName } from '@shared/types'
-import transparentWallpaper from '../assets/banner1.png'
 import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
 
 // ---------------- 保存 ----------------
@@ -47,17 +46,17 @@ const themeOptions = computed(() => {
   const customColors = store.settings?.custom.colors ?? DEFAULT_CUSTOM_THEME.colors
   const named = (key: Exclude<ThemeName, 'custom'>) => ({ key, ...THEME_PRESETS[key] })
   return [
+    named('transparent'),
     named('blue-white'),
     named('black-orange'),
-    named('white-pink'),
     named('black-pink'),
+    named('white-pink'),
     {
       key: 'custom' as const,
       label: '个性化',
-      description: '保留你的颜色、布局与自定义图片',
+      description: '自定义配色与图片，沿用统一的图一布局',
       colors: customColors
-    },
-    named('transparent')
+    }
   ]
 })
 
@@ -68,7 +67,7 @@ function chooseTheme(theme: ThemeName, label: string) {
 
 function themePreviewBackground(theme: ThemeName, fallback: string): string {
   if (theme !== 'transparent') return fallback
-  return `linear-gradient(rgba(10, 20, 18, .2), rgba(10, 20, 18, .42)), url("${transparentWallpaper}") center / cover`
+  return 'linear-gradient(145deg, rgba(20, 34, 38, .72), rgba(10, 18, 21, .9)), linear-gradient(135deg, #455b62, #7a6558)'
 }
 
 // ---------------- Java 列表 ----------------
@@ -277,7 +276,7 @@ function saveResolution() {
           </button>
         </div>
 
-        <p class="muted group-hint">六套主题使用相同的完整布局与磨砂玻璃组件；切换不会改变账户、版本或启动设置。</p>
+        <p class="muted group-hint">六套主题共用图一布局与系统桌面磨砂玻璃，只改变配色；切换不会改变账户、版本或启动设置。</p>
         <button
           v-if="store.settings.theme === 'custom'"
           class="btn personalize-btn"
@@ -310,7 +309,7 @@ function saveResolution() {
         </div>
       </div>
 
-      <!-- 首页布局与背景（个性化） -->
+      <!-- 个性化背景与启动卡图片；首页结构固定为图一布局。 -->
       <HomeLayoutEditor />
 
       <!-- 游戏文件夹统一在版本页管理，设置页只显示当前状态，避免双入口冲突。 -->
