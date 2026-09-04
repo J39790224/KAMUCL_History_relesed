@@ -137,6 +137,8 @@ export const communityDownload = (
 export const listJava = () => invoke<JavaInfo[]>(IPC.javaList)
 export const refreshJava = () => invoke<JavaInfo[]>(IPC.javaRefresh)
 export const addCustomJava = (path: string) => invoke<void>(IPC.javaAddCustom, path)
+/** 文件选择器选 java.exe 并校验入库，返回最新 Java 列表（取消 = null） */
+export const pickAddJava = () => invoke<JavaInfo[] | null>(IPC.javaPickAdd)
 export const hideJava = (path: string) => invoke<void>(IPC.javaHide, path)
 
 // ---------------- 皮肤/披风 ----------------

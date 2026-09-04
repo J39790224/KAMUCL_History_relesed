@@ -199,10 +199,10 @@ function mergeCustom(list: JavaInfo[]): JavaInfo[] {
   return [...manual, ...auto]
 }
 
-/** 手动添加一个 Java 路径（校验可用后加入 javaCustom） */
+/** 手动添加一个 Java 路径（真实执行 -version 校验后加入 javaCustom） */
 export function addCustomJava(javaPath: string): void {
   const info = probeJava(javaPath)
-  if (!info) throw new Error('该路径不是可用的 Java 可执行文件（java -version 校验失败）')
+  if (!info) throw new Error('这不是有效的 Java（java -version 校验失败）')
   const s = getSettings()
   const list = [...(s.javaCustom ?? [])]
   if (!list.some((p) => p.toLowerCase() === javaPath.toLowerCase())) {

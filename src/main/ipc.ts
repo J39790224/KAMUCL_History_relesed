@@ -262,6 +262,25 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // ---------------- Java ----------------
   ipcMain.handle(IPC.javaList, () => java.scanJava())
   ipcMain.handle(IPC.javaAddCustom, (_e, p: string) => java.addCustomJava(String(p ?? '')))
+  // 文件选择器添加 Java：选完即真实执行 -version 校验，通过则入库并返回最新列表
+  ipcMain.handle(IPC.javaPickAdd, async () => {
+    const win = getWin()
+    const isWin = process.platform === 'win32'
+    const opts = {
+      title: '选择 Java 可执行文件（java.exe / java）',
+      filters: isWin
+        ? [
+            { name: 'Java 可执行文件', extensions: ['exe'] },
+            { name: '所有文件', extensions: ['*'] }
+          ]
+        : [{ name: '所有文件', extensions: ['*'] }],
+      properties: ['openFile' as const]
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths[0]) return null
+    java.addCustomJava(r.filePaths[0]) // 校验失败会抛出「这不是有效的 Java…」
+    return java.scanJava()
+  })
   ipcMain.handle(IPC.javaHide, (_e, p: string) => java.hideJava(String(p ?? '')))
   ipcMain.handle(IPC.javaRefresh, () => java.scanJava(true))
 

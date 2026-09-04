@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { addCustomJava, addFolder, errText, getSettings, hideJava, listFolders, listJava, migrateGameDir, onGameDirDone, refreshJava, removeFolder, saveSettings, selectDir, setActiveFolder, setDefaultFolder } from '../api'
+import { addCustomJava, addFolder, errText, getSettings, hideJava, listFolders, listJava, migrateGameDir, onGameDirDone, pickAddJava, refreshJava, removeFolder, saveSettings, selectDir, setActiveFolder, setDefaultFolder } from '../api'
 import { enterEditMode, progressOverall, refreshInstalled, store, toast } from '../store'
 import type { GameFolder, Settings } from '@shared/types'
 
@@ -186,14 +186,22 @@ async function onRefreshJava() {
 }
 
 async function onAddJava() {
-  const p = javaCustomInput.value.trim()
-  if (!p || javaAdding.value) return
+  if (javaAdding.value) return
   javaAdding.value = true
   javaAddError.value = ''
   try {
-    await addCustomJava(p)
-    javaCustomInput.value = ''
-    javas.value = await listJava()
+    const p = javaCustomInput.value.trim()
+    if (p) {
+      // 备选路径：手动输入完整路径（仍走 -version 校验）
+      await addCustomJava(p)
+      javaCustomInput.value = ''
+      javas.value = await listJava()
+    } else {
+      // 主路径：系统文件选择器定位 java.exe（空输入时点击「添加」即弹选择框）
+      const list = await pickAddJava()
+      if (!list) return // 用户取消选择
+      javas.value = list
+    }
     toast('已添加 Java', 'success')
   } catch (e) {
     javaAddError.value = errText(e)
@@ -547,12 +555,12 @@ function saveResolution() {
             </div>
           </div>
 
-          <!-- 手动添加 Java -->
+          <!-- 手动添加 Java：点「添加」弹文件选择器定位 java.exe（自动校验版本/位数）；也可粘贴完整路径后回车 -->
           <div class="java-add-row">
             <input
               v-model="javaCustomInput"
               class="input mono"
-              placeholder="手动添加 java 可执行文件完整路径…"
+              placeholder="粘贴 java 可执行文件完整路径回车添加，或留空点「添加」选择文件…"
               spellcheck="false"
               @keyup.enter="onAddJava"
             />

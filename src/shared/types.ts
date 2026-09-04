@@ -361,6 +361,7 @@ export const IPC = {
   javaList: 'java:list', // () => JavaInfo[]（5 分钟缓存）
   javaRefresh: 'java:refresh', // () => JavaInfo[]  强制重扫
   javaAddCustom: 'java:addCustom', // (path: string) => void  手动添加（校验 java -version）
+  javaPickAdd: 'java:pickAdd', // () => JavaInfo[] | null  文件选择器选 java.exe 并校验入库（取消 = null）
   javaHide: 'java:hide', // (path: string) => void  从列表隐藏
 
   // 游戏
