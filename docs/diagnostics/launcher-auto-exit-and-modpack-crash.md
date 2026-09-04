@@ -30,6 +30,13 @@
 - **高可信根因：** 原版客户端 JAR 未被 Forge/SecureJarHandler 的忽略列表排除，被当成自动模块 `_1._20._1`；它与 Forge 构造的 `minecraft` 模块同时导出 `net.minecraft.server`，在解析 `terra_entity` 依赖时发生重复导出冲突。这是**启动参数/模块路径生成错误**，触发条件是“自定义实例 ID 与继承的原版 client JAR 名不一致”，不是该整合包缺少 MOD。
 - **已排除：** 日志显示 Java 17.0.20.1、Forge 47.4.16、ModLauncher 10.0.9 已正常启动并枚举 MOD；Java 17 与 Minecraft 1.20.1/Forge 47 的组合合理。当前证据不支持 Java 版本不兼容、认证失败、网络失败、游戏目录缺失、原生库缺失或下载不完整。
 
+### 1.3 当前机器新增复现：Fabric 加载器实例
+
+- **已被 2026-09-04 实机日志证明：** 在关闭自动退出时，本机 `fabric-loader-0.19.5-1.21.10` 进程创建成功后以 code 1 退出。第一条有效异常是 `ExceptionInInitializerError`，根异常为 `IllegalStateException: duplicate ASM classes found on classpath`；冲突文件分别是 ASM 9.10.1 与 ASM 9.6 的 `ClassReader.class`。
+- **已被最终命令证明：** 同一 classpath 同时包含 Fabric profile 的 `org.ow2.asm:asm:9.10.1` 和继承原版 1.21.10 的 `org.ow2.asm:asm:9.6`。窗口参数覆盖已按预期生成 `--width 1024 --height 600`，异常发生在 Fabric `LoaderUtil.verifyClasspath`，早于游戏窗口初始化，因此与分辨率功能无因果关系。
+- **已被代码证明：** `launch.ts` 的 `resolveChain()` 使用 `chain.flatMap()` 拼接子、父版本全部 libraries；`versions.ts` 的 `collectLibraries()` 只按最终文件路径去重，不按 Maven `group:artifact[:classifier]` 冲突键处理。不同版本号对应不同路径，因此两个 ASM 均进入 classpath。
+- **分类：** 这是另一个确定性的**继承链 classpath 合并错误**。它与附件 Forge 包的 module/ignoreList 错误不是同一根因，也不能由修复 Forge 参数顺带宣称解决。
+
 ## 2. 证据来源与安全处理
 
 1. 用户提供的 `新建 文本文档.txt`：包含完整 Forge 1.20.1 启动命令与崩溃栈。分析时已将用户名、UUID、access token、用户主目录等视为敏感信息；本报告不复制这些字段。
@@ -170,6 +177,21 @@ java.lang.module.ResolutionException
 
 相关生成路径位于 `src/main/core/launch.ts`：版本 JSON JVM 参数经 `expandEntries(merged.arguments?.jvm)` 展开后直接加入最终参数。Forge 元数据中的 `${version_name}` 被实例显示/目录 ID 替换，但实际 client JAR 来自继承的 1.20.1 版本目录，两者不一致。
 
+### 6.4 Fabric 继承链的独立因果链（新增实机证据）
+
+```text
+java.lang.ExceptionInInitializerError
+  at net.fabricmc.loader.impl.launch.knot.KnotClient.main
+Caused by: java.lang.IllegalStateException:
+  duplicate ASM classes found on classpath:
+  .../org/ow2/asm/asm/9.10.1/asm-9.10.1.jar!/org/objectweb/asm/ClassReader.class
+  .../org/ow2/asm/asm/9.6/asm-9.6.jar!/org/objectweb/asm/ClassReader.class
+  at net.fabricmc.loader.impl.util.LoaderUtil.verifyClasspath
+  at net.fabricmc.loader.impl.launch.knot.Knot.<clinit>
+```
+
+这里的 `ExceptionInInitializerError` 是外层包装，`duplicate ASM classes` 才是根异常。该实例不是用户附件中的整合包，所以它不能补齐附件整合包的 2×2 矩阵；它只证明当前版本继承合并还存在一条可独立复现的 Loader 闪退路径。
+
 ## 7. 与纯净版的关键差异
 
 | 项目 | 纯净 1.21.11 | 附件 Forge 整合包 |
@@ -201,6 +223,10 @@ java.lang.module.ResolutionException
 在生成最终 Forge JVM 参数时，按实际解析出的 `clientJar` 基名补全/修正 `-DignoreList`，而不是假定 `${version_name}.jar` 就是原版 client JAR。应保留 Forge 元数据原有条目，并去重加入真实文件名；测试覆盖中文/空格实例名、继承版本、多级继承及原名实例。
 
 影响范围主要是 Forge/NeoForge JVM 参数生成。风险是误改非 Forge 参数或重复注入，因此应仅处理已有 `-DignoreList=` 的参数并以精确逗号项匹配。
+
+### 8.3 Fabric/Quilt 继承库冲突
+
+按 Maven 冲突键 `group:artifact[:classifier]` 合并版本链 libraries，并保持“子 profile 覆盖父版本”的顺序；natives 仍需按平台 classifier 独立保留。不能简单按文件名或删除所有旧版本 JAR，因为同 group 下不同 artifact 可以合法共存。修复前后应对实际 Fabric/Quilt profile 快照 classpath，断言 ASM 等覆盖库只保留 Loader 指定版本，并实际启动到客户端初始化阶段。
 
 ## 9. 修复后的验收方法
 
