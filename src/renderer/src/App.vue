@@ -29,6 +29,7 @@ import type {
   YggdrasilProviderInput
 } from '@shared/types'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
+import { readableCustomColors } from '@shared/themeContrast'
 import { managedImageUrl } from './managedAssets'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
@@ -695,7 +696,7 @@ function clearCustomVars() {
 /** 把 settings.custom 映射为 documentElement 上的 inline CSS 变量覆盖 */
 function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   const st = document.documentElement.style
-  const { colors } = custom
+  const colors = theme === 'custom' ? readableCustomColors(custom.colors) : custom.colors
   const accent = colors.accent
   const dark = hexLuminance(colors.bg) < 0.46
   const transparent = theme === 'transparent'

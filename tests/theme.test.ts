@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { THEME_PRESETS, normalizeThemeName } from '../src/shared/types'
+import { readableCustomColors, colorContrast } from '../src/shared/themeContrast'
 
 function channel(value: number): number {
   const normalized = value / 255
@@ -52,4 +53,15 @@ test('五套固定色板齐全且正文、次要文字具有可读对比度', ()
   assert.equal(THEME_PRESETS['black-pink'].label, '粉黑')
   assert.equal(THEME_PRESETS['white-pink'].label, '粉白')
   assert.equal(THEME_PRESETS.transparent.label, '默认 · 透明')
+})
+
+test('个性化旧色板低对比与明暗混用仅在渲染时修正，不覆盖原始配置', () => {
+  const original = { ...THEME_PRESETS['black-pink'].colors, card:'#ffffff', sidebarText:'#30192c', textDim:'#302030' }
+  const before = { ...original }
+  const result = readableCustomColors(original)
+  assert.deepEqual(original, before)
+  assert.equal(result.accent, original.accent)
+  assert.ok(colorContrast(result.text, result.card) >= 4.5)
+  assert.ok(colorContrast(result.textDim, result.card) >= 4.5)
+  assert.ok(colorContrast(result.sidebarText, result.sidebarBg) >= 4.5)
 })

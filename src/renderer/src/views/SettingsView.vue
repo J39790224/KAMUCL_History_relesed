@@ -19,13 +19,15 @@ import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
 const page = ref<HTMLElement | null>(null)
 async function revealSection() {
   await nextTick()
+  if (!store.settingsSection) return
   const target = page.value?.querySelector<HTMLElement>(`[data-section="${store.settingsSection}"]`)
   if (!target) return
   target.scrollIntoView({ block: 'start', behavior: 'instant' })
   target.focus({ preventScroll: true })
+  store.settingsSection = ''
 }
 onMounted(revealSection)
-watch(() => [store.settingsSection, !!store.settings], revealSection, { flush: 'post' })
+watch([() => store.settingsSection, () => !!store.settings], revealSection, { flush: 'post' })
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
