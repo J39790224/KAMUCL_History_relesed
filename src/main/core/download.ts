@@ -152,12 +152,21 @@ export async function downloadFile(
   const alt = mirrorUrl(url, 'bmclapi')
   const candidates = [...new Set(mirror === 'bmclapi' ? [alt, url] : [url, alt])]
 
+  // 单文件进度单调：官方/镜像重试时 received 不重置（防进度条回跳）
+  let maxReceived = 0
+  const monoOnProgress: ProgressFn | undefined = onProgress
+    ? (received, total) => {
+        maxReceived = Math.max(maxReceived, received)
+        onProgress(maxReceived, total)
+      }
+    : undefined
+
   let lastErr: unknown = null
   for (let attempt = 0; attempt < 3; attempt++) {
     if (extSignal?.aborted) throw new Error('已取消')
     const u = candidates[attempt % candidates.length]
     try {
-      await doDownload(u, dest, onProgress, extSignal)
+      await doDownload(u, dest, monoOnProgress, extSignal)
       if (sha1) {
         const h = await sha1Of(dest)
         if (h !== sha1.toLowerCase()) {

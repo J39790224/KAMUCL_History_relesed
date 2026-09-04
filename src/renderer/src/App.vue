@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, onTaskDone, probeModpack, selectFile, cancelTask } from './api'
-import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, stageLabel, store, toast, upsertTaskProgress } from './store'
+import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, resetProgressMono, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
 import Toasts from './components/Toasts.vue'
@@ -288,6 +288,12 @@ async function onCancelTask(id: string) {
   }
 }
 
+/** 任务副标题：阶段标签与进度文本重复时只显示一次 */
+function taskSubText(t: { stage: string; text: string }): string {
+  const label = stageLabel(t.stage)
+  return t.text.startsWith(label) ? t.text : `${label} · ${t.text}`
+}
+
 function fmtNoticeTime(ts: number): string {
   const d = new Date(ts)
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -461,12 +467,14 @@ onMounted(async () => {
     }),
     onTaskDone((r) => {
       finalizeTask(r)
+      resetProgressMono(r.taskId)
       if (r.cancelled) toast('任务已取消', 'info')
     }),
     onInstallDone((r) => {
       store.installing.delete(r.versionId)
       store.progress = null
       finalizeTask(r)
+      resetProgressMono(r.taskId)
       if (r.ok) {
         store.failedInstalls.delete(r.versionId)
         toast(`版本 ${r.versionId} 安装完成`, 'success')
@@ -482,6 +490,7 @@ onMounted(async () => {
     // 游戏目录迁移完成：立即全局刷新（版本列表/最近游戏/资源管理），全程无需重启
     onGameDirDone((r) => {
       store.progress = null
+      resetProgressMono()
       if (r.ok) {
         void refreshInstalled().then(() => {
           store.fsRefreshTick++
@@ -726,7 +735,7 @@ onUnmounted(() => {
                 </div>
                 <div class="dl-sub muted">
                   <template v-if="t.status === 'running'">
-                    {{ stageLabel(t.stage) }} · {{ t.text }} · {{ Math.round(t.progress * 100) }}%
+                    {{ taskSubText(t) }} · {{ Math.round(t.progress * 100) }}%
                   </template>
                   <template v-else-if="t.status === 'done'">已完成</template>
                   <template v-else-if="t.status === 'cancelled'">已取消</template>

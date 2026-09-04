@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { addCustomJava, addFolder, errText, getSettings, hideJava, listFolders, listJava, migrateGameDir, onGameDirDone, pickAddJava, refreshJava, removeFolder, saveSettings, selectDir, setActiveFolder, setDefaultFolder } from '../api'
-import { enterEditMode, progressOverall, refreshInstalled, store, toast } from '../store'
+import { enterEditMode, progressMono, refreshInstalled, store, toast } from '../store'
 import type { GameFolder, Settings } from '@shared/types'
 
 // ---------------- 保存 ----------------
@@ -25,7 +25,7 @@ const migrateModal = reactive({
 /** 迁移进度（复用全局 progress 事件 stage=migrate） */
 const migratingProgress = computed(() =>
   migrateModal.migrating && store.progress?.stage === 'migrate'
-    ? `${store.progress.text} ${Math.round(progressOverall(store.progress) * 100)}%`
+    ? `${store.progress.text} ${Math.round(progressMono(store.progress) * 100)}%`
     : ''
 )
 

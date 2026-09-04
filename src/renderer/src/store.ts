@@ -159,7 +159,7 @@ export function upsertTaskProgress(e: ProgressEvent) {
   if (t.status !== 'running') return // 已终态不再更新
   t.stage = e.stage
   t.text = e.text
-  t.progress = e.progress
+  t.progress = progressMono(e)
   t.speed = e.speed
 }
 
@@ -395,6 +395,27 @@ export function progressOverall(e: ProgressEvent): number {
   const idx = i < 0 ? 0 : i
   const p = Math.max(0, Math.min(1, e.progress))
   return Math.min(1, (idx + p) / STAGE_ORDER.length)
+}
+
+// ---------------- 整体进度单调守护 ----------------
+// 阶段切换（如 loader 前置事件早于 vanilla 阶段）与单文件重试会造成整体进度回跳，
+// 同一任务内对换算后的整体进度取历史最大值，保证进度条单调递增
+const monoMap = new Map<string, number>()
+
+/** 单调递增的整体进度（0-1）：同一 taskId（无 taskId 时按全局序列）内只增不减 */
+export function progressMono(e: ProgressEvent): number {
+  const key = e.taskId ?? '__global__'
+  const cur = progressOverall(e)
+  const prev = monoMap.get(key) ?? 0
+  const next = Math.max(prev, cur)
+  monoMap.set(key, next)
+  return next
+}
+
+/** 任务终态/新任务开始时重置守护（installDone/taskDone/gameDirDone 时调用） */
+export function resetProgressMono(taskId?: string) {
+  if (taskId) monoMap.delete(taskId)
+  else monoMap.clear()
 }
 
 /** 最后启动时间 -> 「今天 / 昨天 / x天前」，无记录返回 '—' */export function fmtLastPlayed(ts?: number): string {

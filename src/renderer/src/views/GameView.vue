@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { cleanupPartialInstall, errText, formatSpeed, getManifest, getSettings, installVersion, listFabricApi, listJava, listLoaders, openDir, removeVersion, renameVersion, saveSettings, setVersionIsolation, setVersionJava } from '../api'
-import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressOverall, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
+import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import IconPickerModal from '../components/IconPickerModal.vue'
 import type {
@@ -64,20 +64,22 @@ const typeTagClass = (t: RemoteVersion['type']) =>
 
 const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
 
-/** 阶段计时：阶段切换时重置，用于剩余时间估算 */
+/** 任务级计时：进度从 null 变为非 null（新任务开始）时重置，用于剩余时间估算 */
 const stageStart = ref(0)
 watch(
-  () => store.progress?.stage,
-  () => {
-    stageStart.value = Date.now()
+  () => store.progress,
+  (p, prev) => {
+    if (p && !prev) stageStart.value = Date.now()
   }
 )
-/** 剩余时间估算（基于阶段内进度速率；>3s 才显示避免抖动） */
+/** 剩余时间估算（基于单调整体进度；>3s 才显示避免抖动，阶段切换不再乱跳） */
 const etaText = computed(() => {
   const p = store.progress
-  if (!p || !stageStart.value || p.progress <= 0.02 || p.progress >= 1) return ''
+  if (!p || !stageStart.value) return ''
+  const overall = progressMono(p)
+  if (overall <= 0.02 || overall >= 1) return ''
   const elapsed = (Date.now() - stageStart.value) / 1000
-  const eta = (elapsed * (1 - p.progress)) / p.progress
+  const eta = (elapsed * (1 - overall)) / overall
   return eta > 3 ? `约剩 ${Math.round(eta)}s` : ''
 })
 
@@ -531,10 +533,10 @@ async function onToggleIsolation(v: InstalledVersion) {
           <div class="version-actions">
             <div v-if="store.installing.has(v.id) && store.progress" class="row-progress">
               <div class="row-bar">
-                <div class="row-bar-fill" :style="{ width: Math.round(progressOverall(store.progress) * 100) + '%' }"></div>
+                <div class="row-bar-fill" :style="{ width: Math.round(progressMono(store.progress) * 100) + '%' }"></div>
               </div>
               <span class="muted row-progress-text">
-                {{ Math.round(progressOverall(store.progress) * 100) }}%
+                {{ Math.round(progressMono(store.progress) * 100) }}%
                 {{ store.progress.speed ? '· ' + formatSpeed(store.progress.speed) : '' }}
                 {{ etaText ? '· ' + etaText : '' }}
                 {{ store.progress.source ? '· ' + store.progress.source : '' }}
@@ -567,10 +569,10 @@ async function onToggleIsolation(v: InstalledVersion) {
           </div>
           <div v-if="store.progress" class="row-progress">
             <div class="row-bar">
-              <div class="row-bar-fill" :style="{ width: Math.round(progressOverall(store.progress) * 100) + '%' }"></div>
+              <div class="row-bar-fill" :style="{ width: Math.round(progressMono(store.progress) * 100) + '%' }"></div>
             </div>
             <span class="muted row-progress-text">
-              {{ Math.round(progressOverall(store.progress) * 100) }}%
+              {{ Math.round(progressMono(store.progress) * 100) }}%
               {{ store.progress.speed ? '· ' + formatSpeed(store.progress.speed) : '' }}
             </span>
           </div>
