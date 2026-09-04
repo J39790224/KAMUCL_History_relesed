@@ -293,15 +293,14 @@ const skinVariant = computed<SkinVariant>(() =>
   currentSkin.value?.variant === 'slim' ? 'slim' : 'classic'
 )
 
-function reloadSkin() { return trackBootTask(reloadSkinImpl) }
-async function reloadSkinImpl() {
+function reloadSkin(refresh = false) { return trackBootTask(() => reloadSkinImpl(refresh)) }
+async function reloadSkinImpl(refresh = false) {
   const request = ++skinRequestToken
   skinError.value = ''
-  skinProfile.value = null
-  if (!store.selectedAccount) return
+  if (!store.selectedAccount) { skinProfile.value = null; skinLoading.value = false; return }
   skinLoading.value = true
   try {
-    const profile = await getSkinProfile()
+    const profile = await getSkinProfile(refresh)
     if (request === skinRequestToken) skinProfile.value = profile
   } catch (error) {
     if (request === skinRequestToken) skinError.value = errText(error)
@@ -312,7 +311,7 @@ async function reloadSkinImpl() {
 
 watch(
   () => store.selectedAccount?.id,
-  () => void reloadSkin()
+  () => { skinProfile.value = null; void reloadSkin() }
 )
 
 // ---------------- 我的实例与菜单 ----------------
@@ -582,7 +581,7 @@ onUnmounted(() => {
       <section class="skin-panel" data-edit="card">
         <div class="skin-head">
           <div><h3>皮肤预览</h3><span>{{ currentSkin ? (skinVariant === 'slim' ? '纤细模型' : '经典模型') : '动态角色' }}</span></div>
-          <button class="skin-refresh" :disabled="skinLoading || !store.selectedAccount" title="刷新皮肤" @click="reloadSkin">
+          <button class="skin-refresh" :disabled="skinLoading || !store.selectedAccount" title="联网刷新皮肤（默认使用本地缓存）" @click="reloadSkin(true)">
             <svg :class="{ spinning: skinLoading }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6.1 9A7 7 0 0 1 18 6l2 1M4 17l2 1a7 7 0 0 0 11.9-3" /></svg>
           </button>
         </div>
@@ -591,7 +590,7 @@ onUnmounted(() => {
           <SkinViewer3D :src="skinSrc" :variant="skinVariant" />
           <div v-if="skinLoading" class="skin-overlay"><span class="spin"></span><span>正在加载皮肤…</span></div>
           <button v-else-if="!store.selectedAccount" class="skin-overlay action" @click="store.currentView = 'accounts'">登录后加载角色皮肤</button>
-          <button v-else-if="skinError" class="skin-overlay action error" :title="skinError" @click="reloadSkin">皮肤加载失败，点击重试</button>
+          <button v-else-if="skinError" class="skin-overlay action error" :title="skinError" @click="reloadSkin(true)">皮肤加载失败，点击重试</button>
         </div>
         <button class="skin-tip" @click="store.currentView = store.selectedAccount ? 'skins' : 'accounts'">
           拖动可旋转 · 行走动画

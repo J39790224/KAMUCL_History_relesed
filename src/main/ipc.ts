@@ -628,7 +628,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   )
 
   // ---------------- 皮肤/披风（同步 await 返回，错误经 invoke reject 给前端） ----------------
-  ipcMain.handle(IPC.skinProfile, () => skins.getProfile())
+  ipcMain.handle(IPC.skinProfile, (_event, refresh?: boolean) => skins.getProfile(refresh === true))
   ipcMain.handle(IPC.skinUpload, (_e, filePath: string, variant: SkinVariant) =>
     skins.uploadSkin(String(filePath ?? ''), variant)
   )

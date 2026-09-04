@@ -18,6 +18,9 @@ import type {
 import { accountById, getValidAccount, selectedAccount } from './accounts'
 import { gameDir } from './paths'
 import { externalProfile } from './yggdrasil'
+import { SkinProfileCache } from './skinProfileCache'
+import type { Account } from '../../shared/types'
+const profileCache = new SkinProfileCache(() => path.join(app.getPath('userData'), 'skin-cache'))
 
 const API = 'https://api.minecraftservices.com'
 /** 历史皮肤上限，超出删除最旧 */
@@ -97,15 +100,15 @@ function validateSkinPng(filePath: string): Buffer {
  * 重试 2 次；最终失败返回 undefined 并写日志，不阻断主流程。
  */
 async function fetchDataUrl(url: string): Promise<string | undefined> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(30000) })
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const buf = Buffer.from(await res.arrayBuffer())
       if (!buf.length) throw new Error('空响应')
       return `data:image/png;base64,${buf.toString('base64')}`
     } catch (e) {
-      if (attempt === 2) {
+      if (attempt === 1) {
         console.error(`[KAMUCL] 皮肤纹理下载失败(${url}):`, e instanceof Error ? e.message : e)
         appendLauncherLog(`皮肤纹理下载失败(${url}): ${e instanceof Error ? e.message : e}`)
       }
@@ -130,9 +133,14 @@ function appendLauncherLog(line: string): void {
 }
 
 /** 拉取当前账号皮肤/披风档案 */
-export async function getProfile(): Promise<ProfileSkins> {
-  const account = selectedAccount()
+export async function getProfile(refresh = false, accountId?: string): Promise<ProfileSkins> {
+  const account = accountId ? accountById(accountId) : selectedAccount()
   if (!account) throw new Error('请先选择账号')
+  const key = JSON.stringify([account.type, account.id, account.uuid, account.providerId, account.apiRoot])
+  return profileCache.get(key, () => fetchProfile(account), refresh)
+}
+
+async function fetchProfile(account: Account): Promise<ProfileSkins> {
   if (account.type === 'offline') {
     // 离线账号没有官方档案；复用头像服务的公开用户名皮肤接口给首页 3D 预览。
     // 请求失败时返回空皮肤列表，由渲染器显示本地生成的可动画角色，不阻断首页。
@@ -157,7 +165,8 @@ export async function getProfile(): Promise<ProfileSkins> {
     ])
     return profile
   }
-  const token = await requireMcToken()
+  const token = (await getValidAccount(account)).accessToken
+  if (!token) throw new Error('登录状态已失效，请重新登录')
   const res = await fetch(`${API}/minecraft/profile`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(30000)
@@ -197,56 +206,10 @@ export async function getProfile(): Promise<ProfileSkins> {
 
 // ---------------- 方块头像 ----------------
 
-/** 头像内存缓存：accountId -> { data, time }，5 分钟有效；账号切换因 id 不同自然失效 */
-const avatarCache = new Map<string, { data: string | null; time: number }>()
-const AVATAR_TTL = 5 * 60 * 1000
-
-/**
- * 当前选中账号的头像数据：
- * - 微软账号：拉取档案，取 ACTIVE 皮肤（或 skins[0]）纹理 dataURL（整皮肤 PNG，
- *   头部裁剪由前端 canvas 完成，主进程无 canvas）
- * - 离线账号：minotar 公共头像（任意名字均返回 Steve 风格头盔像素头像）
- * - 无账号 / 任何失败：null（前端兜底首字母头像）
- */
+/** 头像与 3D 预览共享同一份账户级磁盘纹理缓存。 */
 export async function getAvatar(accountId?: string): Promise<string | null> {
-  const acc = accountId ? accountById(accountId) : selectedAccount()
-  if (!acc) return null
-  const hit = avatarCache.get(acc.id)
-  if (hit && Date.now() - hit.time < AVATAR_TTL) return hit.data
-
-  let data: string | null = null
-  try {
-    if (acc.type === 'microsoft') {
-      const valid = await getValidAccount(acc)
-      if (valid.accessToken) {
-        const res = await fetch(`${API}/minecraft/profile`, {
-          headers: { Authorization: `Bearer ${valid.accessToken}` },
-          signal: AbortSignal.timeout(30000)
-        })
-        if (res.ok) {
-          const json = (await res.json()) as {
-            skins?: { state?: string; url?: string }[]
-          }
-          const list = (json.skins ?? []).filter((s) => typeof s.url === 'string' && !!s.url)
-          const skin = list.find((s) => s.state === 'ACTIVE') ?? list[0]
-          if (skin?.url) data = (await fetchDataUrl(skin.url)) ?? null
-        }
-      }
-    } else if (acc.type === 'yggdrasil') {
-      const valid = await getValidAccount(acc)
-      const profile = await externalProfile(valid)
-      const skin = profile.skins[0]
-      if (skin?.url) data = (await fetchDataUrl(skin.url)) ?? null
-    } else {
-      const url = `https://minotar.net/helm/${encodeURIComponent(acc.username)}/64.png`
-      data = (await fetchDataUrl(url)) ?? null
-    }
-  } catch {
-    data = null
-  }
-  // 短暂网络故障不会抹掉已成功加载的头像。
-  if (data) avatarCache.set(acc.id, { data, time: Date.now() })
-  return data ?? hit?.data ?? null
+  try { return (await getProfile(false, accountId)).skins[0]?.dataUrl ?? null }
+  catch { return null }
 }
 
 /** 上传皮肤（multipart/form-data），成功后写入本地历史并返回最新档案 */
@@ -270,7 +233,7 @@ export async function uploadSkin(filePath: string, variant: SkinVariant): Promis
   })
   if (!res.ok) throw await apiError(res, '皮肤上传失败')
   saveHistory(buf, variant)
-  return await getProfile()
+  return await getProfile(true)
 }
 
 /** 激活披风（PUT {capeId}）；传 null 卸下（DELETE） */
@@ -294,7 +257,7 @@ export async function changeCape(capeId: string | null): Promise<ProfileSkins> {
           signal: AbortSignal.timeout(30000)
         })
   if (!res.ok) throw await apiError(res, '披风更换失败')
-  return await getProfile()
+  return await getProfile(true)
 }
 
 // ---------------- 历史皮肤 ----------------

@@ -210,7 +210,7 @@ export const hideJava = (path: string) => invoke<void>(IPC.javaHide, path)
 
 // ---------------- 皮肤/披风 ----------------
 /** 当前微软账号的皮肤/披风档案 */
-export const getSkinProfile = () => invoke<ProfileSkins>(IPC.skinProfile)
+export const getSkinProfile = (refresh = false) => invoke<ProfileSkins>(IPC.skinProfile, refresh)
 /** 上传皮肤（64×64 PNG），返回最新档案 */
 export const uploadSkin = (filePath: string, variant: SkinVariant) =>
   invoke<ProfileSkins>(IPC.skinUpload, filePath, variant)
