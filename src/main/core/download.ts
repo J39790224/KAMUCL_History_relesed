@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { once } from 'node:events'
+import { downloadLimiter } from './downloadLimits'
 import {
   abortableDelay,
   inheritTaskControl,
@@ -286,6 +287,10 @@ async function doDownload(
         const { done, value } = await reader.read()
         if (done) break
         if (value && value.byteLength > 0) {
+          clearInactivity()
+          await downloadLimiter.consume(value.byteLength, extSignal)
+          await waitIfTaskPaused(extSignal)
+          extSignal?.throwIfAborted()
           received += value.byteLength
           if (!ws.write(value)) await once(ws, 'drain')
           onProgress?.(received, total)
@@ -371,13 +376,16 @@ export async function downloadFile(
     for (let attempt = 0; attempt < 3; attempt++) {
       if (extSignal?.aborted) throw new Error('已取消')
       try {
-        const transfer = await doDownload(
+        const releaseSlot = await downloadLimiter.acquire(extSignal)
+        const transfer = await (async () => {
+          try { return await doDownload(
           candidate,
           dest,
           monoOnProgress,
           extSignal,
           expected.size
-        )
+          ) } finally { releaseSlot() }
+        })()
         const invalid = await verifyFile(transfer.tmp, expected, extSignal)
         if (invalid) {
           fs.rmSync(transfer.tmp, { force: true })

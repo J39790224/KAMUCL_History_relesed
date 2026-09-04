@@ -1,6 +1,7 @@
 import './download-cancellation.test'
 import './download-policy.test'
 import './download-progress.test'
+import './download-limits.test'
 import './diagnostics.test'
 import './folder-paths.test'
 import './game-window.test'

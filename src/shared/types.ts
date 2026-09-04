@@ -373,6 +373,10 @@ export interface Settings {
   jvmArgs: string
   resolution: GameResolution
   mirror: 'official' | 'bmclapi'
+  /** 跨所有任务的 HTTP 并发上限。 */
+  downloadThreads: number
+  /** 合计限速（KiB/s），0 = 不限速。 */
+  downloadSpeedKBps: number
   /** 新版本安装后默认开启版本隔离（独立游戏目录），可在设置中关闭 */
   defaultIsolation: boolean
   /** 微软登录用的 Azure 应用 client_id（device code flow） */
@@ -581,6 +585,7 @@ export const IPC = {
   foldersSetActive: 'folders:setActive', // (path: string) => void  切换活动文件夹（gameDir 跟随）
   foldersScan: 'folders:scan', // (path: string) => FolderScanResult
   foldersOpen: 'folders:open', // (path: string) => void
+  foldersContextMenu: 'folders:contextMenu',
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetResolution: 'versions:setResolution', // (id: string, resolution: GameResolution | null) => void  null = 跟随全局
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）

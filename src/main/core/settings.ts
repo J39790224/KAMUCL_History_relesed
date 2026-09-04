@@ -5,6 +5,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Settings } from '../../shared/types'
+import { DEFAULT_DOWNLOAD_LIMITS, downloadLimiter, validateDownloadLimits } from './downloadLimits'
 import {
   DEFAULT_BACKGROUND,
   DEFAULT_CUSTOM_THEME,
@@ -44,6 +45,7 @@ function defaults(): Settings {
     jvmArgs: '',
     resolution: { width: 854, height: 480, mode: 'windowed', fullscreen: false },
     mirror: 'bmclapi',
+    ...DEFAULT_DOWNLOAD_LIMITS,
     defaultIsolation: true,
     msClientId: DEFAULT_MS_CLIENT_ID,
     theme: 'transparent',
@@ -88,6 +90,8 @@ export function getSettings(): Settings {
         def.activeFolder
     }
     const c = cached
+    try { validateDownloadLimits(c) } catch { Object.assign(c, DEFAULT_DOWNLOAD_LIMITS) }
+    downloadLimiter.configure(c)
     c.theme = normalizeThemeName(raw.theme)
     c.background.fit = ['fill', 'fit', 'crop'].includes(c.background.fit)
       ? c.background.fit
@@ -134,6 +138,7 @@ export function getSettings(): Settings {
 /** 合并 patch 并写盘，返回合并后的完整 Settings */
 export function saveSettings(patch: Partial<Settings>): Settings {
   const cur = getSettings()
+  validateDownloadLimits({ ...cur, ...patch })
   if (
     patch.background?.fit !== undefined &&
     !['fill', 'fit', 'crop'].includes(patch.background.fit)
@@ -198,6 +203,7 @@ export function saveSettings(patch: Partial<Settings>): Settings {
     throw new Error(`设置写入失败：${error instanceof Error ? error.message : String(error)}`)
   }
   cached = merged
+  if (patch.downloadThreads !== undefined || patch.downloadSpeedKBps !== undefined) downloadLimiter.configure(merged)
   return merged
 }
 
