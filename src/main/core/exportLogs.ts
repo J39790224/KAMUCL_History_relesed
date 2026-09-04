@@ -9,6 +9,7 @@ import { getSettings } from './settings'
 import { gameDir } from './paths'
 import { readVersionJson, listAllInstalled } from './versions'
 import { getLastLaunch } from './launch'
+import { instanceDirectoryState } from './instances'
 import { selectedAccount } from './accounts'
 import { launcherLogPath } from './launcherLog'
 import {
@@ -149,21 +150,22 @@ export async function exportLaunchLogs(
   const vid = versionId || last?.versionId || 'unknown'
   const item = installed.find((value) => value.id === vid)
   const folder = item?.folder || gameDir()
-  const versionRoot = path.join(folder, 'versions', vid)
-  let isolated = item?.isolated === true
-  if (!item) {
-    try {
-      isolated = readVersionJson(vid)._gameDir === true
-    } catch {
-      // 使用默认值。
-    }
+  let directoryState = item
+    ? {
+        path: item.gameDirectory || folder,
+        isolated: item.isolated === true
+      }
+    : { path: folder, isolated: false }
+  try {
+    directoryState = instanceDirectoryState(vid, readVersionJson(vid))
+  } catch {
+    // 版本 JSON 缺失时使用已扫描出的目录信息。
   }
   const effectiveGameDir =
     last?.versionId === vid && last.effectiveGameDir
       ? last.effectiveGameDir
-      : isolated
-        ? versionRoot
-        : folder
+      : directoryState.path
+  const isolated = directoryState.isolated
   const now = new Date()
   const defName = `KAMUCL-Diagnostic-${safeDiagnosticFilePart(item?.mcVersion || vid)}-${fmtStamp(now)}.zip`
   const opts = {

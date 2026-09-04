@@ -16,6 +16,7 @@ import type {
   GameFolder,
   InstallOptions,
   InstalledVersion,
+  IsolationMigrationPlan,
   JavaInfo,
   LaunchState,
   LoaderName,
@@ -109,6 +110,8 @@ export const scanFolder = (path: string) => invoke<FolderScanResult>(IPC.folders
 export const openGameFolder = (path: string) => invoke<void>(IPC.foldersOpen, path)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
+export const getIsolationPlan = (id: string) =>
+  invoke<IsolationMigrationPlan>(IPC.versionsIsolationPlan, id)
 /** 设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认） */
 export const setVersionIcon = (id: string, icon: string) =>
   invoke<void>(IPC.versionsSetIcon, id, icon)

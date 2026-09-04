@@ -8,7 +8,7 @@ import path from 'node:path'
 import AdmZip from 'adm-zip'
 import type { LoaderName, ModCrossDuplicate, ModDuplicateGroup, ModInfo } from '../../shared/types'
 import { readVersionJson } from './versions'
-import { gameDir, versionDir } from './paths'
+import { instanceDirectoryState } from './instances'
 
 // ---------------- TOML 极简解析（按行，仅够提取 mods.toml 字段） ----------------
 
@@ -367,12 +367,7 @@ export function expandJarPaths(paths: string[]): { files: string[]; skipped: str
 
 /** �汾 mods Ŀ¼����ѭ�汾���룩 */
 function modsDirOf(versionId: string): string {
-  try {
-    if (readVersionJson(versionId)._gameDir === true) return path.join(versionDir(versionId), 'mods')
-  } catch {
-    /* ������Ŀ¼ */
-  }
-  return path.join(gameDir(), 'mods')
+  return path.join(instanceDirectoryState(versionId, readVersionJson(versionId)).path, 'mods')
 }
 
 /** MOD �汾�űȽϣ����ֶαȽϣ����Ժ�׺�� */

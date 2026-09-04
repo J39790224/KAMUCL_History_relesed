@@ -29,7 +29,7 @@ import * as launch from './core/launch'
 import * as servers from './core/servers'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
-import { folderOfVersion, instanceIconsDir, versionDir } from './core/paths'
+import { folderOfVersion, instanceIconsDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -45,6 +45,7 @@ import { exportLaunchLogs } from './core/exportLogs'
 import { ProgressEventGuard } from './core/progress'
 import { launcherLog } from './core/launcherLog'
 import * as gameFolders from './core/gameFolders'
+import * as instances from './core/instances'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -131,7 +132,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
           // 设置项生效：新版本默认开启版本隔离（整合包实例本身强制隔离，无需处理）
           try {
             if (settings.getSettings().defaultIsolation) {
-              versions.setIsolation(installedId, true)
+              instances.setNewInstanceIsolation(installedId, true)
             }
           } catch (e) {
             console.error('[KAMUCL] 默认隔离设置失败:', e)
@@ -252,6 +253,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   })
   ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
     versions.setIsolation(String(versionId ?? ''), isolated === true)
+  )
+  ipcMain.handle(IPC.versionsIsolationPlan, (_e, versionId: string) =>
+    instances.isolationMigrationPlan(String(versionId ?? ''))
   )
   ipcMain.handle(IPC.loadersList, (_e, loader: LoaderName, mcVersion: string) =>
     loaders.listLoaderVersions(loader, mcVersion)
@@ -487,14 +491,10 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     modinfo.findCrossDuplicates(Array.isArray(versionIds) ? versionIds.map(String) : [])
   )
 
-  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {    const vid = String(targetVersionId ?? '')
-    // 版本隔离时装入版本独立 mods 目录，否则共享目录
-    let base = settings.getSettings().gameDir
-    try {
-      if (versions.readVersionJson(vid)._gameDir === true) base = versionDir(vid)
-    } catch {
-      /* json 读取失败按共享目录 */
-    }
+  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {
+    const vid = String(targetVersionId ?? '')
+    // 与启动器最终 --gameDir 共用目录判定，防止 MOD 安装到错误实例。
+    const base = instances.instanceDirectoryState(vid, versions.readVersionJson(vid)).path
     const modsDir = path.join(base, 'mods')
     fs.mkdirSync(modsDir, { recursive: true })
     return (Array.isArray(files) ? files : []).map((f) => {

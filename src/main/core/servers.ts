@@ -80,17 +80,11 @@ interface DatServer {
 
 import { buildServersDat, parseNbt } from './nbt'
 import { listInstalled, readVersionJson } from './versions'
-import { gameDir, versionDir } from './paths'
-import { getSettings } from './settings'
+import { instanceDirectoryState } from './instances'
 
 /** 版本的 servers.dat 所在目录（遵循版本隔离与多文件夹） */
 function serverGameDir(versionId: string): string {
-  try {
-    if (readVersionJson(versionId)._gameDir === true) return versionDir(versionId)
-  } catch {
-    /* 按共享目录 */
-  }
-  return gameDir()
+  return instanceDirectoryState(versionId, readVersionJson(versionId)).path
 }
 
 /** 读取某版本的 servers.dat（不存在返回空数组） */

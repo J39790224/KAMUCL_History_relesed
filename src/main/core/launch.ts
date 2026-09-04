@@ -17,7 +17,6 @@ import {
   gameDir,
   librariesDir,
   nativesDir,
-  versionDir,
   versionJarPath,
   versionJsonPath,
   virtualLegacyDir
@@ -33,6 +32,7 @@ import {
   type VersionJson
 } from './versions'
 import { downloadAll } from './download'
+import { instanceDirectoryState } from './instances'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 export type SendLog = (line: string) => void
@@ -221,10 +221,9 @@ export async function launch(
     emit({ stage: 'repair', progress: 1, text: '文件补全完成' })
   }
 
-  // a0.1) 实例隔离：入口版本 json 带 _gameDir 时（整合包实例），
-  // 本次启动的游戏目录 = 版本目录（mods/存档/配置互不影响）；assets 仍用全局共享目录
-  const effectiveGameDir =
-    readVersionJson(versionId)._gameDir === true ? versionDir(versionId) : gameDir()
+  // a0.1) 启动与管理页面共用同一个目录判定，避免配置路径、整合包和已存在
+  // 独立内容在 UI 与最终 --gameDir 之间出现分歧；assets 仍使用全局共享目录。
+  const effectiveGameDir = instanceDirectoryState(versionId, readVersionJson(versionId)).path
   fs.mkdirSync(effectiveGameDir, { recursive: true })
 
   // 默认中文：仅在 options.txt 不存在时写入（绝不覆盖玩家已有设置）

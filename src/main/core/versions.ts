@@ -22,6 +22,7 @@ import {
 import { getSettings } from './settings'
 import { abortableDelay, throwIfCancelled } from './tasks'
 import { createWeightedProgressEmit, VERSION_INSTALL_STAGE_RANGES } from './progress'
+import { applyIsolation, instanceDirectoryState } from './instances'
 import {
   allVersionsDirs,
   assetIndexPath,
@@ -100,6 +101,9 @@ export interface VersionJson {
   _loaderVersion?: string
   /** KAMUCL 自定义字段：实例隔离（启动时游戏目录 = 本版本目录） */
   _gameDir?: boolean
+  /** 兼容已有实例描述的显式游戏目录。 */
+  gameDirectory?: string
+  _gameDirectory?: string
   /** KAMUCL 自定义字段：来源整合包名称/版本 */
   _modpackName?: string
   _modpackVersion?: string
@@ -644,7 +648,10 @@ export function scanInstalledFolder(folder: string): {
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
       if (j._javaPath) item.javaPath = j._javaPath
       if (j._icon) item.icon = j._icon
-      if (j._gameDir === true) item.isolated = true
+      const directory = instanceDirectoryState(name, j, root)
+      item.isolated = directory.isolated
+      item.gameDirectory = directory.path
+      item.isolationReason = directory.reason
       if (resolved.broken) {
         item.incomplete = true
         errors.push(`${name}：继承的版本 ${j.inheritsFrom ?? '未知'} 缺失或损坏`)
@@ -803,44 +810,7 @@ export function setVersionJava(id: string, javaPath: string): void {
 
 // ---------------- 版本隔离 ----------------
 
-/** 开启隔离时从共享目录复制进版本目录的内容（已存在项不覆盖） */
-const ISOLATE_COPY_DIRS = ['saves', 'mods', 'config', 'resourcepacks', 'shaderpacks', 'screenshots']
-const ISOLATE_COPY_FILES = ['options.txt', 'servers.dat']
-
-/**
- * 版本隔离开关。
- * 开启：版本 json 写 _gameDir=true，并把共享游戏目录的存档/mods/配置等复制进 versions/<id>/
- * （复制而非移动，共享目录数据保留；版本目录中已存在的项不覆盖）。
- * 关闭：移除 _gameDir 标记（版本目录中的数据保留，仅启动时不再使用）。
- */
-export function setIsolation(id: string, isolated: boolean): void {
-  const jp = versionJsonPath(id)
-  const j = readVersionJson(id)
-  if (isolated) {
-    j._gameDir = true
-    const dest = versionDir(id)
-    for (const d of ISOLATE_COPY_DIRS) {
-      const from = path.join(gameDir(), d)
-      const to = path.join(dest, d)
-      try {
-        if (fs.existsSync(from) && !fs.existsSync(to)) {
-          fs.cpSync(from, to, { recursive: true })
-        }
-      } catch {
-        /* 单个目录复制失败不阻断 */
-      }
-    }
-    for (const f of ISOLATE_COPY_FILES) {
-      const from = path.join(gameDir(), f)
-      const to = path.join(dest, f)
-      try {
-        if (fs.existsSync(from) && !fs.existsSync(to)) fs.copyFileSync(from, to)
-      } catch {
-        /* 同上 */
-      }
-    }
-  } else {
-    delete j._gameDir
-  }
-  fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
+/** 用户确认后的事务式隔离迁移；实际目录判定统一由 instances.ts 提供。 */
+export async function setIsolation(id: string, isolated: boolean): Promise<void> {
+  await applyIsolation(id, isolated)
 }

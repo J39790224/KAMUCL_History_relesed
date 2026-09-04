@@ -64,6 +64,9 @@ export interface InstalledVersion {
   modpackVersion?: string
   /** 版本隔离：独立的 mods/存档/配置目录（versions/<id>/ 作为游戏目录） */
   isolated?: boolean
+  /** 实际游戏目录；由启动与 UI 共用的解析器计算。 */
+  gameDirectory?: string
+  isolationReason?: 'explicit' | 'configured-path' | 'modpack' | 'detected-content' | 'shared'
   /** 下载未完成的残缺版本（json 在但客户端 jar 缺失/有 .part 残留），不算正常已安装 */
   incomplete?: boolean
   /** 安装事务失败的标记（.installing 存在），提供清理残留入口 */
@@ -74,6 +77,21 @@ export interface InstalledVersion {
   icon?: string
   /** 该版本所属的游戏文件夹路径 */
   folder: string
+}
+
+export interface IsolationMigrationPlan {
+  versionId: string
+  source: string
+  destination: string
+  items: Array<{
+    name: string
+    kind: 'file' | 'directory'
+    files: number
+    bytes: number
+  }>
+  conflicts: string[]
+  totalFiles: number
+  totalBytes: number
 }
 
 export type LoaderName = 'forge' | 'fabric' | 'quilt' | 'neoforge'
@@ -376,6 +394,7 @@ export const IPC = {
   foldersOpen: 'folders:open', // (path: string) => void
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
+  versionsIsolationPlan: 'versions:isolationPlan', // (versionId: string) => IsolationMigrationPlan
 
   versionsSetIcon: 'versions:setIcon', // (versionId: string, icon: string) => void  设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认）
   versionsUploadIcon: 'versions:uploadIcon', // (versionId: string) => string | null  弹窗选择图片并落地为自定义图标，返回新 icon 值（取消 = null）

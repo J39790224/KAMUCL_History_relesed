@@ -6,6 +6,7 @@ import {
   errText,
   formatSpeed,
   getManifest,
+  getIsolationPlan,
   getSettings,
   installVersion,
   listFabricApi,
@@ -35,6 +36,7 @@ import type {
   GameFolder,
   InstallOptions,
   InstalledVersion,
+  IsolationMigrationPlan,
   LoaderName,
   RemoteVersion
 } from '@shared/types'
@@ -447,6 +449,30 @@ async function openVersionFolder(v: InstalledVersion) {
 
 // ---------------- 版本隔离开关 ----------------
 const isoBusy = ref<string | null>(null)
+const isolationModal = reactive<{
+  open: boolean
+  target: InstalledVersion | null
+  plan: IsolationMigrationPlan | null
+  busy: boolean
+  error: string
+}>({ open: false, target: null, plan: null, busy: false, error: '' })
+
+function fmtBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+}
+
+function closeIsolationModal() {
+  if (isolationModal.busy) return
+  isoBusy.value = null
+  isolationModal.open = false
+  isolationModal.target = null
+  isolationModal.plan = null
+  isolationModal.error = ''
+}
 
 // ---------------- 管理快捷菜单 ----------------
 const manageMenu = reactive({ id: '', top: 0, left: 0 })
@@ -591,23 +617,58 @@ async function onConfirmRename() {
   }
 }
 
-async function onToggleIsolation(v: InstalledVersion) {
+async function onToggleIsolation(v: InstalledVersion, event: Event) {
+  // 原生 checkbox 会先自行翻转；状态只有在主进程事务成功后才允许改变。
+  const input = event.currentTarget as HTMLInputElement
+  input.checked = !!v.isolated
   if (isoBusy.value) return
   isoBusy.value = v.id
   const next = !v.isolated
   try {
+    if (next) {
+      const plan = await getIsolationPlan(v.id)
+      if (plan.items.length > 0) {
+        isolationModal.target = v
+        isolationModal.plan = plan
+        isolationModal.error = ''
+        isolationModal.open = true
+        return
+      }
+    }
     await setVersionIsolation(v.id, next)
     await refreshInstalled()
     toast(
       next
-        ? `已为「${v.id}」开启版本隔离，共享的存档与模组已复制进版本目录`
-        : `已为「${v.id}」关闭版本隔离，将重新使用共享游戏目录`,
+        ? `已为「${v.id}」开启版本隔离`
+        : `已关闭「${v.id}」的版本隔离；独立目录中的原数据已保留`,
       'success'
     )
   } catch (e) {
     toast('切换隔离失败：' + errText(e), 'error')
   } finally {
+    if (!isolationModal.open) isoBusy.value = null
+  }
+}
+
+async function confirmIsolation() {
+  const target = isolationModal.target
+  if (!target || isolationModal.busy) return
+  isolationModal.busy = true
+  isolationModal.error = ''
+  try {
+    await setVersionIsolation(target.id, true)
+    await refreshInstalled()
+    isolationModal.open = false
+    toast(`已为「${target.id}」开启版本隔离，共享数据已安全复制`, 'success')
+  } catch (error) {
+    isolationModal.error = errText(error)
+  } finally {
+    isolationModal.busy = false
     isoBusy.value = null
+    if (!isolationModal.open) {
+      isolationModal.target = null
+      isolationModal.plan = null
+    }
   }
 }
 </script>
@@ -893,13 +954,17 @@ async function onToggleIsolation(v: InstalledVersion) {
           <template v-else>
           <span v-if="v.modpackName" class="tag tag-accent">整合包 · {{ v.modpackName }}</span>
           <span v-else-if="!v.loader" class="tag">纯净版</span>
-          <span v-if="v.isolated" class="tag">已隔离</span>
+          <span
+            v-if="v.isolated"
+            class="tag"
+            :title="`实际游戏目录：${v.gameDirectory || '版本独立目录'}（${v.isolationReason || '已配置'}）`"
+          >已隔离</span>
           <span class="tag tag-cyan" :title="v.folder">{{ folderShortName(v.folder) }}</span>
           <span class="muted played-text">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</span>
           <label
             v-if="!v.modpackName"
             class="iso-switch"
-            :title="v.isolated ? '版本隔离已开启：使用独立的游戏目录（存档/模组/配置）。点击关闭' : '版本隔离已关闭：与全局共享游戏目录。点击开启（将把共享数据复制进版本目录）'"
+            :title="v.isolated ? `版本隔离已开启：${v.gameDirectory || '使用独立游戏目录'}。点击关闭` : '版本隔离已关闭：与全局共享游戏目录。点击开启前会展示迁移范围'"
           >
             <span class="muted iso-label">隔离</span>
             <span class="switch">
@@ -907,7 +972,7 @@ async function onToggleIsolation(v: InstalledVersion) {
                 type="checkbox"
                 :checked="!!v.isolated"
                 :disabled="isoBusy === v.id"
-                @change="onToggleIsolation(v)"
+                @change="onToggleIsolation(v, $event)"
               />
               <span class="switch-ui"></span>
             </span>
@@ -1066,6 +1131,42 @@ async function onToggleIsolation(v: InstalledVersion) {
       @cancel="folderRemove.open = false"
       @confirm="confirmFolderRemove"
     />
+
+    <!-- 开启隔离前展示精确迁移范围；确认后才执行事务式复制。 -->
+    <Teleport to="body">
+      <div v-if="isolationModal.open && isolationModal.plan" class="modal-mask" @click.self="closeIsolationModal">
+        <div class="modal isolation-modal">
+          <h3 class="modal-title">开启版本隔离 · {{ isolationModal.target?.id }}</h3>
+          <p class="modal-label isolation-intro">
+            以下共享数据将复制到版本独立目录。源文件会保留，目标中已存在的同名项不会被覆盖；失败时会回滚本次新增内容。
+          </p>
+          <div class="isolation-paths">
+            <span>来源</span><code>{{ isolationModal.plan.source }}</code>
+            <span>目标</span><code>{{ isolationModal.plan.destination }}</code>
+          </div>
+          <div class="isolation-summary">
+            {{ isolationModal.plan.items.length }} 项 · {{ isolationModal.plan.totalFiles }} 个文件 · {{ fmtBytes(isolationModal.plan.totalBytes) }}
+          </div>
+          <div class="isolation-items">
+            <div v-for="item in isolationModal.plan.items" :key="item.name" class="isolation-item">
+              <div>
+                <strong>{{ item.name }}</strong>
+                <span class="muted">{{ item.kind === 'directory' ? '文件夹' : '文件' }} · {{ item.files }} 个文件 · {{ fmtBytes(item.bytes) }}</span>
+              </div>
+              <span v-if="isolationModal.plan.conflicts.includes(item.name)" class="tag tag-gold">目标已存在，跳过</span>
+              <span v-else class="tag">将复制</span>
+            </div>
+          </div>
+          <p v-if="isolationModal.error" class="loaders-error">{{ isolationModal.error }}</p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" :disabled="isolationModal.busy" @click="closeIsolationModal">取消</button>
+            <button class="btn btn-gold" :disabled="isolationModal.busy" @click="confirmIsolation">
+              {{ isolationModal.busy ? '正在迁移…' : '确认并开启' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 删除版本二次确认 -->
     <ConfirmModal
@@ -1648,5 +1749,60 @@ async function onToggleIsolation(v: InstalledVersion) {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 22px;
+}
+.isolation-modal {
+  width: min(620px, calc(100vw - 40px));
+}
+.isolation-intro {
+  line-height: 1.65;
+}
+.isolation-paths {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 7px 10px;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.isolation-paths code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.isolation-summary {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.isolation-items {
+  display: grid;
+  gap: 7px;
+  max-height: 230px;
+  margin-top: 9px;
+  overflow: auto;
+}
+.isolation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-2);
+}
+.isolation-item > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.isolation-item strong {
+  font-size: 12px;
+}
+.isolation-item .muted {
+  font-size: 10.5px;
 }
 </style>

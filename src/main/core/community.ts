@@ -16,8 +16,8 @@ import type {
   ProgressEvent
 } from '../../shared/types'
 import { downloadFile } from './download'
-import { gameDir, versionDir } from './paths'
 import { readVersionJson } from './versions'
+import { instanceDirectoryState } from './instances'
 import { MOD_ZH, ZH_TO_SLUGS } from './community-zh'
 
 export type ProgressEmit = (e: ProgressEvent) => void
@@ -443,13 +443,8 @@ export async function communityDownload(
     return '整合包已开始安装'
   }
 
-  // 实例隔离版本 → 版本目录；否则全局游戏目录
-  let base = gameDir()
-  try {
-    if (readVersionJson(target.versionId)._gameDir === true) base = versionDir(target.versionId)
-  } catch {
-    /* 版本 json 读取失败时按全局目录处理 */
-  }
+  // 与最终启动使用同一个目录解析器，避免资源被装进未参与启动的目录。
+  const base = instanceDirectoryState(target.versionId, readVersionJson(target.versionId)).path
 
   // 数据包：MC 只从 saves/<世界>/datapacks 加载——唯一存档直接投入，否则落 gameDir/datapacks 并提示
   if (target.kind === 'datapack') {
