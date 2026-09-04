@@ -16,6 +16,7 @@ import type {
   InstallOptions,
   LaunchState,
   LoaderName,
+  ModpackInstallRequest,
   ProgressEvent,
   Settings,
   SkinVariant,
@@ -274,10 +275,15 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // 异步执行，不阻塞返回；进度经 event:progress（带 taskId）推送，结束经 event:installDone 推送（versionId = 实例 id）
   ipcMain.handle(
     IPC.modpackInstall,
-    (_e, filePath: string, opts?: { nameSource?: 'file' | 'inner' }) => {
+    (_e, filePath: string, opts?: ModpackInstallRequest) => {
       const fp = String(filePath ?? '')
       const clean: modpacks.ModpackInstallOpts = {
-        nameSource: opts?.nameSource === 'inner' ? 'inner' : 'file'
+        nameSource: opts?.nameSource === 'inner' ? 'inner' : 'file',
+        instanceName: typeof opts?.instanceName === 'string' ? opts.instanceName : undefined,
+        targetFolder: typeof opts?.targetFolder === 'string' ? opts.targetFolder : undefined,
+        conflictAction: opts?.conflictAction,
+        existingId: typeof opts?.existingId === 'string' ? opts.existingId : undefined,
+        confirmReplace: opts?.confirmReplace === true
       }
       const task = registerTask(`导入整合包 ${path.basename(fp)}`, 'modpack')
       clean.signal = task.controller.signal

@@ -255,6 +255,11 @@ interface ModpackModal {
   filePath: string
   info: ModpackInfo | null
   nameSource: 'file' | 'inner'
+  customName: string
+  targetFolder: string
+  conflictAction: 'rename' | 'new' | 'update' | 'overwrite'
+  existingId: string
+  confirmReplace: boolean
 }
 
 const mpModal = reactive<ModpackModal>({
@@ -263,13 +268,67 @@ const mpModal = reactive<ModpackModal>({
   error: '',
   filePath: '',
   info: null,
-  nameSource: 'file'
+  nameSource: 'file',
+  customName: '',
+  targetFolder: '',
+  conflictAction: 'rename',
+  existingId: '',
+  confirmReplace: false
 })
 
 const mpFormatLabel = computed(() => (mpModal.info ? FORMAT_LABEL[mpModal.info.format] : ''))
 const mpFormatTagClass = computed(() =>
   mpModal.info ? FORMAT_TAG_CLASS[mpModal.info.format] : ''
 )
+const normalizeMpName = (value: string) =>
+  value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US')
+const mpExistingInFolder = computed(() =>
+  (mpModal.info?.existingInstances ?? []).filter((item) => item.folder === mpModal.targetFolder)
+)
+const mpNameConflict = computed(() =>
+  mpExistingInFolder.value.find(
+    (item) => normalizeMpName(item.id) === normalizeMpName(mpModal.customName)
+  )
+)
+const mpRelatedExisting = computed(() => {
+  const result = mpExistingInFolder.value.filter(
+    (item) => item.samePackVersion || normalizeMpName(item.id) === normalizeMpName(mpModal.customName)
+  )
+  return [...new Map(result.map((item) => [item.id, item])).values()]
+})
+const mpNeedsReplaceConfirm = computed(
+  () => mpModal.conflictAction === 'update' || mpModal.conflictAction === 'overwrite'
+)
+
+function fmtPackBytes(bytes: number): string {
+  if (!bytes) return '大小未知'
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+}
+
+function setMpNameSource(source: 'file' | 'inner') {
+  mpModal.nameSource = source
+  if (mpModal.info) mpModal.customName = source === 'inner' ? mpModal.info.innerName : mpModal.info.fileName
+  mpModal.confirmReplace = false
+}
+
+function onMpTargetFolderChange() {
+  const related = mpRelatedExisting.value[0]
+  mpModal.existingId = related?.id ?? ''
+  mpModal.conflictAction = related ? 'new' : 'rename'
+  mpModal.confirmReplace = false
+  mpModal.error = ''
+}
+
+function onMpConflictActionChange() {
+  mpModal.confirmReplace = false
+  mpModal.error = ''
+  if (mpNeedsReplaceConfirm.value) {
+    const valid = mpExistingInFolder.value.some((item) => item.id === mpModal.existingId)
+    if (!valid) mpModal.existingId = mpRelatedExisting.value[0]?.id ?? mpExistingInFolder.value[0]?.id ?? ''
+  }
+}
 
 /** 拿到文件路径后先 probe 解析，弹确认框；解析失败在框内展示错误 */
 async function openModpackImport(filePath: string) {
@@ -280,12 +339,25 @@ async function openModpackImport(filePath: string) {
     error: '',
     filePath,
     info: null,
-    nameSource: 'file' as const
+    nameSource: 'file' as const,
+    customName: '',
+    targetFolder: store.settings?.activeFolder || store.settings?.gameDir || '',
+    conflictAction: 'rename' as const,
+    existingId: '',
+    confirmReplace: false
   })
   try {
     const info = await probeModpack(filePath)
     // 防止解析期间用户又发起了另一次导入，旧结果覆盖新弹窗
-    if (mpModal.filePath === filePath) mpModal.info = info
+    if (mpModal.filePath === filePath) {
+      mpModal.info = info
+      mpModal.customName = info.fileName
+      const relevant = info.existingInstances.find(
+        (item) => item.folder === mpModal.targetFolder && (item.sameNormalizedName || item.samePackVersion)
+      )
+      mpModal.existingId = relevant?.id ?? ''
+      mpModal.conflictAction = relevant ? 'new' : 'rename'
+    }
   } catch (e) {
     if (mpModal.filePath === filePath) mpModal.error = errText(e)
   } finally {
@@ -300,11 +372,30 @@ function closeModpackImport() {
 /** 确认导入：主进程后台异步执行，完成/失败由 installDone 订阅统一提示 */
 function confirmModpackImport() {
   if (!mpModal.info) return
+  if (!mpModal.customName.trim()) {
+    mpModal.error = '实例名称不能为空'
+    return
+  }
+  if (mpModal.conflictAction === 'rename' && mpNameConflict.value) {
+    mpModal.error = `实例名称已存在：${mpNameConflict.value.id}，请改名或选择其他处理方式`
+    return
+  }
+  if (mpNeedsReplaceConfirm.value && (!mpModal.existingId || !mpModal.confirmReplace)) {
+    mpModal.error = '请选择现有实例并勾选影响范围确认'
+    return
+  }
   const filePath = mpModal.filePath
   const nameSource = mpModal.nameSource
   mpModal.open = false
   toast('开始解析并安装整合包…', 'info')
-  void installModpack(filePath, { nameSource }).catch((e) => {
+  void installModpack(filePath, {
+    nameSource,
+    instanceName: mpModal.customName.trim(),
+    targetFolder: mpModal.targetFolder,
+    conflictAction: mpModal.conflictAction,
+    existingId: mpModal.existingId || undefined,
+    confirmReplace: mpNeedsReplaceConfirm.value && mpModal.confirmReplace
+  }).catch((e) => {
     toast('整合包安装失败：' + errText(e), 'error')
   })
 }
@@ -942,7 +1033,7 @@ onUnmounted(() => {
   <!-- 整合包导入确认弹窗 -->
   <Teleport to="body">
     <div v-if="mpModal.open" class="modal-mask" @click.self="closeModpackImport">
-      <div class="modal">
+      <div class="modal mp-modal">
         <h3 class="mp-title">导入整合包</h3>
 
         <!-- 解析中 -->
@@ -966,13 +1057,25 @@ onUnmounted(() => {
               >版本 {{ mpModal.info.version }}</span
             >
           </div>
+          <p class="mp-summary">
+            {{ mpModal.info.fileCount }} 个清单文件 · {{ fmtPackBytes(mpModal.info.downloadBytes) }}
+            <span v-if="mpModal.info.hasOverrides"> · overrides</span>
+            <span v-if="mpModal.info.hasClientOverrides"> · client-overrides</span>
+          </p>
+
+          <p class="mp-label">目标游戏文件夹</p>
+          <select v-model="mpModal.targetFolder" class="select" @change="onMpTargetFolderChange">
+            <option v-for="folder in store.settings?.folders || []" :key="folder.path" :value="folder.path">
+              {{ folder.name }}{{ folder.isDefault ? '（默认）' : '' }} · {{ folder.path }}
+            </option>
+          </select>
 
           <p class="mp-label">实例命名</p>
           <div class="mp-name-opts">
             <button
               class="mp-name-opt"
               :class="{ active: mpModal.nameSource === 'file' }"
-              @click="mpModal.nameSource = 'file'"
+              @click="setMpNameSource('file')"
             >
               <span class="mp-radio"></span>
               <span class="mp-name-text">
@@ -983,7 +1086,7 @@ onUnmounted(() => {
             <button
               class="mp-name-opt"
               :class="{ active: mpModal.nameSource === 'inner' }"
-              @click="mpModal.nameSource = 'inner'"
+              @click="setMpNameSource('inner')"
             >
               <span class="mp-radio"></span>
               <span class="mp-name-text">
@@ -992,6 +1095,45 @@ onUnmounted(() => {
               </span>
             </button>
           </div>
+          <input v-model="mpModal.customName" class="input mp-custom-name" maxlength="120" placeholder="自定义实例名称" @input="mpModal.confirmReplace = false; mpModal.error = ''" />
+
+          <div v-if="mpRelatedExisting.length" class="mp-conflict">
+            <strong>检测到实例冲突或相同整合包版本</strong>
+            <span>
+              {{ mpRelatedExisting.map(item => `${item.id}${item.samePackVersion ? '（同包同版本）' : ''}`).join('、') }}
+            </span>
+            <div class="mp-conflict-actions">
+              <label><input v-model="mpModal.conflictAction" type="radio" value="rename" @change="onMpConflictActionChange" /> 重新命名</label>
+              <label><input v-model="mpModal.conflictAction" type="radio" value="new" @change="onMpConflictActionChange" /> 作为新实例安装（自动加序号）</label>
+              <label><input v-model="mpModal.conflictAction" type="radio" value="update" @change="onMpConflictActionChange" /> 更新现有实例</label>
+              <label><input v-model="mpModal.conflictAction" type="radio" value="overwrite" @change="onMpConflictActionChange" /> 覆盖安装</label>
+            </div>
+
+            <template v-if="mpNeedsReplaceConfirm">
+              <select v-model="mpModal.existingId" class="select mp-existing-select">
+                <option v-for="item in mpExistingInFolder" :key="item.id" :value="item.id">
+                  {{ item.id }}{{ item.samePackVersion ? ' · 同一整合包版本' : '' }}
+                </option>
+              </select>
+              <div class="mp-impact" :class="{ danger: mpModal.conflictAction === 'overwrite' }">
+                <template v-if="mpModal.conflictAction === 'update'">
+                  将重建包管理文件并恢复用户存档、配置及非包管理文件；同名的新包 MOD 优先。操作失败会恢复完整备份。
+                </template>
+                <template v-else>
+                  将重建实例包文件；存档、配置、截图、资源包及可识别的用户 MOD 会保留，其他未知顶层内容可能被移除。操作失败会恢复完整备份。
+                </template>
+              </div>
+              <label class="mp-replace-confirm">
+                <input v-model="mpModal.confirmReplace" type="checkbox" />
+                <span>我已确认上述影响范围，并同意{{ mpModal.conflictAction === 'update' ? '更新' : '覆盖' }}所选实例。</span>
+              </label>
+            </template>
+          </div>
+
+          <p v-if="mpNameConflict && mpModal.conflictAction === 'rename'" class="mp-error">
+            名称「{{ mpModal.customName }}」已存在，请重新命名或选择其他处理方式。
+          </p>
+          <p v-if="mpModal.error" class="mp-error">{{ mpModal.error }}</p>
 
           <div class="mp-actions">
             <button class="btn btn-ghost" @click="closeModpackImport">取消</button>
@@ -1565,6 +1707,11 @@ onUnmounted(() => {
 }
 
 /* ---------------- 整合包导入确认弹窗 ---------------- */
+.mp-modal {
+  width: min(620px, calc(100vw - 40px));
+  max-height: 88vh;
+  overflow-y: auto;
+}
 .mp-title {
   font-size: 17px;
   margin-bottom: 18px;
@@ -1579,6 +1726,11 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.mp-summary {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
 }
 .mp-label {
   font-size: 13px;
@@ -1642,6 +1794,52 @@ onUnmounted(() => {
 }
 .mp-name-opt.active .mp-name-value {
   color: var(--accent-2);
+}
+.mp-custom-name {
+  width: 100%;
+  margin-top: 9px;
+}
+.mp-conflict {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, #e5a323 48%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, #e5a323 8%, var(--card));
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.mp-conflict strong {
+  color: var(--text);
+}
+.mp-conflict-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+  margin-top: 3px;
+}
+.mp-conflict-actions label,
+.mp-replace-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.4;
+}
+.mp-conflict input {
+  accent-color: var(--accent);
+}
+.mp-existing-select {
+  margin-top: 3px;
+}
+.mp-impact {
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: var(--card-2);
+  line-height: 1.55;
+}
+.mp-impact.danger {
+  color: var(--danger);
 }
 .mp-error {
   font-size: 13px;

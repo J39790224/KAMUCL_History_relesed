@@ -7,20 +7,27 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import AdmZip from 'adm-zip'
-import type { LoaderName, ModpackInfo, ProgressEvent } from '../../shared/types'
+import type {
+  LoaderName,
+  ModpackInfo,
+  ModpackInstallRequest,
+  ProgressEvent
+} from '../../shared/types'
 import { downloadAll, fetchSignal, type DownloadTask } from './download'
 import { getSettings } from './settings'
 import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { gameDir } from './paths'
-import { installVersion } from './versions'
+import { installVersion, listAllInstalled } from './versions'
 import { throwIfCancelled } from './tasks'
+import { listGameFolders, setActiveGameFolder } from './gameFolders'
+import { canonicalPath, samePath } from './folderPaths'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
 /** 实例命名来源：file = 压缩包文件名；inner = 包内名称 */
-export interface ModpackInstallOpts {
-  nameSource?: 'file' | 'inner'
+export interface ModpackInstallOpts extends ModpackInstallRequest {
   /** 任务取消信号（下载中心取消按钮） */
   signal?: AbortSignal
 }
@@ -64,13 +71,16 @@ interface PackMeta {
   loaderVersion?: string
   /** overrides 目录前缀（zip 条目名，无尾斜杠），null = 无 */
   overridesPrefix: string | null
+  clientOverridesPrefix?: string | null
 }
 
 interface PendingFile {
   /** 实例目录内的相对路径（正斜杠） */
   rel: string
   url: string
+  urls?: string[]
   sha1?: string
+  sha512?: string
   size: number
 }
 
@@ -80,11 +90,24 @@ type Parsed =
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** 防目录穿越：相对路径含 .. 段或为空时返回 null */
+const PACK_MAX_ENTRIES = 250_000
+const PACK_MAX_UNCOMPRESSED = 32 * 1024 * 1024 * 1024
+const PACK_MAX_RATIO = 500
+const ILLEGAL_WINDOWS_SEGMENT = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
+
+/** 防目录穿越、绝对路径、Windows 设备名与目标根逃逸。 */
 function safeJoin(base: string, rel: string): string | null {
+  if (!rel || rel.includes('\0') || /^(?:[\\/]|[A-Za-z]:)/.test(rel)) return null
   const parts = rel.split(/[\\/]+/).filter(Boolean)
-  if (!parts.length || parts.includes('..')) return null
-  return path.join(base, ...parts)
+  if (
+    !parts.length ||
+    parts.includes('..') ||
+    parts.some((part) => part === '.' || ILLEGAL_WINDOWS_SEGMENT.test(part) || /[:*?"<>|]/.test(part))
+  ) return null
+  const root = path.resolve(base)
+  const target = path.resolve(root, ...parts)
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep
+  return target !== root && target.startsWith(prefix) ? target : null
 }
 
 /** 清洗实例 id：去 \\/:*?"<>| 与首尾空格点 */
@@ -120,9 +143,33 @@ function openPackZip(filePath: string): AdmZip {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('整合包文件不存在，请重新选择')
   try {
     const zip = new AdmZip(filePath)
-    zip.getEntries()
+    const entries = zip.getEntries()
+    if (entries.length > PACK_MAX_ENTRIES) throw new Error('整合包文件数量超过安全上限')
+    let unpacked = 0
+    let packed = 0
+    for (const entry of entries) {
+      unpacked += entry.header.size
+      packed += entry.header.compressedSize
+      if (!entry.isDirectory && !safeJoin(path.parse(filePath).root, normEntry(entry.entryName))) {
+        throw new Error(`整合包包含不安全路径：${entry.entryName}`)
+      }
+      if (((entry.attr >>> 16) & 0o170000) === 0o120000) {
+        throw new Error(`整合包包含不允许的符号链接：${entry.entryName}`)
+      }
+      if (
+        entry.header.size > 64 * 1024 * 1024 &&
+        entry.header.size / Math.max(1, entry.header.compressedSize) > PACK_MAX_RATIO
+      ) throw new Error(`整合包条目压缩比异常：${entry.entryName}`)
+    }
+    if (unpacked > PACK_MAX_UNCOMPRESSED) throw new Error('整合包解压后超过 32 GB 安全上限')
+    if (unpacked > 64 * 1024 * 1024 && unpacked / Math.max(1, packed) > PACK_MAX_RATIO) {
+      throw new Error('整合包整体压缩比异常，疑似解压炸弹')
+    }
     return zip
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && /^整合包(?:文件数量|解压后|条目|整体|包含)/.test(error.message)) {
+      throw error
+    }
     throw new Error('整合包文件损坏或不是有效的压缩包')
   }
 }
@@ -212,6 +259,12 @@ function parseMrpack(zip: AdmZip): Parsed {
   } catch {
     throw new Error('modrinth.index.json 已损坏，整合包无法解析')
   }
+  if (idx?.formatVersion !== 1) {
+    throw new Error(`不支持的 Modrinth 整合包格式版本：${idx?.formatVersion ?? '缺失'}（当前支持 1）`)
+  }
+  if (idx.game !== 'minecraft') {
+    throw new Error(`该 Modrinth 包不是 Minecraft 整合包：${idx.game || 'game 字段缺失'}`)
+  }
   const mcVersion = idx?.dependencies?.minecraft
   if (!mcVersion) throw new Error('整合包清单缺少 Minecraft 版本，文件可能损坏')
 
@@ -227,16 +280,37 @@ function parseMrpack(zip: AdmZip): Parsed {
   }
 
   const files: PendingFile[] = []
+  const seenPaths = new Set<string>()
   for (const f of idx?.files ?? []) {
-    if (!f?.path) continue
-    // 仅服务端需要的文件跳过（server-only）
-    if (f.env?.server === 'required' && f.env?.client === 'unsupported') continue
-    const url = f.downloads?.[0]
-    if (!url) continue
+    if (!f?.path) throw new Error('modrinth.index.json 包含缺少 path 的文件项')
+    // 客户端明确 unsupported 即服务端专用；optional / required 均可装入客户端。
+    if (f.env?.client === 'unsupported') continue
+    const rel = f.path.replace(/\\/g, '/').replace(/^\.\//, '')
+    if (!safeJoin(path.join(process.cwd(), '.mrpack-path-check'), rel)) {
+      throw new Error(`Modrinth 文件路径不安全：${f.path}`)
+    }
+    const identity = process.platform === 'win32' ? rel.toLowerCase() : rel
+    if (seenPaths.has(identity)) throw new Error(`Modrinth 清单包含重复目标路径：${rel}`)
+    seenPaths.add(identity)
+    const urls = (f.downloads ?? []).filter((value) => {
+      try {
+        return new URL(value).protocol === 'https:'
+      } catch {
+        return false
+      }
+    })
+    if (!urls.length) throw new Error(`Modrinth 文件没有可信 HTTPS 下载地址：${rel}`)
+    const sha1 = f.hashes?.sha1?.toLowerCase()
+    const sha512 = f.hashes?.sha512?.toLowerCase()
+    if (!sha1 && !sha512) throw new Error(`Modrinth 文件缺少 SHA1/SHA512：${rel}`)
+    if (sha1 && !/^[a-f0-9]{40}$/.test(sha1)) throw new Error(`Modrinth 文件 SHA1 无效：${rel}`)
+    if (sha512 && !/^[a-f0-9]{128}$/.test(sha512)) throw new Error(`Modrinth 文件 SHA512 无效：${rel}`)
     files.push({
-      rel: f.path.replace(/\\/g, '/'),
-      url,
-      sha1: f.hashes?.sha1,
+      rel,
+      url: urls[0],
+      urls: urls.slice(1),
+      sha1,
+      sha512,
       size: f.fileSize ?? 0
     })
   }
@@ -249,7 +323,8 @@ function parseMrpack(zip: AdmZip): Parsed {
       mcVersion,
       loader,
       loaderVersion,
-      overridesPrefix: 'overrides'
+      overridesPrefix: 'overrides',
+      clientOverridesPrefix: 'client-overrides'
     },
     files
   }
@@ -604,31 +679,138 @@ async function mapPool<T, R>(
   return out
 }
 
-/** 只解压 overrides 前缀下的条目到实例目录（含 .. 的可疑条目跳过），返回文件数 */
+/** 只解压 overrides 前缀下的普通文件；不安全路径或符号链接直接拒绝。 */
 async function extractOverrides(
   zip: AdmZip,
   prefix: string | null,
   destDir: string,
   signal?: AbortSignal
-): Promise<number> {
-  if (!prefix) return 0
+): Promise<string[]> {
+  if (!prefix) return []
   const pre = prefix.replace(/[\\/]+/g, '/').replace(/\/+$/, '') + '/'
-  let count = 0
+  const extracted: string[] = []
   for (const entry of zip.getEntries()) {
     throwIfCancelled(signal)
     const name = entry.entryName.replace(/\\/g, '/')
     if (entry.isDirectory || !name.startsWith(pre)) continue
-    const dest = safeJoin(destDir, name.slice(pre.length))
-    if (!dest) continue
+    const rel = name.slice(pre.length)
+    const dest = safeJoin(destDir, rel)
+    if (!dest) throw new Error(`overrides 包含不安全路径：${rel}`)
+    if (((entry.attr >>> 16) & 0o170000) === 0o120000) {
+      throw new Error(`overrides 不允许符号链接：${rel}`)
+    }
+    if (entry.header.size > 512 * 1024 * 1024) throw new Error(`overrides 单文件超过 512 MB：${rel}`)
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.writeFileSync(dest, entry.getData())
-    count++
-    if (count % 8 === 0) await new Promise<void>((resolve) => setImmediate(resolve))
+    extracted.push(rel.replace(/\\/g, '/'))
+    if (extracted.length % 8 === 0) await new Promise<void>((resolve) => setImmediate(resolve))
   }
-  return count
+  return extracted
 }
 
 const fmtMB = (bytes: number): string => (bytes / 1024 / 1024).toFixed(1) + 'MB'
+
+const normalizedInstanceName = (value: string): string =>
+  sanitizeId(value).normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase('en-US')
+
+function existingPackInstances(meta: PackMeta, fileName: string): ModpackInfo['existingInstances'] {
+  const names = new Set([normalizedInstanceName(meta.name), normalizedInstanceName(fileName)])
+  try {
+    return listAllInstalled()
+      .map((item) => ({
+        id: item.id,
+        folder: item.folder,
+        sameNormalizedName:
+          names.has(normalizedInstanceName(item.id)) ||
+          (!!item.modpackName && names.has(normalizedInstanceName(item.modpackName))),
+        samePackVersion:
+          !!item.modpackName &&
+          normalizedInstanceName(item.modpackName) === normalizedInstanceName(meta.name) &&
+          item.modpackVersion === meta.packVersion
+      }))
+  } catch {
+    return []
+  }
+}
+
+interface PackTransactionManifest {
+  schemaVersion: 1
+  name: string
+  version: string
+  managedFiles: string[]
+  installedAt: string
+}
+
+const PACK_MANIFEST = '.kamucl-modpack.json'
+const PRESERVE_ROOTS = new Set([
+  'saves',
+  'mods',
+  'config',
+  'resourcepacks',
+  'shaderpacks',
+  'screenshots',
+  'options.txt',
+  'servers.dat'
+])
+
+function readManagedFiles(instanceDir: string): Set<string> {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(instanceDir, PACK_MANIFEST), 'utf-8')) as {
+      managedFiles?: unknown
+    }
+    return new Set(
+      Array.isArray(value.managedFiles)
+        ? value.managedFiles.filter((item): item is string => typeof item === 'string')
+        : []
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+export async function restoreModpackUserFiles(
+  backup: string,
+  destination: string,
+  action: 'update' | 'overwrite',
+  oldManaged: ReadonlySet<string>,
+  signal?: AbortSignal
+): Promise<void> {
+  const queue: Array<{ source: string; destination: string; rel: string }> = [
+    { source: backup, destination, rel: '' }
+  ]
+  while (queue.length) {
+    throwIfCancelled(signal)
+    const current = queue.pop()!
+    for (const entry of await fs.promises.readdir(current.source, { withFileTypes: true })) {
+      const rel = current.rel ? `${current.rel}/${entry.name}` : entry.name
+      const top = rel.split('/')[0]
+      if (rel === PACK_MANIFEST || /^\.installing$/i.test(rel) || /\.json$|\.jar$/i.test(rel) && !current.rel) continue
+      if (action === 'overwrite' && !PRESERVE_ROOTS.has(top)) continue
+      if (oldManaged.has(rel)) continue
+      const source = path.join(current.source, entry.name)
+      const target = path.join(current.destination, entry.name)
+      const stat = await fs.promises.lstat(source)
+      if (stat.isSymbolicLink()) continue
+      if (stat.isDirectory()) {
+        await fs.promises.mkdir(target, { recursive: true })
+        queue.push({ source, destination: target, rel })
+        continue
+      }
+      await fs.promises.mkdir(path.dirname(target), { recursive: true })
+      const userWins = top === 'saves' || top === 'config' || top === 'screenshots' || top === 'options.txt' || top === 'servers.dat'
+      if (!fs.existsSync(target) || userWins) await fs.promises.copyFile(source, target)
+    }
+  }
+}
+
+function requestedGameFolder(input?: string): string {
+  const state = listGameFolders()
+  if (!input) return state.active
+  const target = canonicalPath(input)
+  const registered = state.folders.find((folder) => samePath(folder.path, target))
+  if (!registered) throw new Error('目标游戏文件夹未在 KAMUCL 中登记')
+  return registered.path
+}
 
 /** 只解析整合包元信息（不解压不下载），供导入确认弹窗展示 */
 export async function probeModpack(filePath: string): Promise<ModpackInfo> {
@@ -637,6 +819,7 @@ export async function probeModpack(filePath: string): Promise<ModpackInfo> {
   const fileName = packFileName(filePath)
   if (detected.format === 'fullpack') {
     const meta = parseFullpack(zip, detected.full)
+    const entries = zip.getEntries().filter((entry) => !entry.isDirectory)
     return {
       format: 'fullpack',
       innerName: meta.vid,
@@ -644,11 +827,17 @@ export async function probeModpack(filePath: string): Promise<ModpackInfo> {
       version: meta.vid,
       mcVersion: meta.mcVersion,
       loader: meta.loader,
-      loaderVersion: meta.loaderVersion
+      loaderVersion: meta.loaderVersion,
+      fileCount: entries.length,
+      downloadBytes: entries.reduce((sum, entry) => sum + entry.header.size, 0),
+      hasOverrides: false,
+      hasClientOverrides: false,
+      existingInstances: []
     }
   }
   const parsed = detected.format === 'mrpack' ? parseMrpack(zip) : parseCurseForge(zip)
   const { meta } = parsed
+  const files = parsed.files
   return {
     format: detected.format,
     innerName: meta.name,
@@ -656,7 +845,15 @@ export async function probeModpack(filePath: string): Promise<ModpackInfo> {
     version: meta.packVersion,
     mcVersion: meta.mcVersion,
     loader: meta.loader,
-    loaderVersion: meta.loaderVersion
+    loaderVersion: meta.loaderVersion,
+    fileCount: files.length,
+    downloadBytes:
+      parsed.kind === 'mrpack' ? parsed.files.reduce((sum, file) => sum + file.size, 0) : 0,
+    hasOverrides: !!meta.overridesPrefix && zip.getEntries().some((entry) => normEntry(entry.entryName).startsWith(`${meta.overridesPrefix}/`)),
+    hasClientOverrides:
+      !!meta.clientOverridesPrefix &&
+      zip.getEntries().some((entry) => normEntry(entry.entryName).startsWith(`${meta.clientOverridesPrefix}/`)),
+    existingInstances: existingPackInstances(meta, fileName)
   }
 }
 
@@ -672,6 +869,8 @@ export async function installModpack(
 ): Promise<string> {
   const report: ProgressEmit = (event) =>
     emit({ ...event, overall: event.overall ?? event.progress })
+  const targetFolder = requestedGameFolder(opts?.targetFolder)
+  setActiveGameFolder(targetFolder)
   // 1) 校验存在性与 zip 可读、探测格式
   const zip = openPackZip(filePath)
   const nameSource = opts?.nameSource === 'inner' ? 'inner' : 'file'
@@ -695,8 +894,31 @@ export async function installModpack(
     text: `${meta.name}（MC ${meta.mcVersion}${loaderText}）`
   })
 
-  // 3) 实例 id（清洗 + 冲突追加序号）
-  const id = uniqueInstanceId(nameSource === 'inner' ? meta.name : fileName)
+  // 3) 实例命名与冲突动作。更新/覆盖必须携带确认页的显式确认。
+  const requestedName = sanitizeId(
+    opts?.instanceName?.trim() || (nameSource === 'inner' ? meta.name : fileName)
+  )
+  const action = opts?.conflictAction ?? 'new'
+  let id: string
+  let backupDir = ''
+  let oldManaged = new Set<string>()
+  if (action === 'update' || action === 'overwrite') {
+    if (!opts?.confirmReplace) throw new Error(`${action === 'update' ? '更新' : '覆盖'}现有实例前必须在确认页明确确认`)
+    id = sanitizeId(opts.existingId ?? '')
+    if (!opts.existingId || id !== opts.existingId.trim()) throw new Error('需要选择有效的现有实例')
+    const existing = listAllInstalled().find((item) => item.id === id && samePath(item.folder, targetFolder))
+    if (!existing) throw new Error(`目标文件夹中找不到待${action === 'update' ? '更新' : '覆盖'}实例：${id}`)
+    registerVersionFolder(id, targetFolder)
+    const currentDir = versionDir(id)
+    oldManaged = readManagedFiles(currentDir)
+    backupDir = path.join(path.dirname(currentDir), `.${path.basename(currentDir)}.kamucl-backup-${crypto.randomUUID()}`)
+    fs.renameSync(currentDir, backupDir)
+  } else if (action === 'rename') {
+    id = requestedName
+    if (fs.existsSync(path.join(targetFolder, 'versions', id))) throw new Error(`实例名称已存在：${id}`)
+  } else {
+    id = uniqueInstanceId(requestedName)
+  }
   const instDir = versionDir(id)
 
   try {
@@ -755,8 +977,15 @@ export async function installModpack(
     const tasks: DownloadTask[] = []
     for (const f of pending) {
       const dest = safeJoin(instDir, f.rel)
-      if (!dest) continue // 拒绝含 .. 的条目
-      tasks.push({ url: f.url, dest, sha1: f.sha1, size: f.size || undefined })
+      if (!dest) throw new Error(`整合包文件路径不安全：${f.rel}`)
+      tasks.push({
+        url: f.url,
+        urls: f.urls,
+        dest,
+        sha1: f.sha1,
+        sha512: f.sha512,
+        size: f.size || undefined
+      })
     }
 
     if (tasks.length) {
@@ -792,14 +1021,38 @@ export async function installModpack(
     // 7) 解压 overrides 覆盖到实例目录
     report({ stage: 'modpack', progress: 0.96, text: '解压覆盖文件…' })
     throwIfCancelled(opts?.signal)
-    await extractOverrides(zip, meta.overridesPrefix, instDir, opts?.signal)
+    const overrideFiles = await extractOverrides(zip, meta.overridesPrefix, instDir, opts?.signal)
+    const clientOverrideFiles = await extractOverrides(
+      zip,
+      meta.clientOverridesPrefix ?? null,
+      instDir,
+      opts?.signal
+    )
+
+    if (backupDir) {
+      report({ stage: 'modpack', progress: 0.985, text: '恢复存档、配置和用户文件…' })
+      await restoreModpackUserFiles(backupDir, instDir, action as 'update' | 'overwrite', oldManaged, opts?.signal)
+    }
+    const manifest: PackTransactionManifest = {
+      schemaVersion: 1,
+      name: meta.name,
+      version: meta.packVersion,
+      managedFiles: [...new Set([...pending.map((file) => file.rel), ...overrideFiles, ...clientOverrideFiles])].sort(),
+      installedAt: new Date().toISOString()
+    }
+    fs.writeFileSync(path.join(instDir, PACK_MANIFEST), JSON.stringify(manifest, null, 2), 'utf-8')
+    if (backupDir) {
+      fs.rmSync(backupDir, { recursive: true, force: true })
+      backupDir = ''
+    }
 
     // 8) 完成
     report({ stage: 'done', progress: 1, text: `${meta.name} 安装完成` })
     return id
   } catch (e) {
-    // id 由 uniqueInstanceId 生成，本次流程独占；失败/取消时可安全整目录回滚。
+    // 新装整目录清理；更新/覆盖则恢复开始前原子改名的完整实例备份。
     fs.rmSync(instDir, { recursive: true, force: true })
+    if (backupDir && fs.existsSync(backupDir)) fs.renameSync(backupDir, instDir)
     throw e
   }
 }

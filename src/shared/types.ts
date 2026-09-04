@@ -540,6 +540,28 @@ export interface ModpackInfo {
   mcVersion: string
   loader?: LoaderName
   loaderVersion?: string
+  fileCount: number
+  downloadBytes: number
+  hasOverrides: boolean
+  hasClientOverrides: boolean
+  existingInstances: Array<{
+    id: string
+    folder: string
+    sameNormalizedName: boolean
+    samePackVersion: boolean
+  }>
+}
+
+export type ModpackConflictAction = 'rename' | 'new' | 'update' | 'overwrite'
+
+export interface ModpackInstallRequest {
+  nameSource?: 'file' | 'inner'
+  instanceName?: string
+  targetFolder?: string
+  conflictAction?: ModpackConflictAction
+  existingId?: string
+  /** 更新/覆盖涉及既有实例时，必须由确认页显式置 true。 */
+  confirmReplace?: boolean
 }
 
 export type WorldVersionConfidence = 'exact' | 'approximate' | 'unknown'

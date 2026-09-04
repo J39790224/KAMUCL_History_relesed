@@ -25,6 +25,7 @@ import type {
   ModInfo,
   ModInstallResult,
   ModpackInfo,
+  ModpackInstallRequest,
   MsDeviceCodeInfo,
   ProgressEvent,
   ProfileSkins,
@@ -129,7 +130,7 @@ export const listFabricApi = (mc: string) => invoke<FabricApiVersion[]>(IPC.fabr
 /** 只解析整合包元信息（不解压不下载），供导入确认弹窗展示；失败抛错 */
 export const probeModpack = (filePath: string) => invoke<ModpackInfo>(IPC.modpackProbe, filePath)
 /** 异步安装整合包：invoke 仅表示任务已受理，完成/失败由 onInstallDone 推送 */
-export const installModpack = (filePath: string, opts?: { nameSource?: 'file' | 'inner' }) =>
+export const installModpack = (filePath: string, opts?: ModpackInstallRequest) =>
   invoke<void>(IPC.modpackInstall, filePath, opts)
 
 // ---------------- 世界存档 ----------------
