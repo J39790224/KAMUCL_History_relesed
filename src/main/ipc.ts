@@ -57,6 +57,8 @@ import * as yggdrasil from './core/yggdrasil'
 import * as appearance from './core/appearanceAssets'
 import { applyNativeAppearance } from './nativeAppearance'
 import { pathIdentity } from './core/folderPaths'
+import * as direct from './core/directConnect'
+import type { DirectHostRequest } from '../shared/directConnect'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -83,6 +85,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
+  ipcMain.handle(IPC.directOverview, () => direct.directOverview())
+  ipcMain.handle(IPC.directHost, (_e, request: DirectHostRequest) => direct.startDirectHost(request))
+  ipcMain.handle(IPC.directStop, () => direct.stopDirectHost())
+  ipcMain.handle(IPC.directState, () => direct.directState())
+  ipcMain.handle(IPC.directResolve, (_e, invitation: string) => direct.resolveDirectInvitation(invitation))
+  ipcMain.handle(IPC.directPrepareJoin, (_e, invitation: string, versionId: string, folder: string) => direct.prepareDirectJoin(invitation, versionId, folder))
   ipcMain.handle(IPC.foldersContextMenu, (_e, folder: string, versionId?: string) => {
     const registered = settings.getSettings().folders.find(item => pathIdentity(item.path) === pathIdentity(String(folder)))
     if (!registered) throw new Error('文件夹未登记')

@@ -7,6 +7,7 @@ import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
 import { windowAppearance } from './windowAppearance'
 import { applyNativeAppearance } from './nativeAppearance'
+import { stopDirectHost } from './core/directConnect'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -98,6 +99,8 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  // 仅清理由好友直连创建的本机监听器和短租约；不影响 Minecraft 生命周期。
+  void stopDirectHost()
   launcherLog('All windows closed')
   if (process.platform !== 'darwin') app.quit()
 })

@@ -227,6 +227,13 @@ export const uploadSkinFromHistory = (id: string) =>
 /** 当前选中账号的头像数据（微软=皮肤 dataURL / 离线=minotar 头像 dataURL / 无=null） */
 export const getSkinAvatar = (accountId?: string) => invoke<string | null>(IPC.skinAvatar, accountId)
 
+export const getDirectOverview = () => invoke<import('@shared/directConnect').DirectOverview>(IPC.directOverview)
+export const getDirectState = () => invoke<import('@shared/directConnect').DirectHostState>(IPC.directState)
+export const startDirectHost = (request: import('@shared/directConnect').DirectHostRequest) => invoke<import('@shared/directConnect').DirectHostState>(IPC.directHost, request)
+export const stopDirectHost = () => invoke<import('@shared/directConnect').DirectHostState>(IPC.directStop)
+export const resolveDirectInvitation = (text: string) => invoke<import('@shared/directConnect').DirectJoinResult>(IPC.directResolve, text)
+export const prepareDirectJoin = (text: string, versionId: string, folder: string) => invoke<{versionId:string; folder:string; address:string; directJoin:boolean}>(IPC.directPrepareJoin, text, versionId, folder)
+
 // ---------------- 游戏 ----------------
 export const launchGame = (id: string, serverAddress?: string) =>
   invoke<void>(IPC.gameLaunch, id, serverAddress)

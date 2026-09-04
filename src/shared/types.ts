@@ -586,6 +586,12 @@ export const IPC = {
   foldersScan: 'folders:scan', // (path: string) => FolderScanResult
   foldersOpen: 'folders:open', // (path: string) => void
   foldersContextMenu: 'folders:contextMenu',
+  directOverview: 'direct:overview',
+  directHost: 'direct:host',
+  directStop: 'direct:stop',
+  directState: 'direct:state',
+  directResolve: 'direct:resolve',
+  directPrepareJoin: 'direct:prepareJoin',
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetResolution: 'versions:setResolution', // (id: string, resolution: GameResolution | null) => void  null = 跟随全局
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
