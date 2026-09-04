@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
-import { downloadAll, downloadFile } from './download'
+import { downloadAll, downloadFile, fetchSignal } from './download'
 import { getSettings } from './settings'
 import { gameDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { ensureJava, scanJava } from './java'
@@ -20,8 +20,8 @@ import {
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
-async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(30000) })
+async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
+  const res = await fetch(url, { signal: fetchSignal(signal) })
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`)
   return res.json()
 }
@@ -55,30 +55,34 @@ function compareVersionDesc(a: string, b: string): number {
   return 0
 }
 
-/** 获取加载器可用版本列表（最新在前） */
+/** 获取加载器可用版本列表（最新在前）；signal 用于任务取消 */
 export async function listLoaderVersions(
   loader: LoaderName,
-  mcVersion: string
+  mcVersion: string,
+  signal?: AbortSignal
 ): Promise<string[]> {
   let list: string[]
   switch (loader) {
     case 'fabric': {
       const arr = (await fetchJson(
-        `https://meta.fabricmc.net/v2/versions/loader/${mcVersion}`
+        `https://meta.fabricmc.net/v2/versions/loader/${mcVersion}`,
+        signal
       )) as { loader?: { version?: string } }[]
       list = arr.map((x) => x.loader?.version).filter((v): v is string => !!v)
       break
     }
     case 'quilt': {
       const arr = (await fetchJson(
-        `https://meta.quiltmc.org/v3/versions/loader/${mcVersion}`
+        `https://meta.quiltmc.org/v3/versions/loader/${mcVersion}`,
+        signal
       )) as { loader?: { version?: string } }[]
       list = arr.map((x) => x.loader?.version).filter((v): v is string => !!v)
       break
     }
     case 'forge': {
       const arr = (await fetchJson(
-        `https://bmclapi2.bangbang93.com/forge/minecraft/${mcVersion}`
+        `https://bmclapi2.bangbang93.com/forge/minecraft/${mcVersion}`,
+        signal
       )) as { version?: string }[]
       list = arr.map((x) => x.version).filter((v): v is string => !!v)
       break
@@ -86,7 +90,7 @@ export async function listLoaderVersions(
     case 'neoforge': {
       try {
         const res = await fetch(`https://bmclapi2.bangbang93.com/neoforge/list/${mcVersion}`, {
-          signal: AbortSignal.timeout(30000)
+          signal: fetchSignal(signal)
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = (await res.json()) as unknown
@@ -98,10 +102,12 @@ export async function listLoaderVersions(
         }
         throw new Error('返回格式异常')
       } catch {
+        // 取消不降级：直接抛「已取消」
+        if (signal?.aborted) throw new Error('已取消')
         // 回退：解析 maven-metadata.xml，过滤 mc 前缀（1.20.4 -> 20.4）
         const res = await fetch(
           'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml',
-          { signal: AbortSignal.timeout(30000) }
+          { signal: fetchSignal(signal) }
         )
         if (!res.ok) throw new Error(`HTTP ${res.status}: neoforge maven-metadata`)
         const xml = await res.text()
@@ -250,7 +256,8 @@ export async function installLoader(
       loader === 'fabric' ? 'https://meta.fabricmc.net/v2' : 'https://meta.quiltmc.org/v3'
     emit({ stage: 'loader', progress: 0.1, text: `获取 ${loader} ${loaderVersion} 配置` })
     const profile = (await fetchJson(
-      `${base}/versions/loader/${mcVersion}/${loaderVersion}/profile/json`
+      `${base}/versions/loader/${mcVersion}/${loaderVersion}/profile/json`,
+      signal
     )) as VersionJson
     const id = instanceName?.trim() || profile.id
     if (!id) throw new Error(`${loader} profile 缺少 id`)

@@ -10,7 +10,7 @@ import type {
   ProgressEvent,
   RemoteVersion
 } from '../../shared/types'
-import { downloadAll, downloadFile, mirrorUrl, type DownloadTask, type MirrorPref } from './download'
+import { downloadAll, downloadFile, fetchSignal, mirrorUrl, type DownloadTask, type MirrorPref } from './download'
 import { getSettings } from './settings'
 import {
   allVersionsDirs,
@@ -145,10 +145,11 @@ function readManifestCache(): RemoteVersion[] | null {
   }
 }
 
-/** 拉取远程版本清单，带 1 小时本地缓存；refresh=true 强制刷新 */
+/** 拉取远程版本清单，带 1 小时本地缓存；refresh=true 强制刷新；signal 用于任务取消 */
 export async function fetchVersionManifest(
   mirror: MirrorPref,
-  refresh = false
+  refresh = false,
+  signal?: AbortSignal
 ): Promise<RemoteVersion[]> {
   if (!refresh) {
     try {
@@ -161,18 +162,20 @@ export async function fetchVersionManifest(
     }
   }
   try {
-    // 镜像链路偶发失败（302 跳转/TLS 抖动），最多重试 3 次再回退缓存
+    // 镜像链路偶发失败（302 跳转/TLS 抖动），最多重试 3 次再回退缓存；取消立即中断
     let data: { versions?: unknown[] } | null = null
     let lastErr: unknown = null
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (signal?.aborted) throw new Error('已取消')
       try {
         const res = await fetch(mirrorUrl(MANIFEST_URL, mirror), {
-          signal: AbortSignal.timeout(30000)
+          signal: fetchSignal(signal)
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         data = (await res.json()) as { versions?: unknown[] }
         break
       } catch (e) {
+        if (signal?.aborted) throw new Error('已取消')
         lastErr = e
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)))
       }
@@ -212,21 +215,25 @@ export function readVersionJson(id: string): VersionJson {
   return JSON.parse(raw.replace(/^﻿/, '')) as VersionJson
 }
 
-/** 确保版本 json 存在并解析返回（不存在则按清单下载到 dest，默认 versions 区） */
-export async function getVersionJson(versionId: string, dest?: string): Promise<VersionJson> {
+/** 确保版本 json 存在并解析返回（不存在则按清单下载到 dest，默认 versions 区；signal 用于任务取消） */
+export async function getVersionJson(
+  versionId: string,
+  dest?: string,
+  signal?: AbortSignal
+): Promise<VersionJson> {
   const jsonPath = dest ?? versionJsonPath(versionId)
   if (!fs.existsSync(jsonPath)) {
     const mirror = getSettings().mirror
-    let manifest = await fetchVersionManifest(mirror)
+    let manifest = await fetchVersionManifest(mirror, false, signal)
     let entry = manifest.find((v) => v.id === versionId)
     if (!entry) {
       // 可能是新发布的版本，强制刷新一次清单再找
-      manifest = await fetchVersionManifest(mirror, true)
+      manifest = await fetchVersionManifest(mirror, true, signal)
       entry = manifest.find((v) => v.id === versionId)
     }
     if (!entry) throw new Error(`版本清单中找不到 ${versionId}`)
     fs.mkdirSync(path.dirname(jsonPath), { recursive: true })
-    await downloadFile(entry.url, jsonPath, undefined, undefined, mirror)
+    await downloadFile(entry.url, jsonPath, undefined, undefined, mirror, signal)
   }
   return JSON.parse(fs.readFileSync(jsonPath, 'utf-8').replace(/^﻿/, '')) as VersionJson
 }
@@ -329,7 +336,7 @@ export async function installVanilla(
   fs.writeFileSync(mark, new Date().toISOString(), 'utf-8')
   try {
     emit({ stage: 'version-json', progress: 0, text: `获取版本信息 ${versionId}`, source: sourceText })
-    const vj = await getVersionJson(versionId, jsonPath)
+    const vj = await getVersionJson(versionId, jsonPath, signal)
     // 自定义实例名：json id 同步改写，并记录真实 MC 版本供修复/Java 推断
     if (finalId !== versionId) {
       vj.id = finalId
@@ -452,7 +459,7 @@ export async function installVersion(
     const { installLoader, listLoaderVersions, installFabricApi } = await import('./loaders')
     let loaderVersion = opts.loaderVersion
     if (!loaderVersion) {
-      const list = await listLoaderVersions(opts.loader, versionId)
+      const list = await listLoaderVersions(opts.loader, versionId, signal)
       loaderVersion = list[0]
       if (!loaderVersion) throw new Error(`${opts.loader} 没有适配 ${versionId} 的版本`)
     }

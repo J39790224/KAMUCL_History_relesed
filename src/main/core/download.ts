@@ -58,6 +58,17 @@ export function mirrorUrl(url: string, mirror: MirrorPref): string {
   }
 }
 
+/** 合并 30s 超时与外部取消信号（版本清单等裸 fetch 调用点使用；取消立即中断） */
+export function fetchSignal(extSignal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(30000)
+  if (!extSignal) return timeout
+  if (extSignal.aborted) return extSignal
+  const c = new AbortController()
+  timeout.addEventListener('abort', () => c.abort(timeout.reason))
+  extSignal.addEventListener('abort', () => c.abort(extSignal.reason))
+  return c.signal
+}
+
 /** 计算文件 sha1（hex 小写） */
 function sha1Of(file: string): Promise<string> {
   return new Promise((resolve, reject) => {

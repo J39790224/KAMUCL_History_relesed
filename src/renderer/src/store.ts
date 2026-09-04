@@ -178,12 +178,17 @@ export function finalizeTask(r: {
   t.error = r.error
   t.progress = r.ok ? 1 : t.progress
   t.finishedAt = Date.now()
-  if (r.ok) {
-    // 成功任务 8 秒后自动移除
-    setTimeout(() => {
-      const i = store.tasks.findIndex((x) => x.id === t.id && x.status === 'done')
-      if (i >= 0) store.tasks.splice(i, 1)
-    }, 8000)
+  if (r.ok || r.cancelled) {
+    // 成功 8 秒、取消 3 秒后自动从下载中心移除
+    setTimeout(
+      () => {
+        const i = store.tasks.findIndex(
+          (x) => x.id === t.id && (x.status === 'done' || x.status === 'cancelled')
+        )
+        if (i >= 0) store.tasks.splice(i, 1)
+      },
+      r.ok ? 8000 : 3000
+    )
   }
 }
 
