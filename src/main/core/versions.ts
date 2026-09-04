@@ -161,11 +161,23 @@ export async function fetchVersionManifest(
     }
   }
   try {
-    const res = await fetch(mirrorUrl(MANIFEST_URL, mirror), {
-      signal: AbortSignal.timeout(30000)
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = (await res.json()) as { versions?: unknown[] }
+    // 镜像链路偶发失败（302 跳转/TLS 抖动），最多重试 3 次再回退缓存
+    let data: { versions?: unknown[] } | null = null
+    let lastErr: unknown = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(mirrorUrl(MANIFEST_URL, mirror), {
+          signal: AbortSignal.timeout(30000)
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        data = (await res.json()) as { versions?: unknown[] }
+        break
+      } catch (e) {
+        lastErr = e
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)))
+      }
+    }
+    if (!data) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
     const versions: RemoteVersion[] = (data.versions ?? []).map((v) => {
       const it = v as Record<string, string>
       return {
