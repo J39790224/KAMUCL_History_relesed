@@ -19,3 +19,16 @@ test('friend connection is independently routed after servers and keeps the exis
     assert.deepEqual(compileTemplate({ source: descriptor.template!.content, filename: 'test.vue', id: 'test', compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
   }
 })
+
+test('home metadata uses a 200ms out-in transition while controls retain live selection and names have full tooltips', () => {
+  const home = fs.readFileSync('src/renderer/src/views/HomeView.vue', 'utf8')
+  assert.match(home, /<Transition name="instance-switch" mode="out-in">/)
+  assert.match(home, /transition: opacity 100ms ease, transform 100ms ease/)
+  assert.match(home, /prefers-reduced-motion: reduce/)
+  assert.match(home, /:title="versionLabel\(version\)"/)
+  assert.match(home, /:title="displayVersionSub\(version\)"/)
+  assert.match(home, /grid-template-columns: 36px minmax\(0, 1fr\)/)
+  const { descriptor } = parse(home)
+  const script = compileScript(descriptor, { id: 'home' })
+  assert.deepEqual(compileTemplate({ source: descriptor.template!.content, filename: 'HomeView.vue', id: 'home', compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
+})

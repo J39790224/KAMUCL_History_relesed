@@ -75,7 +75,7 @@ const currentVersion = computed(() =>
 const versionLabel = (version: InstalledVersion) => displayVersionName(version)
 const cap = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
 const loaderText = (version: InstalledVersion) =>
-  version.loader ? `${cap(version.loader)} ${version.loaderVersion ?? ''}`.trim() : '正式版'
+  version.loader ? `${version.loader === 'neoforge' ? 'NeoForge' : cap(version.loader)} ${version.loaderVersion ?? ''}`.trim() : '正式版'
 const heroVersion = computed(() =>
   currentVersion.value?.mcVersion || (currentVersion.value ? versionLabel(currentVersion.value) : '—')
 )
@@ -432,10 +432,16 @@ onUnmounted(() => {
 
         <div class="hero-content" data-edit="bannerText">
           <span class="hero-kicker">当前版本</span>
-          <h1>{{ heroVersion }}</h1>
-          <div class="hero-edition">
-            <span>Java 版</span>
-            <span v-if="currentVersion" class="loader-badge">{{ loaderText(currentVersion) }}</span>
+          <div class="hero-metadata-slot">
+            <Transition name="instance-switch" mode="out-in">
+              <div :key="JSON.stringify([currentVersion?.folder, selectedId, heroVersion, currentVersion?.loaderVersion])" class="hero-metadata">
+                <h1 :title="heroVersion">{{ heroVersion }}</h1>
+                <div class="hero-edition">
+                  <span>Java 版</span>
+                  <span v-if="currentVersion" class="loader-badge">{{ loaderText(currentVersion) }}</span>
+                </div>
+              </div>
+            </Transition>
           </div>
 
           <div class="hero-actions">
@@ -517,7 +523,7 @@ onUnmounted(() => {
             <svg v-else class="instance-icon" viewBox="0 0 48 48" aria-hidden="true"><polygon points="24,5 43,14.5 24,24 5,14.5" fill="#79c144" /><polygon points="5,14.5 24,24 24,29.5 5,20" fill="#5da236" /><polygon points="24,24 43,14.5 43,20 24,29.5" fill="#4e8a2f" /><polygon points="5,20 24,29.5 24,43 5,33.5" fill="#8b5e34" /><polygon points="24,29.5 43,20 43,33.5 24,43" fill="#6f4a29" /></svg>
             <div class="instance-copy">
               <strong :title="versionLabel(version)">{{ versionLabel(version) }}</strong>
-              <span>{{ displayVersionSub(version) }}</span>
+              <span :title="displayVersionSub(version)">{{ displayVersionSub(version) }}</span>
             </div>
             <button class="instance-more" title="更多" @click.stop="openCardMenu($event, version.id)">
               <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
@@ -707,6 +713,14 @@ onUnmounted(() => {
 .hero-content { position: relative; z-index: 1; display: flex; height: 100%; padding: 48px 36px 30px; flex-direction: column; align-items: flex-start; color: var(--bn-text); }
 .hero-kicker { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 7px; background: rgba(9, 13, 14, 0.48); backdrop-filter: blur(12px); font-size: 13px; font-weight: 650; }
 .hero-content h1 { max-width: 78%; margin-top: 18px; overflow: hidden; color: #fff; font-size: clamp(46px, 5.2vw, 64px); font-weight: 850; line-height: 1; letter-spacing: -1px; text-overflow: ellipsis; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.32); white-space: nowrap; }
+.hero-metadata-slot { width: 100%; min-height: 130px; position: relative; }
+.hero-metadata { width: 100%; }
+.instance-switch-enter-active, .instance-switch-leave-active { transition: opacity 100ms ease, transform 100ms ease; }
+.instance-switch-enter-from { opacity: 0; transform: translateY(2px); }
+.instance-switch-leave-to { opacity: 0; transform: translateY(-2px); }
+@media (prefers-reduced-motion: reduce) {
+  .instance-switch-enter-active, .instance-switch-leave-active { transition: none; }
+}
 .hero-edition { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 17px; font-weight: 650; }
 .loader-badge { padding: 5px 11px; border: 1px solid color-mix(in srgb, var(--accent-2) 34%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 30%, rgba(20, 30, 24, 0.46)); color: #f6fff8; font-size: 11px; font-weight: 650; }
 .hero-actions { display: flex; width: 100%; margin-top: auto; align-items: flex-end; justify-content: space-between; gap: 18px; }
@@ -756,19 +770,19 @@ onUnmounted(() => {
 .manage-instances:hover { color: var(--text); border-color: var(--border-strong); }
 .manage-instances svg { width: 15px; height: 15px; }
 .instance-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.instance-card { position: relative; display: grid; grid-template-columns: 50px minmax(0, 1fr) 24px; grid-template-rows: 1fr auto; gap: 8px 11px; min-width: 0; min-height: 130px; padding: 17px 14px 13px; border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb, var(--card) 82%, transparent); cursor: pointer; transition: border-color 0.18s ease, background 0.18s ease, transform 0.15s ease; }
+.instance-card { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); grid-template-rows: 1fr auto; gap: 8px 8px; min-width: 0; height: 130px; min-height: 130px; padding: 17px 14px 13px; border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb, var(--card) 82%, transparent); cursor: pointer; transition: border-color 0.18s ease, background 0.18s ease, transform 0.15s ease; }
 .instance-card:hover { border-color: var(--border-strong); background: var(--card-2); transform: translateY(-1px); }
 .instance-card.selected { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent), 0 8px 24px var(--accent-soft); }
-.instance-icon { align-self: center; width: 48px; height: 48px; }
+.instance-icon { align-self: center; width: 36px; height: 36px; }
 .instance-icon.image { object-fit: contain; image-rendering: pixelated; }
-.instance-copy { align-self: center; display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.instance-copy strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.instance-copy { grid-column: 2; padding-right: 7px; align-self: center; display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.instance-copy strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
 .instance-copy span, .instance-last { overflow: hidden; color: var(--text-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.instance-more { align-self: start; width: 24px; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.instance-more { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); cursor: pointer; }
 .instance-more:hover { background: var(--hover); color: var(--text); }
 .instance-more svg { width: 15px; height: 15px; }
-.instance-last { grid-column: 1 / 3; align-self: center; }
-.instance-play { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 32px; justify-self: end; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--accent) 18%, var(--card-2)); color: var(--accent-2); cursor: pointer; }
+.instance-last { grid-column: 1 / -1; grid-row: 2; padding-right: 42px; align-self: center; }
+.instance-play { grid-column: 2; grid-row: 2; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 32px; justify-self: end; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--accent) 18%, var(--card-2)); color: var(--accent-2); cursor: pointer; }
 .instance-play:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .instance-play:disabled { opacity: 0.45; cursor: default; }
 .instance-play svg { width: 15px; height: 15px; }
