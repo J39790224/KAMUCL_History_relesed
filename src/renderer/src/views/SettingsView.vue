@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   addCustomJava,
   cancelJavaScan,
@@ -15,6 +15,17 @@ import { enterEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
 import type { Settings, ThemeName } from '@shared/types'
 import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
+
+const page = ref<HTMLElement | null>(null)
+async function revealSection() {
+  await nextTick()
+  const target = page.value?.querySelector<HTMLElement>(`[data-section="${store.settingsSection}"]`)
+  if (!target) return
+  target.scrollIntoView({ block: 'start', behavior: 'instant' })
+  target.focus({ preventScroll: true })
+}
+onMounted(revealSection)
+watch(() => [store.settingsSection, !!store.settings], revealSection, { flush: 'post' })
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
@@ -206,7 +217,7 @@ function saveResolution() {
 </script>
 
 <template>
-  <div class="page">
+  <div ref="page" class="page">
     <div class="page-head">
       <h1 class="page-title">设置</h1>
       <p class="page-sub">游戏目录、内存、Java 与启动行为</p>
@@ -313,10 +324,20 @@ function saveResolution() {
       <HomeLayoutEditor />
 
       <!-- 游戏文件夹统一在版本页管理，设置页只显示当前状态，避免双入口冲突。 -->
+      <div class="card group setting-target" data-section="downloads" tabindex="-1">
+        <h3 class="group-title">下载</h3>
+        <label class="download-setting">最大线程数
+          <input class="input" type="number" min="1" max="64" :value="store.settings.downloadThreads" @change="save({ downloadThreads: Number(($event.target as HTMLInputElement).value) })" />
+        </label>
+        <label class="download-setting">速度限制（KiB/s）
+          <input class="input" type="number" min="0" max="1048576" :value="store.settings.downloadSpeedKBps" @change="save({ downloadSpeedKBps: Number(($event.target as HTMLInputElement).value) })" />
+        </label>
+        <p class="muted group-hint">0 表示不限速。限制对全部下载任务合计生效；减少线程数后，已有连接完成时释放名额。</p>
+      </div>
       <div class="card group">
-        <h3 class="group-title">游戏文件夹</h3>
+        <h3 class="group-title">下载目标文件夹</h3>
         <p class="muted group-hint">
-          游戏文件夹的添加、切换、重命名、刷新与解除绑定已统一到“游戏版本”页面。
+          请在“首页 → 版本选择 → 文件夹列表”中更改下载目标文件夹；也可进入游戏版本页统一管理。
         </p>
         <div class="dir-row">
           <input class="input mono" :value="store.settings.activeFolder" readonly title="当前游戏文件夹" />
@@ -347,7 +368,7 @@ function saveResolution() {
       </div>
 
       <!-- 内存 -->
-      <div class="card group">
+      <div class="card group setting-target" data-section="memory" tabindex="-1">
         <h3 class="group-title">内存分配</h3>
         <div class="memory-row">
           <input
@@ -366,7 +387,7 @@ function saveResolution() {
       </div>
 
       <!-- Java -->
-      <div class="card group">
+      <div class="card group setting-target" data-section="java" tabindex="-1">
         <h3 class="group-title">Java 运行时</h3>
         <label class="java-auto-row">
           <span class="java-auto-text">
@@ -563,6 +584,10 @@ function saveResolution() {
 </template>
 
 <style scoped>
+.download-setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 12px 0; }
+.download-setting .input { width: 160px; }
+.setting-target { scroll-margin-top: 20px; }
+.setting-target:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
 .page {
   display: flex;
   flex-direction: column;

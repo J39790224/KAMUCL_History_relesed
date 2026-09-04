@@ -6,6 +6,7 @@ import { authorizeManagedImage } from './core/appearanceAssets'
 import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
 import { windowAppearance } from './windowAppearance'
+import { applyNativeAppearance } from './nativeAppearance'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -18,6 +19,7 @@ protocol.registerSchemesAsPrivileged([
 let win: BrowserWindow | null = null
 
 function createWindow(): void {
+  applyNativeAppearance(null, getSettings())
   win = new BrowserWindow({
     ...windowAppearance(),
     icon: join(__dirname, '../../build/icon.png'),
@@ -44,6 +46,7 @@ function createWindow(): void {
   }
 
   win.on('ready-to-show', () => win?.show())
+  applyNativeAppearance(win, getSettings())
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }

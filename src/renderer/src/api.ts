@@ -149,6 +149,7 @@ export const setDefaultFolder = (path: string) =>
 export const setActiveFolder = (path: string) => invoke<string>(IPC.foldersSetActive, path)
 export const scanFolder = (path: string) => invoke<FolderScanResult>(IPC.foldersScan, path)
 export const openGameFolder = (path: string) => invoke<void>(IPC.foldersOpen, path)
+export const showFolderContextMenu = (folder: string, versionId?: string) => invoke<void>(IPC.foldersContextMenu, folder, versionId)
 export const setVersionIsolation = (id: string, isolated: boolean) =>
   invoke<void>(IPC.versionsSetIsolation, id, isolated)
 export const getIsolationPlan = (id: string) =>
@@ -224,7 +225,7 @@ export const deleteSkinHistory = (id: string) =>
 export const uploadSkinFromHistory = (id: string) =>
   invoke<ProfileSkins>(IPC.skinUploadHistory, id)
 /** 当前选中账号的头像数据（微软=皮肤 dataURL / 离线=minotar 头像 dataURL / 无=null） */
-export const getSkinAvatar = () => invoke<string | null>(IPC.skinAvatar)
+export const getSkinAvatar = (accountId?: string) => invoke<string | null>(IPC.skinAvatar, accountId)
 
 // ---------------- 游戏 ----------------
 export const launchGame = (id: string, serverAddress?: string) =>

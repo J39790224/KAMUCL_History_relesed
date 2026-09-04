@@ -5,34 +5,39 @@
  * - 离线：minotar 已是成品头盔头像，直接展示
  * - null / 加载失败：首字母圆形头像兜底
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import type { Account } from '@shared/types'
 import { getSkinAvatar } from '../api'
 import { renderSkinHead } from '../skin-render'
 import { store } from '../store'
 
-const props = withDefaults(defineProps<{ size?: number }>(), { size: 48 })
+const props = withDefaults(defineProps<{ size?: number; account?: Account | null }>(), { size: 48 })
+const account = computed(() => props.account === undefined ? store.selectedAccount : props.account)
 
 const head = ref('')
+let generation = 0
+onUnmounted(() => { generation++ })
 
 async function load() {
+  const request = ++generation
   head.value = ''
-  const acc = store.selectedAccount
+  const acc = account.value
   if (!acc) return
   let data: string | null = null
   try {
-    data = await getSkinAvatar()
+    data = await getSkinAvatar(acc.id)
   } catch {
     data = null
   }
   // 账号在加载期间被切换则丢弃过期结果
-  if (!data || store.selectedAccount?.id !== acc.id) return
-  head.value =
-    acc.type === 'microsoft' ? await renderSkinHead(data, Math.max(64, props.size * 2)) : data
+  if (!data || request !== generation) return
+  const rendered = acc.type !== 'offline' ? await renderSkinHead(data, Math.max(64, props.size * 2)) : data
+  if (request === generation) head.value = rendered
 }
 
-watch(() => store.selectedAccount?.id, load, { immediate: true })
+watch(() => account.value?.id, load, { immediate: true })
 
-const letter = computed(() => store.selectedAccount?.username.charAt(0).toUpperCase() ?? '?')
+const letter = computed(() => account.value?.username.charAt(0).toUpperCase() ?? '?')
 const px = computed(() => `${props.size}px`)
 const fontPx = computed(() => `${Math.round(props.size * 0.42)}px`)
 </script>

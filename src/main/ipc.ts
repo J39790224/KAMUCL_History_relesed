@@ -2,7 +2,7 @@
  * IPC 注册：types.ts 中 IPC 常量的全部通道
  * 事件统一通过 getWin()?.webContents.send(IPC_EVENT.xxx, payload) 推送
  */
-import { ipcMain, dialog, shell, type BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, Menu, type BrowserWindow } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -55,6 +55,8 @@ import * as instances from './core/instances'
 import * as worlds from './core/worlds'
 import * as yggdrasil from './core/yggdrasil'
 import * as appearance from './core/appearanceAssets'
+import { applyNativeAppearance } from './nativeAppearance'
+import { pathIdentity } from './core/folderPaths'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -81,7 +83,20 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
-  ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => settings.saveSettings(patch))
+  ipcMain.handle(IPC.foldersContextMenu, (_e, folder: string, versionId?: string) => {
+    const registered = settings.getSettings().folders.find(item => pathIdentity(item.path) === pathIdentity(String(folder)))
+    if (!registered) throw new Error('文件夹未登记')
+    if (versionId && (!/^[^\\/]+$/.test(versionId) || versionId === '.' || versionId === '..')) throw new Error('无效版本 ID')
+    const target = versionId ? path.join(registered.path, 'versions', versionId) : registered.path
+    Menu.buildFromTemplate([{ label: '打开对应文件夹', click: () => {
+      void shell.openPath(target).then(error => { if (error) dialog.showErrorBox('无法打开文件夹', error) })
+    } }]).popup({ window: getWin() ?? undefined })
+  })
+  ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => {
+    const saved = settings.saveSettings(patch)
+    applyNativeAppearance(getWin(), saved)
+    return saved
+  })
   ipcMain.handle(IPC.appSelectImage, async () => {
     return pickImage('选择图片')
   })
@@ -616,7 +631,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.skinUploadHistory, (_e, id: string) =>
     skins.uploadHistory(String(id ?? ''))
   )
-  ipcMain.handle(IPC.skinAvatar, () => skins.getAvatar())
+  ipcMain.handle(IPC.skinAvatar, (_e, accountId?: string) => skins.getAvatar(accountId ? String(accountId) : undefined))
 
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送

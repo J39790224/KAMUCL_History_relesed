@@ -15,7 +15,7 @@ import type {
   SkinInfo,
   SkinVariant
 } from '../../shared/types'
-import { getValidAccount, selectedAccount } from './accounts'
+import { accountById, getValidAccount, selectedAccount } from './accounts'
 import { gameDir } from './paths'
 import { externalProfile } from './yggdrasil'
 
@@ -208,8 +208,8 @@ const AVATAR_TTL = 5 * 60 * 1000
  * - 离线账号：minotar 公共头像（任意名字均返回 Steve 风格头盔像素头像）
  * - 无账号 / 任何失败：null（前端兜底首字母头像）
  */
-export async function getAvatar(): Promise<string | null> {
-  const acc = selectedAccount()
+export async function getAvatar(accountId?: string): Promise<string | null> {
+  const acc = accountId ? accountById(accountId) : selectedAccount()
   if (!acc) return null
   const hit = avatarCache.get(acc.id)
   if (hit && Date.now() - hit.time < AVATAR_TTL) return hit.data
@@ -244,8 +244,9 @@ export async function getAvatar(): Promise<string | null> {
   } catch {
     data = null
   }
-  avatarCache.set(acc.id, { data, time: Date.now() })
-  return data
+  // 短暂网络故障不会抹掉已成功加载的头像。
+  if (data) avatarCache.set(acc.id, { data, time: Date.now() })
+  return data ?? hit?.data ?? null
 }
 
 /** 上传皮肤（multipart/form-data），成功后写入本地历史并返回最新档案 */

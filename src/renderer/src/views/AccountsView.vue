@@ -522,9 +522,7 @@ async function onRemove(acc: Account) {
           :class="{ selected: store.selectedAccount?.id === acc.id }"
           @click="onSelect(acc)"
         >
-          <!-- 头像 IPC 仅支持当前选中账号：选中行显示 MC 方块头像（微软=皮肤头 / 离线=Steve 风像素头），其余首字母 -->
-          <Avatar v-if="store.selectedAccount?.id === acc.id" :size="42" />
-          <div v-else class="avatar">{{ acc.username.charAt(0).toUpperCase() }}</div>
+          <Avatar :account="acc" :size="42" />
           <div class="account-meta">
             <div class="account-name">
               {{ acc.username }}

@@ -4,17 +4,21 @@ import {
   errText,
   exportLaunchLogs,
   getSkinProfile,
+  getSettings,
   killGame,
   launchGame,
   listJava,
   openDir,
-  removeVersion
+  removeVersion,
+  setActiveFolder,
+  showFolderContextMenu
 } from '../api'
 import {
   displayVersionName,
   displayVersionSub,
   fmtLastPlayed,
   isFavorite,
+  openSettings,
   progressMono,
   refreshInstalled,
   sortWithFavorite,
@@ -237,7 +241,7 @@ async function exportFailureLogs() {
 const javas = ref<JavaInfo[]>([])
 const javaChecked = ref(false)
 const javaText = computed(() => {
-  const versionJava = currentVersion.value?.javaPath
+  const versionJava = currentVersion.value?.javaPath || (!store.settings?.javaAuto ? store.settings?.javaPath : '')
   if (versionJava) {
     const match = javas.value.find((java) => java.path === versionJava)
     return match
@@ -318,6 +322,20 @@ const recent = computed(() => {
 const sortedInstalled = computed(() => sortWithFavorite(store.installed))
 
 const versionMenu = reactive({ open: false, top: 0, left: 0, width: 230 })
+const folderListOpen = ref(false)
+const folderSwitchBusy = ref(false)
+async function chooseGameFolder(folder: string) {
+  if (folderSwitchBusy.value) return
+  folderSwitchBusy.value = true
+  try {
+    await setActiveFolder(folder)
+    store.settings = await getSettings()
+    store.resourceVersionId = ''
+    await refreshInstalled()
+    folderListOpen.value = false
+  } catch (error) { toast(errText(error), 'error') }
+  finally { folderSwitchBusy.value = false }
+}
 const versionMenuButton = ref<HTMLElement | null>(null)
 
 function toggleVersionMenu() {
@@ -436,7 +454,7 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <div class="launch-combo" data-edit="accent">
+            <div class="launch-combo" :class="{ running }" data-edit="accent">
               <button
                 class="launch-main"
                 :class="{ launching, running }"
@@ -459,12 +477,12 @@ onUnmounted(() => {
       </section>
 
       <section class="runtime-strip" data-edit="card">
-        <button class="runtime-item" @click="store.currentView = 'settings'">
+        <button class="runtime-item" @click="openSettings('java')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M7 8h10a4 4 0 0 1 4 4v0a8 8 0 0 1-8 8h-2a8 8 0 0 1-8-8v0a4 4 0 0 1 4-4Z" /><path d="M8 13h8M9 17h6" /></svg>
           <span><small>运行环境</small><strong>{{ javaText }}</strong></span>
           <svg class="runtime-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
         </button>
-        <button class="runtime-item" @click="store.currentView = 'settings'">
+        <button class="runtime-item" @click="openSettings('memory')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2" /><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4M9 9h6v6H9Z" /></svg>
           <span><small>内存分配</small><strong>{{ memoryText }}</strong></span>
           <svg class="runtime-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
@@ -493,6 +511,7 @@ onUnmounted(() => {
             :class="{ selected: version.id === selectedId }"
             data-edit="card"
             @click="chooseVersion(version.id)"
+            @contextmenu.prevent="showFolderContextMenu(version.folder, version.id)"
           >
             <img v-if="versionIconUrl(version)" class="instance-icon image" :src="versionIconUrl(version)" alt="" />
             <svg v-else class="instance-icon" viewBox="0 0 48 48" aria-hidden="true"><polygon points="24,5 43,14.5 24,24 5,14.5" fill="#79c144" /><polygon points="5,14.5 24,24 24,29.5 5,20" fill="#5da236" /><polygon points="24,24 43,14.5 43,20 24,29.5" fill="#4e8a2f" /><polygon points="5,20 24,29.5 24,43 5,33.5" fill="#8b5e34" /><polygon points="24,29.5 43,20 43,33.5 24,43" fill="#6f4a29" /></svg>
@@ -579,18 +598,26 @@ onUnmounted(() => {
         class="float-menu"
         :style="{ top: versionMenu.top + 'px', left: versionMenu.left + 'px', width: versionMenu.width + 'px' }"
       >
+        <button class="menu-item" @click="folderListOpen = !folderListOpen">{{ folderListOpen ? '‹ 返回版本选择' : '文件夹列表 ›' }}</button>
+        <template v-if="folderListOpen">
+          <button v-for="folder in store.settings?.folders || []" :key="folder.path" class="menu-item" :class="{ active: folder.path === store.settings?.activeFolder }" :disabled="folderSwitchBusy" :title="folder.path" @click="chooseGameFolder(folder.path)" @contextmenu.prevent="showFolderContextMenu(folder.path)">{{ folder.name }}</button>
+          <button class="menu-item" @click="store.currentView = 'game'">添加 / 管理文件夹</button>
+        </template>
+        <template v-else>
         <button
           v-for="version in sortedInstalled"
           :key="version.id"
           class="menu-item"
           :class="{ active: version.id === selectedId }"
           @click="chooseVersion(version.id)"
+          @contextmenu.prevent="showFolderContextMenu(version.folder, version.id)"
         >
           <svg v-if="isFavorite(version.id)" viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
           <span v-else class="menu-spacer"></span>
           {{ versionLabel(version) }}
         </button>
         <div v-if="!sortedInstalled.length" class="menu-empty">暂无已安装实例</div>
+        </template>
       </div>
     </Teleport>
 
@@ -698,7 +725,8 @@ onUnmounted(() => {
 .launch-content svg { width: 22px; height: 22px; flex: none; }
 .launch-content span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .launch-progress { position: absolute; inset: 0 auto 0 0; background: rgba(255, 255, 255, 0.25); transition: width 0.25s ease; }
-.launch-main.running { background: linear-gradient(135deg, #eb6267, #c83d43); }
+.launch-combo.running { background: linear-gradient(135deg, #d94b55, #b82e3b); }
+.launch-combo.running .launch-main, .launch-combo.running .launch-arrow { background: transparent; color: #fff; }
 .launch-main:disabled { cursor: not-allowed; filter: saturate(0.75); }
 .launch-arrow { width: 62px; border-left: 1px solid rgba(255, 255, 255, 0.22); }
 .launch-arrow:hover, .launch-main:hover:not(:disabled) { filter: brightness(1.08); }

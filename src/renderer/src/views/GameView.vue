@@ -15,6 +15,7 @@ import {
   listLoaders,
   openDir,
   openGameFolder,
+  showFolderContextMenu,
   removeFolder,
   removeVersion,
   renameFolder,
@@ -112,6 +113,9 @@ async function loadFolderState() {
 
 async function chooseFolder(event: Event) {
   const selected = (event.target as HTMLSelectElement).value
+  await chooseFolderPath(selected)
+}
+async function chooseFolderPath(selected: string) {
   if (!selected || selected === activeFolder.value || folderBusy.value) return
   folderBusy.value = true
   try {
@@ -762,7 +766,7 @@ async function confirmIsolation() {
     </div>
 
     <!-- 当前游戏文件夹：版本列表与安装目标都由这里唯一控制。 -->
-    <section class="card folder-manager">
+    <section class="card folder-manager" @contextmenu.prevent="showFolderContextMenu(activeFolder)">
       <div class="folder-manager-main">
         <div class="folder-select-wrap">
           <span class="folder-caption">当前游戏文件夹</span>
@@ -809,6 +813,9 @@ async function confirmIsolation() {
             解除绑定
           </button>
         </div>
+      </div>
+      <div class="folder-shortcuts" aria-label="文件夹列表">
+        <button v-for="folder in folders" :key="folder.path" class="btn btn-sm" :class="folder.path === activeFolder ? 'btn-gold' : 'btn-ghost'" :disabled="folderBusy" :title="folder.path" @click="chooseFolderPath(folder.path)" @contextmenu.stop.prevent="showFolderContextMenu(folder.path)">{{ folder.name }}</button>
       </div>
       <div class="folder-scan-state" :class="folderScan?.status">
         <template v-if="folderBusy">
@@ -970,7 +977,7 @@ async function confirmIsolation() {
             <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
             已收藏
           </div>
-          <div v-for="v in favoriteInstalled" :key="'fav-' + v.id" class="installed-row">
+          <div v-for="v in favoriteInstalled" :key="'fav-' + v.id" class="installed-row" @contextmenu.prevent="showFolderContextMenu(v.folder, v.id)">
             <button class="fav-btn on" title="取消收藏" @click="toggleFavorite(v.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
             </button>
@@ -985,7 +992,7 @@ async function confirmIsolation() {
           </div>
         </template>
 
-        <div v-for="v in sortedInstalled" :key="v.id" class="installed-row">
+        <div v-for="v in sortedInstalled" :key="v.id" class="installed-row" @contextmenu.prevent="showFolderContextMenu(v.folder, v.id)">
           <button
             class="fav-btn"
             :class="{ on: isFavorite(v.id) }"
@@ -1406,6 +1413,7 @@ async function confirmIsolation() {
 
 /* 游戏文件夹统一管理 */
 .folder-manager {
+  scroll-margin-top: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1416,6 +1424,7 @@ async function confirmIsolation() {
   align-items: flex-end;
   gap: 14px;
 }
+.folder-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .folder-select-wrap {
   display: grid;
   grid-template-columns: minmax(210px, 320px);

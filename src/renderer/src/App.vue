@@ -42,6 +42,7 @@ import SkinsView from './views/SkinsView.vue'
 import CommunityView from './views/CommunityView.vue'
 import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
+import brandHead from './assets/splash-face.png'
 
 // Vite 的全局 define 在 script 中解析；模板直接访问会被 Vue 当作组件实例字段。
 const appVersion = __APP_VERSION__
@@ -698,9 +699,9 @@ function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   const accent = colors.accent
   const dark = hexLuminance(colors.bg) < 0.46
   const transparent = theme === 'transparent'
-  const cardOpacity = transparent ? 78 : dark ? 78 : 88
-  const raisedOpacity = transparent ? 66 : dark ? 68 : 80
-  const sideOpacity = transparent ? 84 : dark ? 86 : 88
+  const cardOpacity = dark ? 44 : 62
+  const raisedOpacity = dark ? 36 : 52
+  const sideOpacity = dark ? 26 : 38
   const accent2 = `color-mix(in srgb, ${accent} 72%, white)`
   const accentDeep = `color-mix(in srgb, ${accent} 78%, black)`
   st.setProperty('--accent', accent)
@@ -736,7 +737,7 @@ function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   st.setProperty('--shadow-lg', dark ? '0 20px 55px rgba(0, 0, 0, 0.42)' : '0 20px 55px rgba(31, 50, 85, 0.18)')
   st.setProperty(
     '--shell-surface',
-    `color-mix(in srgb, ${colors.bg} ${transparent ? 84 : dark ? 86 : 88}%, transparent)`
+    `color-mix(in srgb, ${colors.bg} ${transparent ? 24 : dark ? 30 : 42}%, transparent)`
   )
   st.setProperty('--glass-blur', '28px')
   // 图一布局是全部主题共享的固定骨架；旧 layout 字段只保留兼容，不再改变结构。
@@ -936,14 +937,7 @@ onUnmounted(() => {
     <aside class="sidebar" data-edit="sidebar">
       <!-- Logo 区 -->
       <div class="logo-area">
-        <svg class="logo-svg" viewBox="0 0 48 48" aria-hidden="true">
-          <polygon points="24,4 43,13.5 24,23 5,13.5" fill="#75bd46" />
-          <polygon points="5,13.5 24,23 24,29 5,19.5" fill="#57953a" />
-          <polygon points="24,23 43,13.5 43,19.5 24,29" fill="#437c31" />
-          <polygon points="5,19.5 24,29 24,44 5,34.5" fill="#875a35" />
-          <polygon points="24,29 43,19.5 43,34.5 24,44" fill="#69452a" />
-          <path d="m8 24 5 2.5v4L8 28Zm9 3.5 4 2v5l-4-2Zm17-2 6-3v4l-6 3Zm-6 8 5-2.5v5l-5 2.5Z" fill="#5b3a24" opacity=".72" />
-        </svg>
+        <img class="brand-head" :src="brandHead" alt="KaMuaMua 的 Minecraft 头像" />
         <div class="logo-text">
           <span class="logo-name">KAMUCL</span>
           <span class="logo-version">v{{ appVersion }}</span>
@@ -1361,18 +1355,15 @@ onUnmounted(() => {
 <style scoped>
 .shell {
   display: flex;
-  width: calc(100% - 28px);
-  height: calc(100% - 28px);
-  margin: 14px;
+  width: 100%;
+  height: 100%;
   background: var(--shell-surface);
   position: relative;
   z-index: 1;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  border-radius: 20px;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
 }
 /* 自定义背景层：垫底铺满，不拦截交互 */
 .app-bg {
@@ -1411,10 +1402,14 @@ onUnmounted(() => {
   padding: 0 17px;
   flex-shrink: 0;
 }
-.logo-svg {
+.brand-head {
   width: 42px;
   height: 42px;
   flex-shrink: 0;
+  image-rendering: pixelated;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.26);
+  box-shadow: 0 3px 12px rgba(0,0,0,.18);
 }
 .logo-text {
   display: flex;
@@ -1422,10 +1417,11 @@ onUnmounted(() => {
   gap: 5px;
 }
 .logo-name {
-  font-family: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 2.2px;
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: 2px;
+  line-height: 1.2;
   color: var(--text);
 }
 .logo-version {

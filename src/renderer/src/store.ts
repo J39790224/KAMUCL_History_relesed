@@ -69,6 +69,7 @@ export const store = reactive({
   selectedAccount: null as Account | null,
   installed: [] as InstalledVersion[],
   currentView: 'home' as ViewName,
+  settingsSection: '' as '' | 'java' | 'memory' | 'downloads',
   /** 顶栏搜索关键字（游戏版本页版本列表联动过滤） */
   searchKeyword: '',
   /** 资源管理（模组/资源包/光影包）当前选中的版本 id；空 = 跟随第一个已装版本 */
@@ -110,6 +111,11 @@ export const store = reactive({
   tasks: [] as TaskItem[],
   toasts: [] as ToastItem[]
 })
+
+export function openSettings(section: 'java' | 'memory' | 'downloads'): void {
+  store.settingsSection = section
+  store.currentView = 'settings'
+}
 
 // ---------------- 后台任务（下载中心） ----------------
 export interface TaskItem {

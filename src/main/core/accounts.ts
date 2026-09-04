@@ -165,7 +165,7 @@ export function publicAccount(account: Account): Account {
 }
 
 /** 插入或更新账号（按 uuid 去重），并设为当前选中 */
-function upsert(account: Account): Account {
+function upsert(account: Account, select = true): Account {
   const data = load()
   const previousAccounts = data.accounts
   const previousSelectedId = data.selectedId
@@ -180,7 +180,7 @@ function upsert(account: Account): Account {
   if (idx >= 0) nextAccounts[idx] = { ...nextAccounts[idx], ...account }
   else nextAccounts.push(account)
   data.accounts = nextAccounts
-  data.selectedId = account.id
+  if (select) data.selectedId = account.id
   try {
     persist()
   } catch (error) {
@@ -195,6 +195,11 @@ function upsert(account: Account): Account {
 
 export function listAccounts(): Account[] {
   return load().accounts.map(publicAccount)
+}
+
+/** 仅供主进程按账号读取凭据，不改变当前选择。 */
+export function accountById(id: string): Account | null {
+  return load().accounts.find((account) => account.id === id) ?? null
 }
 
 export function selectedAccount(): Account | null {
@@ -345,7 +350,8 @@ function uuidWithHyphens(id: string): string {
 async function completeMsLogin(
   msAccessToken: string,
   refreshToken: string,
-  expiresIn: number
+  expiresIn: number,
+  select = true
 ): Promise<Account> {
   // 1. XBL 认证
   const xbl = await postJson('https://user.auth.xboxlive.com/user/authenticate', {
@@ -407,7 +413,7 @@ async function completeMsLogin(
     refreshToken,
     expiresAt: Math.floor(Date.now() / 1000) + mcExpires
   }
-  return upsert(account)
+  return upsert(account, select)
 }
 
 /** 后台轮询 token 端点直到成功/过期/取消 */
@@ -505,9 +511,10 @@ export async function refreshMicrosoft(account: Account): Promise<Account> {
   const refreshed = await completeMsLogin(
     t.access_token,
     (t.refresh_token as string | undefined) ?? account.refreshToken,
-    (t.expires_in as number | undefined) ?? 86400
+    (t.expires_in as number | undefined) ?? 86400,
+    false
   )
-  // 保持原选中 id 不变（completeMsLogin 内部 upsert 已处理）
+  // 后台头像刷新不得改变用户当前选中的账号。
   return refreshed
 }
 
@@ -516,7 +523,7 @@ export async function getValidAccount(account: Account): Promise<Account> {
   if (account.type === 'offline') return account
   if (account.type === 'yggdrasil') {
     const refreshed = await yggdrasil.refreshAccount(account)
-    if (refreshed !== account) upsert(refreshed)
+    if (refreshed !== account) upsert(refreshed, false)
     return refreshed
   }
   const now = Math.floor(Date.now() / 1000)
@@ -531,6 +538,6 @@ export async function refreshAccountById(id: string): Promise<Account> {
   const account = load().accounts.find((item) => item.id === id)
   if (!account) throw new Error('账号不存在')
   const refreshed = await getValidAccount(account)
-  if (refreshed !== account) upsert(refreshed)
+  if (refreshed !== account) upsert(refreshed, false)
   return publicAccount(refreshed)
 }
