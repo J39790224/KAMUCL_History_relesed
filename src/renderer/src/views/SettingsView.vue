@@ -44,6 +44,7 @@ const featureToggles = [
   { key: 'packs', label: '资源包' },
   { key: 'shaders', label: '光影包' },
   { key: 'servers', label: '服务器' },
+  { key: 'friends', label: '好友直连' },
   { key: 'skins', label: '皮肤与披风' },
   { key: 'community', label: '社区资源' }
 ]

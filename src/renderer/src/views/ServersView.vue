@@ -15,7 +15,6 @@ import {
 } from '../api'
 import { refreshInstalled, store, toast } from '../store'
 import type { InstalledVersion, ServerEntry, ServerPingResult } from '@shared/types'
-import FriendConnect from '../components/FriendConnect.vue'
 
 // ---------------- 列表与状态 ----------------
 const servers = ref<ServerEntry[]>([])
@@ -267,7 +266,6 @@ const filteredServers = computed(() =>
     </div>
 
     <!-- 工具行 -->
-    <FriendConnect />
     <div class="toolbar">
       <button class="btn btn-gold" @click="addModal.open = true">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>

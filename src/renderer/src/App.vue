@@ -42,6 +42,7 @@ import ShadersView from './views/ShadersView.vue'
 import SkinsView from './views/SkinsView.vue'
 import CommunityView from './views/CommunityView.vue'
 import ServersView from './views/ServersView.vue'
+import FriendConnectView from './views/FriendConnectView.vue'
 import SettingsView from './views/SettingsView.vue'
 import brandHead from './assets/splash-face.png'
 
@@ -60,6 +61,7 @@ const viewMap: Record<ViewName, Component> = {
   skins: SkinsView,
   community: CommunityView,
   servers: ServersView,
+  friends: FriendConnectView,
   settings: SettingsView,
   accounts: AccountsView
 }
@@ -148,13 +150,18 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
     key: 'servers',
     label: '服务器',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>'
+  },
+  {
+    key: 'friends',
+    label: '好友直连',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 4 5"/></svg>'
   }
 ]
 
 /** 资源管理组是否展开（默认折叠；当前在其中任一子页时强制展开高亮） */
 const resourceExpanded = ref(false)
 const inResourceGroup = computed(() =>
-  ['mods', 'packs', 'shaders', 'servers'].includes(store.currentView)
+  ['mods', 'packs', 'shaders', 'servers', 'friends'].includes(store.currentView)
 )
 
 const win = (action: 'minimize' | 'maximize' | 'close') => {

@@ -21,6 +21,7 @@ export type ViewName =
   | 'skins'
   | 'community'
   | 'servers'
+  | 'friends'
   | 'settings'
   | 'accounts'
 export type ToastType = 'success' | 'error' | 'info'
