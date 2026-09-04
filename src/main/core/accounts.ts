@@ -9,6 +9,7 @@ import crypto from 'node:crypto'
 import type { Account, MsDeviceCodeInfo } from '../../shared/types'
 import { getSettings } from './settings'
 import * as yggdrasil from './yggdrasil'
+import { microsoftFetch } from './microsoftTls'
 
 /** 微软 OAuth 端点（consumers 租户：支持个人 MSA 账号的 device code 流程） */
 const MS_SCOPE = 'XboxLive.signin offline_access'
@@ -304,7 +305,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function postForm(url: string, body: Record<string, string>): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
+  const res = await microsoftFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body).toString(),
@@ -314,7 +315,7 @@ async function postForm(url: string, body: Record<string, string>): Promise<Reco
 }
 
 async function postJson(url: string, body: unknown): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
+  const res = await microsoftFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -329,7 +330,7 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
 }
 
 async function getJson(url: string, bearer: string): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
+  const res = await microsoftFetch(url, {
     headers: { Authorization: `Bearer ${bearer}` },
     signal: AbortSignal.timeout(30000)
   })

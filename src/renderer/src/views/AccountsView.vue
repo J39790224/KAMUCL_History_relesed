@@ -411,6 +411,7 @@ async function onRemove(acc: Account) {
 
       <div v-if="accountMode === 'microsoft'" class="account-mode-panel">
         <p class="muted mode-description">通过微软设备代码完成正版授权，KAMUCL 不会接触你的微软密码。</p>
+        <p class="muted">SSL 证书验证已启用：校验证书链、域名及有效期，证书异常时终止登录。</p>
         <button class="btn btn-gold ms-btn" :disabled="ms.starting" @click="beginMsLogin">
           <span v-if="ms.starting" class="spin"></span>
           <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
