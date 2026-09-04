@@ -151,7 +151,9 @@ function hashesOf(
   return new Promise((resolve, reject) => {
     const hashes = new Map(algorithms.map((algorithm) => [algorithm, crypto.createHash(algorithm)]))
     const stream = fs.createReadStream(file)
-    const onAbort = (): void => stream.destroy(new DOMException('已取消', 'AbortError'))
+    const onAbort = (): void => {
+      stream.destroy(new DOMException('已取消', 'AbortError'))
+    }
     stream
       .on('error', reject)
       .on('data', (data) => {
