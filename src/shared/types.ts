@@ -118,8 +118,14 @@ export interface JavaInfo {
   major: number
   version: string
   is64Bit: boolean
+  /** Java 进程实际报告的架构，如 x64 / x86 / arm64。 */
+  architecture?: string
+  /** java.vendor / java.vm.vendor，无法读取时省略。 */
+  vendor?: string
   /** 来源：自动扫描 / 手动添加 */
   source?: 'auto' | 'manual'
+  /** 自动发现入口，例如注册表、PATH、KAMUCL Runtime、本地磁盘。 */
+  sourceDetail?: string
 }
 
 // ---------------- 设置 ----------------
@@ -403,10 +409,11 @@ export const IPC = {
 
   // Java
   javaList: 'java:list', // () => JavaInfo[]（5 分钟缓存）
-  javaRefresh: 'java:refresh', // () => JavaInfo[]  强制重扫
+  javaRefresh: 'java:refresh', // (refresh?: boolean) => JavaInfo[]  后台全盘扫描；false 时可复用持久缓存
   javaAddCustom: 'java:addCustom', // (path: string) => void  手动添加（校验 java -version）
   javaPickAdd: 'java:pickAdd', // () => JavaInfo[] | null  文件选择器选 java.exe 并校验入库（取消 = null）
   javaHide: 'java:hide', // (path: string) => void  从列表隐藏
+  javaCancelScan: 'java:cancelScan', // () => Promise<boolean>  等待全盘扫描后台任务确认退出
 
   // 游戏
   gameLaunch: 'game:launch', // (versionId: string, serverAddress?: string) => void  带 serverAddress 时用 --quickPlayMultiplayer 直接进服

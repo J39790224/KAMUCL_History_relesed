@@ -157,7 +157,8 @@ export const communityDownload = (
 
 // ---------------- Java ----------------
 export const listJava = () => invoke<JavaInfo[]>(IPC.javaList)
-export const refreshJava = () => invoke<JavaInfo[]>(IPC.javaRefresh)
+export const refreshJava = (refresh = true) => invoke<JavaInfo[]>(IPC.javaRefresh, refresh)
+export const cancelJavaScan = () => invoke<boolean>(IPC.javaCancelScan)
 export const addCustomJava = (path: string) => invoke<void>(IPC.javaAddCustom, path)
 /** 文件选择器选 java.exe 并校验入库，返回最新 Java 列表（取消 = null） */
 export const pickAddJava = () => invoke<JavaInfo[] | null>(IPC.javaPickAdd)

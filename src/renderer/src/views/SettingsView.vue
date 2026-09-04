@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   addCustomJava,
+  cancelJavaScan,
   errText,
   hideJava,
   listJava,
+  onProgress,
   pickAddJava,
   refreshJava,
   saveSettings
@@ -75,19 +77,39 @@ const javas = ref<Awaited<ReturnType<typeof listJava>>>([])
 const javaLoading = ref(true)
 const javaError = ref('')
 const javaRefreshing = ref(false)
+const javaCancelling = ref(false)
+const javaScanText = ref('')
+const javaScanProgress = ref(0)
 const javaAdding = ref(false)
 const javaCustomInput = ref('')
 const javaAddError = ref('')
 
-async function onRefreshJava() {
+async function onRefreshJava(refresh = true, announce = true) {
+  if (javaRefreshing.value) {
+    javaCancelling.value = true
+    try {
+      const cancelled = await cancelJavaScan()
+      if (!cancelled) toast('扫描任务已结束', 'info')
+    } catch (e) {
+      toast('取消扫描失败：' + errText(e), 'error')
+    } finally {
+      javaCancelling.value = false
+    }
+    return
+  }
   javaRefreshing.value = true
+  javaScanText.value = '正在准备扫描全部本地固定磁盘…'
+  javaScanProgress.value = 0
   try {
-    javas.value = await refreshJava()
-    toast('Java 扫描完成', 'success')
+    javas.value = await refreshJava(refresh)
+    if (announce) toast('Java 扫描完成', 'success')
   } catch (e) {
-    toast('扫描失败：' + errText(e), 'error')
+    const message = errText(e)
+    const cancelled = /取消|abort/i.test(message)
+    toast(cancelled ? 'Java 扫描已取消' : '扫描失败：' + message, cancelled ? 'info' : 'error')
   } finally {
     javaRefreshing.value = false
+    javaCancelling.value = false
   }
 }
 
@@ -133,10 +155,19 @@ onMounted(async () => {
   } finally {
     javaLoading.value = false
   }
+  // 先立即展示缓存/快速扫描结果，再在后台补齐固定磁盘扫描；有新鲜缓存时会立即返回。
+  void onRefreshJava(false, false)
 })
 
-const javaLabel = (j: { major: number; path: string; version: string }) =>
-  `Java ${j.major}（${j.version}）· ${j.path}`
+const stopJavaProgress = onProgress((event) => {
+  if (event.stage !== 'java-scan') return
+  javaScanText.value = event.text
+  javaScanProgress.value = Math.max(0, Math.min(1, event.overall ?? event.progress))
+})
+onUnmounted(stopJavaProgress)
+
+const javaLabel = (j: { major: number; path: string; version: string; architecture?: string }) =>
+  `Java ${j.major}（${j.version} · ${j.architecture ?? '未知架构'}）· ${j.path}`
 
 // ---------------- 内存显示与滑块填充 ----------------
 const MEM_MIN = 1024
@@ -398,20 +429,41 @@ function saveResolution() {
             未检测到本机 Java，将使用「自动选择」或在启动时自动下载。
           </p>
 
+          <div class="java-scan-row">
+            <div class="java-scan-status">
+              <span class="muted">扫描注册表、PATH、启动器 Runtime 与全部本地固定磁盘</span>
+              <span v-if="javaRefreshing" class="muted java-scan-text" :title="javaScanText">
+                {{ javaScanText }}
+              </span>
+              <div v-if="javaRefreshing" class="java-scan-track" aria-label="Java 扫描进度">
+                <span :style="{ width: `${javaScanProgress * 100}%` }"></span>
+              </div>
+            </div>
+            <button
+              class="btn btn-ghost btn-sm"
+              :disabled="javaCancelling"
+              @click="onRefreshJava()"
+            >
+              {{ javaCancelling ? '正在取消…' : javaRefreshing ? '取消扫描' : '重新扫描' }}
+            </button>
+          </div>
+
           <!-- 已识别的 Java 列表（版本/位数/来源，支持移除） -->
           <div v-if="javas.length" class="java-list">
             <div class="java-list-head">
               <span class="muted">已识别 {{ javas.length }} 个 Java</span>
-              <button class="btn btn-ghost btn-sm" :disabled="javaRefreshing" @click="onRefreshJava">
-                {{ javaRefreshing ? '扫描中…' : '重新扫描' }}
-              </button>
             </div>
             <div v-for="j in javas" :key="j.path" class="java-item">
               <span class="tag" :class="j.source === 'manual' ? 'tag-accent' : ''">
                 {{ j.source === 'manual' ? '手动' : '自动' }}
               </span>
               <span class="java-item-ver">Java {{ j.major }}</span>
-              <span class="muted java-item-path" :title="j.path">{{ j.path }}</span>
+              <span
+                class="muted java-item-path"
+                :title="`${j.vendor ?? '未知发行版'} · ${j.architecture ?? (j.is64Bit ? '64 位' : '32 位')} · ${j.sourceDetail ?? ''}\n${j.path}`"
+              >
+                {{ j.vendor ?? 'Java' }} · {{ j.architecture ?? (j.is64Bit ? '64 位' : '32 位') }} · {{ j.path }}
+              </span>
               <button class="java-item-hide" title="从列表隐藏" @click="onHideJava(j.path)">×</button>
             </div>
           </div>
@@ -556,6 +608,43 @@ function saveResolution() {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+}
+.java-scan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-2);
+}
+.java-scan-status {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+}
+.java-scan-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.java-scan-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+.java-scan-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.15s ease;
 }
 .java-list-head {
   display: flex;

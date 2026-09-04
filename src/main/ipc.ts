@@ -61,6 +61,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   /** 统一进度回调 */
   const emit = (e: ProgressEvent): void => send(IPC_EVENT.progress, e)
   const sendState = (s: LaunchState): void => send(IPC_EVENT.launchState, s)
+  let activeJavaScanTaskId: string | null = null
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
@@ -435,7 +436,41 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     return java.scanJava()
   })
   ipcMain.handle(IPC.javaHide, (_e, p: string) => java.hideJava(String(p ?? '')))
-  ipcMain.handle(IPC.javaRefresh, () => java.scanJava(true))
+  ipcMain.handle(IPC.javaRefresh, async (_event, refresh?: boolean) => {
+    if (activeJavaScanTaskId) throw new Error('Java 扫描已在进行中')
+    const task = registerTask('扫描本机 Java', 'java')
+    activeJavaScanTaskId = task.id
+    const progressGuard = new ProgressEventGuard()
+    const taskEmit = (event: ProgressEvent): void => {
+      const normalized = progressGuard.normalize(event)
+      emit({ ...normalized, taskId: task.id, taskTitle: task.title })
+    }
+    try {
+      const result = await java.scanJavaInstallations({
+        refresh: refresh !== false,
+        signal: task.controller.signal,
+        emit: taskEmit
+      })
+      send(IPC_EVENT.taskDone, { taskId: task.id, ok: true })
+      return result
+    } catch (error) {
+      const cancelled = isCancelError(error)
+      send(IPC_EVENT.taskDone, {
+        taskId: task.id,
+        ok: false,
+        cancelled,
+        error: cancelled ? '已取消' : errText(error),
+        stage: 'java-scan'
+      })
+      throw error
+    } finally {
+      activeJavaScanTaskId = null
+      finishTask(task.id)
+    }
+  })
+  ipcMain.handle(IPC.javaCancelScan, () =>
+    activeJavaScanTaskId ? cancelTaskAndWait(activeJavaScanTaskId) : false
+  )
 
   // ---------------- 皮肤/披风（同步 await 返回，错误经 invoke reject 给前端） ----------------
   ipcMain.handle(IPC.skinProfile, () => skins.getProfile())
