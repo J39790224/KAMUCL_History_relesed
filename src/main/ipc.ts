@@ -18,7 +18,8 @@ import type {
   LoaderName,
   ProgressEvent,
   Settings,
-  SkinVariant
+  SkinVariant,
+  WorldImportOptions
 } from '../shared/types'
 import * as settings from './core/settings'
 import * as accounts from './core/accounts'
@@ -46,6 +47,7 @@ import { ProgressEventGuard } from './core/progress'
 import { launcherLog } from './core/launcherLog'
 import * as gameFolders from './core/gameFolders'
 import * as instances from './core/instances'
+import * as worlds from './core/worlds'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -307,6 +309,44 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
           })
         })
         .finally(() => finishTask(task.id))
+    }
+  )
+
+  // ---------------- 世界存档 ----------------
+  ipcMain.handle(IPC.worldProbe, (_e, inputPath: string) =>
+    worlds.probeWorld(String(inputPath ?? ''))
+  )
+  ipcMain.handle(
+    IPC.worldImport,
+    async (_e, inputPath: string, options: WorldImportOptions) => {
+      const source = String(inputPath ?? '')
+      const task = registerTask(`导入存档 ${path.basename(source)}`, 'world')
+      const progressGuard = new ProgressEventGuard()
+      let lastStage = ''
+      const taskEmit = (event: ProgressEvent): void => {
+        const normalized = progressGuard.normalize(event)
+        lastStage = normalized.stage
+        emit({ ...normalized, taskId: task.id, taskTitle: task.title })
+      }
+      try {
+        const result = await worlds.importWorld(source, options, taskEmit, task.controller.signal)
+        send(IPC_EVENT.taskDone, { taskId: task.id, ok: true })
+        return result
+      } catch (error) {
+        const cancelled = isCancelError(error)
+        const message = cancelled ? '已取消' : errText(error)
+        if (!cancelled) taskEmit({ stage: 'error', progress: 0, text: message })
+        send(IPC_EVENT.taskDone, {
+          taskId: task.id,
+          ok: false,
+          error: message,
+          cancelled,
+          stage: lastStage
+        })
+        throw error
+      } finally {
+        finishTask(task.id)
+      }
     }
   )
 

@@ -15,12 +15,13 @@ import {
   onTaskDone,
   pauseTask,
   probeModpack,
+  probeWorld,
   resumeTask,
   selectFile
 } from './api'
 import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, resetProgressMono, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
-import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
+import type { CustomTheme, ModpackInfo, ThemeName, WorldImportInfo } from '@shared/types'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import SplashScreen from './components/SplashScreen.vue'
@@ -35,6 +36,7 @@ import ServersView from './views/ServersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import AccountsView from './views/AccountsView.vue'
 import ModDropModal from './components/ModDropModal.vue'
+import WorldImportModal from './components/WorldImportModal.vue'
 
 const viewMap: Record<ViewName, Component> = {
   home: HomeView,
@@ -184,9 +186,9 @@ function onDrop(e: DragEvent) {
   const paths = dropped.map((f) => window.kamucl.getFilePath(f))
   const names = dropped.map((f) => f.name.toLowerCase())
 
-  // 单文件且为整合包格式 → 整合包导入流程
-  if (names.length === 1 && /\.(mrpack|zip)$/.test(names[0])) {
-    void openModpackImport(paths[0])
+  // 单项拖入先按内容识别：.mrpack 始终优先，ZIP/文件夹可能是世界存档。
+  if (names.length === 1) {
+    void routeSingleImport(paths[0], names[0])
     return
   }
   // 全部为非压缩包扩展（.jar 或文件夹）→ MOD 拖入即装流程
@@ -200,6 +202,39 @@ function onDrop(e: DragEvent) {
 
 // ---------------- MOD 拖入即装 ----------------
 const modDrop = reactive({ open: false, files: [] as string[] })
+
+const worldModal = reactive({
+  open: false,
+  filePath: '',
+  info: null as WorldImportInfo | null
+})
+
+async function routeSingleImport(filePath: string, displayName: string) {
+  if (/\.mrpack$/i.test(displayName)) {
+    await openModpackImport(filePath)
+    return
+  }
+  if (!/\.jar$/i.test(displayName)) {
+    try {
+      const info = await probeWorld(filePath)
+      if (info) {
+        worldModal.filePath = filePath
+        worldModal.info = info
+        worldModal.open = true
+        return
+      }
+    } catch (e) {
+      toast('存档识别失败：' + errText(e), 'error')
+      return
+    }
+  }
+  if (/\.zip$/i.test(displayName)) {
+    await openModpackImport(filePath)
+    return
+  }
+  modDrop.files = [filePath]
+  modDrop.open = true
+}
 
 // ---------------- 整合包导入确认弹窗 ----------------
 const FORMAT_LABEL: Record<ModpackInfo['format'], string> = {
@@ -278,7 +313,7 @@ function confirmModpackImport() {
 async function onImportClick() {
   try {
     const p = await selectFile()
-    if (p) void openModpackImport(p)
+    if (p) void routeSingleImport(p, p.split(/[\\/]/).pop() ?? p)
   } catch (e) {
     toast('整合包安装失败：' + errText(e), 'error')
   }
@@ -872,13 +907,20 @@ onUnmounted(() => {
           <path d="m7 8 5-5 5 5" />
           <path d="M12 3v12" />
         </svg>
-        <p class="drop-title">松开导入：整合包（.mrpack / .zip）或 MOD（.jar / 文件夹）</p>
+        <p class="drop-title">松开导入：存档文件夹 / ZIP、整合包（.mrpack）或 MOD</p>
       </div>
     </div>
   </Teleport>
 
   <!-- MOD 拖入即装确认弹窗 -->
   <ModDropModal :open="modDrop.open" :files="modDrop.files" @close="modDrop.open = false" />
+
+  <WorldImportModal
+    :open="worldModal.open"
+    :file-path="worldModal.filePath"
+    :info="worldModal.info"
+    @close="worldModal.open = false"
+  />
 
   <!-- 启动失败：提示 + 导出错误日志 -->
   <Teleport to="body">

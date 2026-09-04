@@ -1,8 +1,10 @@
 /**
- * 极简 NBT（Named Binary Tag）读写器：只支持 servers.dat 需要的类型
- * （0=End, 1=Byte, 3=Int, 8=String, 9=List, 10=Compound）。
- * servers.dat 为未压缩 NBT：根 Compound（无名）→ servers: List[Compound{name, ip, ...}]
+ * NBT（Named Binary Tag）读写器。读取覆盖标准 0..12 标签并自动识别 gzip/zlib，
+ * 因而既可读未压缩 servers.dat，也可安全读取压缩的世界 level.dat。
+ * 写入器只暴露启动器当前需要的 servers.dat 子集。
  */
+
+import zlib from 'node:zlib'
 
 export interface NbtCompound {
   [key: string]: unknown
@@ -13,50 +15,121 @@ class Reader {
   private off = 0
   constructor(private buf: Buffer) {}
 
+  private ensure(bytes: number): void {
+    if (!Number.isInteger(bytes) || bytes < 0 || this.off + bytes > this.buf.length) {
+      throw new Error('NBT 数据被截断或长度无效')
+    }
+  }
+
+  type(): number {
+    this.ensure(1)
+    return this.buf.readUInt8(this.off++)
+  }
+
   byte(): number {
+    this.ensure(1)
     return this.buf.readInt8(this.off++)
   }
   short(): number {
+    this.ensure(2)
     const v = this.buf.readInt16BE(this.off)
     this.off += 2
     return v
   }
+  unsignedShort(): number {
+    this.ensure(2)
+    const v = this.buf.readUInt16BE(this.off)
+    this.off += 2
+    return v
+  }
   int(): number {
+    this.ensure(4)
     const v = this.buf.readInt32BE(this.off)
     this.off += 4
     return v
   }
+  long(): number | string {
+    this.ensure(8)
+    const value = this.buf.readBigInt64BE(this.off)
+    this.off += 8
+    return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : value.toString()
+  }
+  float(): number {
+    this.ensure(4)
+    const value = this.buf.readFloatBE(this.off)
+    this.off += 4
+    return value
+  }
+  double(): number {
+    this.ensure(8)
+    const value = this.buf.readDoubleBE(this.off)
+    this.off += 8
+    return value
+  }
   string(): string {
-    const len = this.short()
+    const len = this.unsignedShort()
+    this.ensure(len)
     const s = this.buf.toString('utf-8', this.off, this.off + len)
     this.off += len
     return s
   }
 
-  payload(type: number): unknown {
+  private collectionLength(): number {
+    const length = this.int()
+    if (length < 0 || length > 1_000_000) throw new Error(`NBT 集合长度异常: ${length}`)
+    return length
+  }
+
+  payload(type: number, depth = 0): unknown {
+    if (depth > 64) throw new Error('NBT 嵌套层级过深')
     switch (type) {
       case 1:
         return this.byte()
+      case 2:
+        return this.short()
       case 3:
         return this.int()
+      case 4:
+        return this.long()
+      case 5:
+        return this.float()
+      case 6:
+        return this.double()
+      case 7: {
+        const length = this.collectionLength()
+        this.ensure(length)
+        const value = Buffer.from(this.buf.subarray(this.off, this.off + length))
+        this.off += length
+        return value
+      }
       case 8:
         return this.string()
       case 9: {
-        const itemType = this.byte()
-        const len = this.int()
+        const itemType = this.type()
+        const len = this.collectionLength()
         const arr: unknown[] = []
-        for (let i = 0; i < len; i++) arr.push(this.payload(itemType))
+        for (let i = 0; i < len; i++) arr.push(this.payload(itemType, depth + 1))
         return arr
       }
       case 10: {
         const obj: NbtCompound = {}
         for (;;) {
-          const t = this.byte()
+          const t = this.type()
           if (t === 0) break
           const name = this.string()
-          obj[name] = this.payload(t)
+          obj[name] = this.payload(t, depth + 1)
         }
         return obj
+      }
+      case 11: {
+        const length = this.collectionLength()
+        return Array.from({ length }, () => this.int())
+      }
+      case 12: {
+        const length = this.collectionLength()
+        return Array.from({ length }, () => this.long())
       }
       default:
         throw new Error(`不支持的 NBT 类型: ${type}`)
@@ -64,10 +137,27 @@ class Reader {
   }
 }
 
-/** 解析 NBT 二进制为根 Compound */
+const MAX_DECOMPRESSED_NBT = 64 * 1024 * 1024
+
+function decompressNbt(buf: Buffer): Buffer {
+  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+    return zlib.gunzipSync(buf, { maxOutputLength: MAX_DECOMPRESSED_NBT })
+  }
+  if (buf.length >= 2 && buf[0] === 0x78) {
+    try {
+      return zlib.inflateSync(buf, { maxOutputLength: MAX_DECOMPRESSED_NBT })
+    } catch {
+      // 0x78 也可能恰好是未压缩数据的一部分，按原数据继续解析。
+    }
+  }
+  if (buf.length > MAX_DECOMPRESSED_NBT) throw new Error('NBT 文件过大')
+  return buf
+}
+
+/** 解析未压缩、gzip 或 zlib NBT 为根 Compound。 */
 export function parseNbt(buf: Buffer): NbtCompound {
-  const r = new Reader(buf)
-  const rootType = r.byte()
+  const r = new Reader(decompressNbt(buf))
+  const rootType = r.type()
   if (rootType !== 10) throw new Error('NBT 根节点不是 Compound')
   r.string() // root name（通常为空）
   return r.payload(10) as NbtCompound

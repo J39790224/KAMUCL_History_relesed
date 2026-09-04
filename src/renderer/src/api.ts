@@ -33,7 +33,10 @@ import type {
   ServerPingResult,
   Settings,
   SkinHistoryEntry,
-  SkinVariant
+  SkinVariant,
+  WorldImportInfo,
+  WorldImportOptions,
+  WorldImportResult
 } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -128,6 +131,12 @@ export const probeModpack = (filePath: string) => invoke<ModpackInfo>(IPC.modpac
 /** 异步安装整合包：invoke 仅表示任务已受理，完成/失败由 onInstallDone 推送 */
 export const installModpack = (filePath: string, opts?: { nameSource?: 'file' | 'inner' }) =>
   invoke<void>(IPC.modpackInstall, filePath, opts)
+
+// ---------------- 世界存档 ----------------
+export const probeWorld = (inputPath: string) =>
+  invoke<WorldImportInfo | null>(IPC.worldProbe, inputPath)
+export const importWorld = (inputPath: string, options: WorldImportOptions) =>
+  invoke<WorldImportResult>(IPC.worldImport, inputPath, options)
 
 // ---------------- 社区资源 ----------------
 /** 搜索 Modrinth / CurseForge 社区资源 */

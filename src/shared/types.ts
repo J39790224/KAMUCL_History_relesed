@@ -434,6 +434,10 @@ export const IPC = {
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
   modpackInstall: 'modpack:install', // (filePath: string, opts?: { nameSource?: 'file' | 'inner' }) => void  nameSource 默认 'file'（以压缩包文件名命名实例）；异步：进度走 event:progress，完成走 event:installDone（versionId = 实例 id）
 
+  // 世界存档拖拽导入
+  worldProbe: 'world:probe', // (path: string) => WorldImportInfo | null
+  worldImport: 'world:import', // (path: string, options: WorldImportOptions) => WorldImportResult
+
   // 社区资源
   communitySearch: 'community:search', // (q: CommunityQuery) => CommunityResult[]
   communityFiles: 'community:files', // (source: 'modrinth'|'curseforge', projectId: string) => CommunityFile[]
@@ -536,6 +540,62 @@ export interface ModpackInfo {
   mcVersion: string
   loader?: LoaderName
   loaderVersion?: string
+}
+
+export type WorldVersionConfidence = 'exact' | 'approximate' | 'unknown'
+
+export interface WorldResourcePackInfo {
+  /** 相对于拖入目录或压缩包根的安全标识。 */
+  id: string
+  name: string
+}
+
+export interface WorldCandidateInfo {
+  /** 相对于拖入目录或压缩包根的世界根；“.” 表示根目录。 */
+  id: string
+  worldName: string
+  dataVersion?: number
+  minecraftVersion?: string
+  versionConfidence: WorldVersionConfidence
+  gameMode?: '生存' | '创造' | '冒险' | '旁观'
+  hardcore: boolean
+  datapackCount: number
+  resourcePacks: WorldResourcePackInfo[]
+  hasWorldResourcePack: boolean
+  modEvidence: string[]
+  loader?: LoaderName
+  loaderConfidence?: 'metadata' | 'inferred'
+  fileCount: number
+  totalBytes: number
+}
+
+export interface WorldImportInfo {
+  sourcePath: string
+  sourceType: 'folder' | 'zip'
+  candidates: WorldCandidateInfo[]
+  warnings: string[]
+}
+
+export interface WorldImportOptions {
+  candidateId: string
+  worldName: string
+  targetFolder: string
+  targetVersionId?: string
+  newInstance?: {
+    minecraftVersion: string
+    instanceName: string
+    loader?: LoaderName
+    loaderVersion?: string
+  }
+  allowVersionMismatch?: boolean
+}
+
+export interface WorldImportResult {
+  versionId: string
+  worldName: string
+  worldDirectory: string
+  installedResourcePacks: string[]
+  createdInstance: boolean
 }
 
 // ---------------- 服务器 ----------------

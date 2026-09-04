@@ -7,7 +7,7 @@ export interface TaskRecord {
   id: string
   /** 展示名（如「导入整合包 xxx.zip」「安装版本 26.2」） */
   title: string
-  kind: 'version' | 'modpack' | 'download'
+  kind: 'version' | 'modpack' | 'download' | 'world'
   controller: AbortController
   /** 仅在底层任务已经退出并完成清理后才会 resolve。 */
   settled: Promise<void>
