@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, onTaskDone, probeModpack, selectFile, cancelTask } from './api'
+import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, onTaskDone, probeModpack, selectFile, cancelTask, exportLaunchLogs } from './api'
 import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, resetProgressMono, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
@@ -276,6 +276,25 @@ function toggleNotices() {
   if (noticeOpen.value) markNoticesRead()
 }
 
+// ---------------- 启动失败日志导出 ----------------
+const launchFail = reactive({ open: false, title: '', text: '', exporting: false })
+
+async function onExportLogs() {
+  if (launchFail.exporting) return
+  launchFail.exporting = true
+  try {
+    const p = await exportLaunchLogs(store.launchingVersionId)
+    if (p) {
+      toast(`错误日志已导出：${p}`, 'success')
+      launchFail.open = false
+    }
+  } catch (e) {
+    toast('导出失败：' + errText(e), 'error')
+  } finally {
+    launchFail.exporting = false
+  }
+}
+
 // ---------------- 下载中心 ----------------
 const dlOpen = ref(false)
 const activeTaskCount = computed(() => store.tasks.filter((t) => t.status === 'running').length)
@@ -508,9 +527,20 @@ onMounted(async () => {
         recordLastPlayed(store.launchingVersionId)
       }
       if (s.status === 'exited' || s.status === 'error') store.progress = null
-      if (s.status === 'error') toast('游戏启动出错：' + s.text, 'error')
-      else if (s.status === 'exited') {
-        toast(s.code ? `游戏已退出（代码 ${s.code}）` : '游戏已退出', 'info')
+      if (s.status === 'error') {
+        // 启动失败：弹窗提示并提供「导出错误日志」
+        launchFail.open = true
+        launchFail.title = '游戏启动失败'
+        launchFail.text = s.text
+      } else if (s.status === 'exited') {
+        if (s.code) {
+          // 非 0 退出码 = 崩溃，同样提供日志导出
+          launchFail.open = true
+          launchFail.title = `游戏异常退出（代码 ${s.code}）`
+          launchFail.text = '游戏进程崩溃或被异常终止。可导出错误日志（含 crash-report 与 latest.log）用于排查。'
+        } else {
+          toast('游戏已退出', 'info')
+        }
         // 游戏退出后重读 servers.dat（玩家在游戏内增删的服务器自动同步回来）
         void import('./api').then(({ syncServersFromDat }) =>
           syncServersFromDat().catch(() => undefined)
@@ -784,6 +814,23 @@ onUnmounted(() => {
 
   <!-- MOD 拖入即装确认弹窗 -->
   <ModDropModal :open="modDrop.open" :files="modDrop.files" @close="modDrop.open = false" />
+
+  <!-- 启动失败：提示 + 导出错误日志 -->
+  <Teleport to="body">
+    <div v-if="launchFail.open" class="modal-mask" @click.self="launchFail.open = false">
+      <div class="modal launchfail-modal">
+        <h3 class="modal-title">{{ launchFail.title }}</h3>
+        <p class="launchfail-text">{{ launchFail.text }}</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" @click="launchFail.open = false">关闭</button>
+          <button class="btn btn-gold" :disabled="launchFail.exporting" @click="onExportLogs">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></svg>
+            {{ launchFail.exporting ? '导出中…' : '导出错误日志' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 整合包导入确认弹窗 -->
   <Teleport to="body">
@@ -1270,6 +1317,19 @@ onUnmounted(() => {
 }
 .dl-dismiss:hover {
   color: var(--text);
+}
+/* 启动失败弹窗 */
+.launchfail-modal {
+  width: 480px;
+}
+.launchfail-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  word-break: break-all;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
 }
 .notice-item {
   display: flex;

@@ -227,6 +227,10 @@ export const onTaskDone = (
 /** 取消进行中的后台任务 */
 export const cancelTask = (taskId: string) => invoke<boolean>(IPC.tasksCancel, taskId)
 
+/** 导出启动失败日志包（弹系统保存对话框），返回保存路径（取消 = null） */
+export const exportLaunchLogs = (versionId: string) =>
+  invoke<string | null>(IPC.launchExportLogs, versionId)
+
 // ---------------- 工具 ----------------
 /** 把 invoke 抛出的错误转成适合 toast 展示的短文本 */
 export function errText(e: unknown): string {

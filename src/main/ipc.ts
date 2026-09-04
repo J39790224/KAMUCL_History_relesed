@@ -34,6 +34,7 @@ import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
 import { registerTask, cancelTask, finishTask, isCancelError } from './core/tasks'
+import { exportLaunchLogs } from './core/exportLogs'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -405,6 +406,10 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       .catch((err) => sendState({ status: 'error', text: errText(err) }))
   })
   ipcMain.handle(IPC.gameKill, () => launch.killGame())
+  // 导出启动失败日志包（保存对话框在 main 弹出）
+  ipcMain.handle(IPC.launchExportLogs, (_e, versionId: string) =>
+    exportLaunchLogs(getWin(), String(versionId ?? ''))
+  )
 
   // ---------------- 游戏目录迁移 ----------------
   ipcMain.handle(IPC.gameDirMigrate, (_e, newDir: string, migrate: boolean) => {

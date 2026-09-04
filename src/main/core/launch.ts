@@ -46,6 +46,17 @@ export function getRunningVersionId(): string | null {
   return currentVersionId
 }
 
+/** 最近一次启动的上下文（导出错误日志摘要用） */
+export interface LastLaunchInfo {
+  versionId: string
+  javaPath: string
+  startedAt: string
+}
+let lastLaunch: LastLaunchInfo | null = null
+export function getLastLaunch(): LastLaunchInfo | null {
+  return lastLaunch
+}
+
 /** 终止当前游戏进程 */
 export function killGame(): void {
   try {
@@ -384,6 +395,7 @@ export async function launch(
   const proc = spawn(javaPath, args, { cwd: effectiveGameDir })
   current = proc
   currentVersionId = versionId
+  lastLaunch = { versionId, javaPath, startedAt: new Date().toISOString() }
   onState({ status: 'running', text: '游戏进程已启动' })
 
   const pushLine = makeLinePusher(log)
