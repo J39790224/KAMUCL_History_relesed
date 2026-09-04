@@ -1,7 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { errText, getSettings, installModpack, onGameDirDone, onInstallDone, onLaunchLog, onLaunchState, onProgress, onTaskDone, probeModpack, selectFile, cancelTask, exportLaunchLogs } from './api'
+import {
+  cancelTask,
+  errText,
+  exportLaunchLogs,
+  getSettings,
+  installModpack,
+  onGameDirDone,
+  onInstallDone,
+  onLaunchLog,
+  onLaunchState,
+  onProgress,
+  onTaskDone,
+  pauseTask,
+  probeModpack,
+  resumeTask,
+  selectFile
+} from './api'
 import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, resetProgressMono, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
 import type { CustomTheme, ModpackInfo, ThemeName } from '@shared/types'
@@ -298,12 +314,35 @@ async function onExportLogs() {
 // ---------------- 下载中心 ----------------
 const dlOpen = ref(false)
 const activeTaskCount = computed(
-  () => store.tasks.filter((t) => t.status === 'running' || t.status === 'cancelling').length
+  () =>
+    store.tasks.filter(
+      (t) => t.status === 'running' || t.status === 'paused' || t.status === 'cancelling'
+    ).length
 )
+
+async function onPauseTask(id: string) {
+  const task = store.tasks.find((t) => t.id === id)
+  if (!task || task.status !== 'running') return
+  try {
+    if (await pauseTask(id)) task.status = 'paused'
+  } catch (e) {
+    toast('暂停失败：' + errText(e), 'error')
+  }
+}
+
+async function onResumeTask(id: string) {
+  const task = store.tasks.find((t) => t.id === id)
+  if (!task || task.status !== 'paused') return
+  try {
+    if (await resumeTask(id)) task.status = 'running'
+  } catch (e) {
+    toast('恢复失败：' + errText(e), 'error')
+  }
+}
 
 async function onCancelTask(id: string) {
   const task = store.tasks.find((t) => t.id === id)
-  if (!task || task.status !== 'running') return
+  if (!task || (task.status !== 'running' && task.status !== 'paused')) return
   task.status = 'cancelling'
   try {
     const found = await cancelTask(id)
@@ -320,6 +359,13 @@ async function onCancelTask(id: string) {
 function taskSubText(t: { stage: string; text: string }): string {
   const label = stageLabel(t.stage)
   return t.text.startsWith(label) ? t.text : `${label} · ${t.text}`
+}
+
+function taskEtaText(seconds?: number): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 3) return ''
+  if (seconds >= 3600) return ` · 约剩 ${Math.ceil(seconds / 3600)}h`
+  if (seconds >= 60) return ` · 约剩 ${Math.ceil(seconds / 60)}min`
+  return ` · 约剩 ${Math.round(seconds)}s`
 }
 
 function fmtNoticeTime(ts: number): string {
@@ -767,9 +813,14 @@ onUnmounted(() => {
               <div v-for="t in store.tasks" :key="t.id" class="dl-item" :class="'dl-' + t.status">
                 <div class="dl-item-head">
                   <span class="dl-title" :title="t.title">{{ t.title }}</span>
-                  <button v-if="t.status === 'running'" class="btn btn-ghost btn-sm" @click="onCancelTask(t.id)">
-                    取消
-                  </button>
+                  <span v-if="t.status === 'running'" class="dl-actions">
+                    <button class="btn btn-ghost btn-sm" @click="onPauseTask(t.id)">暂停</button>
+                    <button class="btn btn-ghost btn-sm" @click="onCancelTask(t.id)">取消</button>
+                  </span>
+                  <span v-else-if="t.status === 'paused'" class="dl-actions">
+                    <button class="btn btn-ghost btn-sm" @click="onResumeTask(t.id)">继续</button>
+                    <button class="btn btn-ghost btn-sm" @click="onCancelTask(t.id)">取消</button>
+                  </span>
                   <button v-else-if="t.status === 'cancelling'" class="btn btn-ghost btn-sm" disabled>
                     正在取消…
                   </button>
@@ -777,8 +828,9 @@ onUnmounted(() => {
                 </div>
                 <div class="dl-sub muted">
                   <template v-if="t.status === 'running'">
-                    {{ taskSubText(t) }} · {{ Math.round(t.progress * 100) }}%
+                    {{ taskSubText(t) }} · {{ t.indeterminate ? '正在计算总量' : Math.round(t.progress * 100) + '%' }}{{ taskEtaText(t.etaSeconds) }}
                   </template>
+                  <template v-else-if="t.status === 'paused'">已暂停 · {{ t.indeterminate ? '总量未知' : Math.round(t.progress * 100) + '%' }}</template>
                   <template v-else-if="t.status === 'cancelling'">正在停止网络与后台任务…</template>
                   <template v-else-if="t.status === 'done'">已完成</template>
                   <template v-else-if="t.status === 'cancelled'">已取消</template>
@@ -786,8 +838,8 @@ onUnmounted(() => {
                     失败于「{{ stageLabel(t.stage || 'error') }}」阶段：{{ t.error }}
                   </template>
                 </div>
-                <div v-if="t.status === 'running' || t.status === 'cancelling'" class="dl-bar">
-                  <div class="dl-bar-fill" :style="{ width: Math.round(t.progress * 100) + '%' }"></div>
+                <div v-if="t.status === 'running' || t.status === 'paused' || t.status === 'cancelling'" class="dl-bar" :class="{ 'is-indeterminate': t.indeterminate && t.status === 'running' }">
+                  <div class="dl-bar-fill" :style="{ width: t.indeterminate ? '35%' : Math.round(t.progress * 100) + '%' }"></div>
                 </div>
               </div>
             </div>
@@ -1290,6 +1342,11 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 8px;
 }
+.dl-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
 .dl-title {
   font-size: 13px;
   font-weight: 600;
@@ -1318,6 +1375,17 @@ onUnmounted(() => {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent-2), var(--accent));
   transition: width 0.3s ease;
+}
+.dl-bar.is-indeterminate .dl-bar-fill {
+  animation: dl-indeterminate 1.25s ease-in-out infinite;
+}
+@keyframes dl-indeterminate {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(320%);
+  }
 }
 .dl-dismiss {
   border: none;

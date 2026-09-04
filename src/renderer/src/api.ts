@@ -226,6 +226,8 @@ export const onTaskDone = (
 
 /** 取消进行中的后台任务 */
 export const cancelTask = (taskId: string) => invoke<boolean>(IPC.tasksCancel, taskId)
+export const pauseTask = (taskId: string) => invoke<boolean>(IPC.tasksPause, taskId)
+export const resumeTask = (taskId: string) => invoke<boolean>(IPC.tasksResume, taskId)
 
 /** 导出启动失败日志包（弹系统保存对话框），返回保存路径（取消 = null） */
 export const exportLaunchLogs = (versionId: string) =>

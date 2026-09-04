@@ -670,6 +670,8 @@ export async function installModpack(
   emit: ProgressEmit,
   opts?: ModpackInstallOpts
 ): Promise<string> {
+  const report: ProgressEmit = (event) =>
+    emit({ ...event, overall: event.overall ?? event.progress })
   // 1) 校验存在性与 zip 可读、探测格式
   const zip = openPackZip(filePath)
   const nameSource = opts?.nameSource === 'inner' ? 'inner' : 'file'
@@ -678,16 +680,16 @@ export async function installModpack(
 
   // 全量包：解压即玩，无需下载
   if (detected.format === 'fullpack') {
-    return await installFullpack(zip, detected.full, fileName, nameSource, emit, opts?.signal)
+    return await installFullpack(zip, detected.full, fileName, nameSource, report, opts?.signal)
   }
 
   // 2) 解析清单
-  emit({ stage: 'modpack', progress: 0, text: '解析整合包信息…' })
+  report({ stage: 'modpack', progress: 0, text: '解析整合包信息…' })
   const parsed = detected.format === 'mrpack' ? parseMrpack(zip) : parseCurseForge(zip)
   throwIfCancelled(opts?.signal)
   const { meta } = parsed
   const loaderText = meta.loader ? ` + ${meta.loader} ${meta.loaderVersion ?? ''}` : ''
-  emit({
+  report({
     stage: 'modpack',
     progress: 0.02,
     text: `${meta.name}（MC ${meta.mcVersion}${loaderText}）`
@@ -698,96 +700,103 @@ export async function installModpack(
   const instDir = versionDir(id)
 
   try {
+    // 4) 安装游戏本体与加载器（已有的文件自动跳过）
+    report({ stage: 'modpack', progress: 0.04, text: '安装游戏本体与加载器…' })
+    const baseVersionId = await installVersion(
+      meta.mcVersion,
+      meta.loader ? { loader: meta.loader, loaderVersion: meta.loaderVersion } : {},
+      (event) =>
+        report({
+          ...event,
+          overall: 0.04 + (event.overall ?? event.progress) * 0.44
+        }),
+      opts?.signal
+    )
 
-  // 4) 安装游戏本体与加载器（已有的文件自动跳过）
-  emit({ stage: 'modpack', progress: 0.05, text: '安装游戏本体与加载器…' })
-  const baseVersionId = await installVersion(
-    meta.mcVersion,
-    meta.loader ? { loader: meta.loader, loaderVersion: meta.loaderVersion } : {},
-    emit,
-    opts?.signal
-  )
+    // 5) 创建实例版本
+    fs.mkdirSync(instDir, { recursive: true })
+    const instanceJson = {
+      id,
+      inheritsFrom: baseVersionId,
+      ...(meta.loader ? { _loader: meta.loader, _loaderVersion: meta.loaderVersion } : {}),
+      _gameDir: true,
+      _modpackName: meta.name,
+      _modpackVersion: meta.packVersion
+    }
+    fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
+    registerVersionFolder(id, gameDir())
 
-  // 5) 创建实例版本
-  fs.mkdirSync(instDir, { recursive: true })
-  const instanceJson = {
-    id,
-    inheritsFrom: baseVersionId,
-    ...(meta.loader ? { _loader: meta.loader, _loaderVersion: meta.loaderVersion } : {}),
-    _gameDir: true,
-    _modpackName: meta.name,
-    _modpackVersion: meta.packVersion
-  }
-  fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
-  registerVersionFolder(id, gameDir())
-
-  // 6) 下载整合包文件
-  let pending: PendingFile[]
-  if (parsed.kind === 'mrpack') {
-    pending = parsed.files
-  } else {
-    // CurseForge：先经 MCIM 镜像解析真实文件名与下载地址
-    const cfFiles = parsed.files
-    let resolved = 0
-    const infos = await mapPool(cfFiles, 8, async (f) => {
-      const info = await resolveCfFile(f.projectID, f.fileID, opts?.signal)
-      resolved++
-      emit({
-        stage: 'modpack',
-        progress: 0.05 + (cfFiles.length ? (resolved / cfFiles.length) * 0.05 : 0),
-        text: `解析下载地址 ${resolved}/${cfFiles.length}`
-      })
-      return info
-    }, opts?.signal)
-    pending = infos.map((info) => ({ rel: `mods/${info.fileName}`, url: info.url, size: 0 }))
-  }
-
-  const tasks: DownloadTask[] = []
-  const sizes: number[] = []
-  for (const f of pending) {
-    const dest = safeJoin(instDir, f.rel)
-    if (!dest) continue // 拒绝含 .. 的条目
-    tasks.push({ url: f.url, dest, sha1: f.sha1 })
-    sizes.push(f.size)
-  }
-  // 按 fileSize 汇总进度（任务按序派发，用前缀和近似已完成字节数；无 size 时退化为按文件数）
-  const prefixSum: number[] = [0]
-  for (const s of sizes) prefixSum.push(prefixSum[prefixSum.length - 1] + s)
-  const totalBytes = prefixSum[prefixSum.length - 1]
-
-  if (tasks.length) {
-    try {
-      await downloadAll(
-        tasks,
-        (d, t, speed) => {
-          const doneBytes = prefixSum[d] ?? 0
-          const ratio = totalBytes ? doneBytes / totalBytes : t ? d / t : 0
-          emit({
-            stage: 'modpack',
-            progress: 0.1 + ratio * 0.85,
-            text: totalBytes
-              ? `下载整合包文件 ${d}/${t}（${fmtMB(doneBytes)}/${fmtMB(totalBytes)}）`
-              : `下载整合包文件 ${d}/${t}`,
-            speed
-          })
-        },
+    // 6) 下载整合包文件
+    let pending: PendingFile[]
+    if (parsed.kind === 'mrpack') {
+      pending = parsed.files
+    } else {
+      // CurseForge：先经 MCIM 镜像解析真实文件名与下载地址
+      const cfFiles = parsed.files
+      let resolved = 0
+      const infos = await mapPool(
+        cfFiles,
         8,
-        getSettings().mirror,
+        async (f) => {
+          const info = await resolveCfFile(f.projectID, f.fileID, opts?.signal)
+          resolved++
+          report({
+            stage: 'modpack',
+            progress: 0.48 + (cfFiles.length ? (resolved / cfFiles.length) * 0.04 : 0),
+            text: `解析下载地址 ${resolved}/${cfFiles.length}`
+          })
+          return info
+        },
         opts?.signal
       )
-    } catch (e) {
-      throw new Error(`整合包文件下载失败：${errText(e)}`)
+      pending = infos.map((info) => ({ rel: `mods/${info.fileName}`, url: info.url, size: 0 }))
     }
-  }
 
-  // 7) 解压 overrides 覆盖到实例目录
-  emit({ stage: 'modpack', progress: 0.96, text: '解压覆盖文件…' })
-  throwIfCancelled(opts?.signal)
-  await extractOverrides(zip, meta.overridesPrefix, instDir, opts?.signal)
+    const tasks: DownloadTask[] = []
+    for (const f of pending) {
+      const dest = safeJoin(instDir, f.rel)
+      if (!dest) continue // 拒绝含 .. 的条目
+      tasks.push({ url: f.url, dest, sha1: f.sha1, size: f.size || undefined })
+    }
 
-  // 8) 完成
-  emit({ stage: 'done', progress: 1, text: `${meta.name} 安装完成` })
-  return id
+    if (tasks.length) {
+      try {
+        await downloadAll(
+          tasks,
+          (d, t, speed, detail) => {
+            const doneBytes = detail.bytesDone
+            const ratio = detail.fraction ?? 0
+            report({
+              stage: 'modpack',
+              progress: 0.52 + ratio * 0.43,
+              text:
+                detail.bytesTotal != null
+                  ? `下载整合包文件 ${d}/${t}（${fmtMB(doneBytes)}/${fmtMB(detail.bytesTotal)}）`
+                  : `下载整合包文件 ${d}/${t}`,
+              speed,
+              etaSeconds: detail.etaSeconds ?? undefined,
+              bytesDone: detail.bytesDone,
+              bytesTotal: detail.bytesTotal ?? undefined,
+              indeterminate: detail.indeterminate
+            })
+          },
+          8,
+          getSettings().mirror,
+          opts?.signal
+        )
+      } catch (e) {
+        throw new Error(`整合包文件下载失败：${errText(e)}`)
+      }
+    }
+
+    // 7) 解压 overrides 覆盖到实例目录
+    report({ stage: 'modpack', progress: 0.96, text: '解压覆盖文件…' })
+    throwIfCancelled(opts?.signal)
+    await extractOverrides(zip, meta.overridesPrefix, instDir, opts?.signal)
+
+    // 8) 完成
+    report({ stage: 'done', progress: 1, text: `${meta.name} 安装完成` })
+    return id
   } catch (e) {
     // id 由 uniqueInstanceId 生成，本次流程独占；失败/取消时可安全整目录回滚。
     fs.rmSync(instDir, { recursive: true, force: true })

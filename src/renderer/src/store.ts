@@ -114,7 +114,9 @@ export interface TaskItem {
   /** 0-1 */
   progress: number
   speed?: number
-  status: 'running' | 'cancelling' | 'done' | 'error' | 'cancelled'
+  etaSeconds?: number
+  indeterminate?: boolean
+  status: 'running' | 'paused' | 'cancelling' | 'done' | 'error' | 'cancelled'
   error?: string
   /** 完成时间戳（用于完成态短暂展示后清理） */
   finishedAt?: number
@@ -161,6 +163,8 @@ export function upsertTaskProgress(e: ProgressEvent) {
   t.text = e.text
   t.progress = progressMono(e)
   t.speed = e.speed
+  t.etaSeconds = e.etaSeconds
+  t.indeterminate = e.indeterminate
 }
 
 /** 任务终态（成功/失败/取消），失败保留阶段与原因 */
@@ -173,7 +177,11 @@ export function finalizeTask(r: {
 }) {
   if (!r.taskId) return
   const t = store.tasks.find((x) => x.id === r.taskId)
-  if (!t || (t.status !== 'running' && t.status !== 'cancelling')) return
+  if (
+    !t ||
+    (t.status !== 'running' && t.status !== 'paused' && t.status !== 'cancelling')
+  )
+    return
   t.status = r.cancelled ? 'cancelled' : r.ok ? 'done' : 'error'
   t.error = r.error
   t.progress = r.ok ? 1 : t.progress
@@ -391,6 +399,9 @@ const STAGE_ORDER = [
 
 /** 把当前阶段进度换算为整体进度（0-1，阶段单调推进不回退） */
 export function progressOverall(e: ProgressEvent): number {
+  if (typeof e.overall === 'number' && Number.isFinite(e.overall)) {
+    return Math.max(0, Math.min(1, e.overall))
+  }
   const i = STAGE_ORDER.indexOf(e.stage)
   const idx = i < 0 ? 0 : i
   const p = Math.max(0, Math.min(1, e.progress))

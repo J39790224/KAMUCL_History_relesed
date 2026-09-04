@@ -11,7 +11,7 @@ export interface TaskRecord {
   controller: AbortController
   /** 仅在底层任务已经退出并完成清理后才会 resolve。 */
   settled: Promise<void>
-  status: 'running' | 'cancelling'
+  status: 'running' | 'paused' | 'cancelling'
 }
 
 const tasks = new Map<string, TaskRecord>()
@@ -19,6 +19,16 @@ let seq = 0
 
 interface InternalTaskRecord extends TaskRecord {
   settle: () => void
+  resumeWaiters: Set<() => void>
+}
+
+const taskBySignal = new WeakMap<AbortSignal, InternalTaskRecord>()
+
+/** 为 AbortSignal.any 等派生信号继承同一暂停门控。 */
+export function inheritTaskControl(source: AbortSignal | undefined, target: AbortSignal): void {
+  if (!source) return
+  const rec = taskBySignal.get(source)
+  if (rec) taskBySignal.set(target, rec)
 }
 
 export function registerTask(title: string, kind: TaskRecord['kind']): TaskRecord {
@@ -34,18 +44,22 @@ export function registerTask(title: string, kind: TaskRecord['kind']): TaskRecor
     controller: new AbortController(),
     settled,
     settle,
-    status: 'running'
+    status: 'running',
+    resumeWaiters: new Set()
   }
   tasks.set(id, rec)
+  taskBySignal.set(rec.controller.signal, rec)
   return rec
 }
 
 export function cancelTask(id: string): boolean {
   const rec = tasks.get(id) as InternalTaskRecord | undefined
   if (!rec) return false
-  if (rec.status === 'running') {
+  if (rec.status !== 'cancelling') {
     rec.status = 'cancelling'
     rec.controller.abort(new DOMException('已取消', 'AbortError'))
+    for (const resume of rec.resumeWaiters) resume()
+    rec.resumeWaiters.clear()
   }
   return true
 }
@@ -53,7 +67,53 @@ export function cancelTask(id: string): boolean {
 export function finishTask(id: string): void {
   const rec = tasks.get(id) as InternalTaskRecord | undefined
   rec?.settle()
+  if (rec) {
+    for (const resume of rec.resumeWaiters) resume()
+    rec.resumeWaiters.clear()
+    taskBySignal.delete(rec.controller.signal)
+  }
   tasks.delete(id)
+}
+
+export function pauseTask(id: string): boolean {
+  const rec = tasks.get(id)
+  if (!rec || rec.status !== 'running') return false
+  rec.status = 'paused'
+  return true
+}
+
+export function resumeTask(id: string): boolean {
+  const rec = tasks.get(id) as InternalTaskRecord | undefined
+  if (!rec || rec.status !== 'paused') return false
+  rec.status = 'running'
+  for (const resume of rec.resumeWaiters) resume()
+  rec.resumeWaiters.clear()
+  return true
+}
+
+export function isTaskPaused(signal?: AbortSignal): boolean {
+  return !!signal && taskBySignal.get(signal)?.status === 'paused'
+}
+
+/** 下载 worker/流读取边界调用；暂停时不继续读网络、不写文件，也不派发新任务。 */
+export async function waitIfTaskPaused(signal?: AbortSignal): Promise<void> {
+  if (!signal) return
+  throwIfCancelled(signal)
+  const rec = taskBySignal.get(signal)
+  if (!rec || rec.status !== 'paused') return
+  await new Promise<void>((resolve, reject) => {
+    const resume = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }
+    const onAbort = (): void => {
+      rec.resumeWaiters.delete(resume)
+      reject(new Error('已取消'))
+    }
+    rec.resumeWaiters.add(resume)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  throwIfCancelled(signal)
 }
 
 /**

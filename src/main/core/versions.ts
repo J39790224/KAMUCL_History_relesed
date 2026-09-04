@@ -21,6 +21,7 @@ import {
 } from './download'
 import { getSettings } from './settings'
 import { abortableDelay, throwIfCancelled } from './tasks'
+import { createWeightedProgressEmit, VERSION_INSTALL_STAGE_RANGES } from './progress'
 import {
   allVersionsDirs,
   assetIndexPath,
@@ -258,6 +259,7 @@ interface LibEntry {
   path: string
   url?: string
   sha1?: string
+  size?: number
   isNative: boolean
 }
 
@@ -270,7 +272,7 @@ function collectLibraries(vj: VersionJson): LibEntry[] {
     const dest = libraryPath(art.path)
     if (seen.has(dest)) return
     seen.add(dest)
-    out.push({ path: dest, url: art.url, sha1: art.sha1, isNative })
+    out.push({ path: dest, url: art.url, sha1: art.sha1, size: art.size, isNative })
   }
   /** maven 坐标（group:artifact:version[:classifier]）→ 仓库相对路径 */
   const mavenPath = (name: string): string | null => {
@@ -305,7 +307,7 @@ function collectLibraries(vj: VersionJson): LibEntry[] {
 export function libraryTasks(vj: VersionJson): DownloadTask[] {
   return collectLibraries(vj)
     .filter((e) => e.url)
-    .map((e) => ({ url: e.url as string, dest: e.path, sha1: e.sha1 }))
+    .map((e) => ({ url: e.url as string, dest: e.path, sha1: e.sha1, size: e.size }))
 }
 
 /** 启动用：classpath 中的 artifact 路径与 natives jar 路径 */
@@ -333,7 +335,8 @@ export async function installVanilla(
   emit: ProgressEmit,
   dest: 'versions' | 'base' = 'versions',
   instanceName?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  finalEvent = true
 ): Promise<string> {
   const finalId = dest === 'versions' ? instanceName?.trim() || versionId : versionId
   const dir = dest === 'base' ? baseVersionDir(versionId) : versionDir(finalId)
@@ -361,12 +364,16 @@ export async function installVanilla(
     const libTasks = libraryTasks(vj)
     await downloadAll(
       libTasks,
-      (d, t, speed) =>
+      (d, t, speed, detail) =>
         emit({
           stage: 'libraries',
-          progress: t ? d / t : 1,
+          progress: detail.fraction ?? 0,
           text: `下载依赖库 ${d}/${t}`,
           speed,
+          etaSeconds: detail.etaSeconds ?? undefined,
+          bytesDone: detail.bytesDone,
+          bytesTotal: detail.bytesTotal ?? undefined,
+          indeterminate: detail.indeterminate,
           source: sourceText
         }),
       8,
@@ -389,14 +396,25 @@ export async function installVanilla(
           }),
         client.sha1,
         mirror,
-        signal
+        signal,
+        [],
+        { size: client.size }
       )
     }
 
     // 3. 资源索引与资源文件
     if (vj.assetIndex?.url) {
       const idxPath = assetIndexPath(vj.assetIndex.id)
-      await downloadFile(vj.assetIndex.url, idxPath, undefined, vj.assetIndex.sha1, mirror, signal)
+      await downloadFile(
+        vj.assetIndex.url,
+        idxPath,
+        undefined,
+        vj.assetIndex.sha1,
+        mirror,
+        signal,
+        [],
+        { size: vj.assetIndex.size }
+      )
 
       const idx = JSON.parse(fs.readFileSync(idxPath, 'utf-8')) as {
         virtual?: boolean
@@ -414,17 +432,22 @@ export async function installVanilla(
         tasks.push({
           url: `https://resources.download.minecraft.net/${o.hash.slice(0, 2)}/${o.hash}`,
           dest: assetObjectPath(o.hash),
-          sha1: o.hash
+          sha1: o.hash,
+          size: o.size
         })
       }
       await downloadAll(
         tasks,
-        (d, t, speed) =>
+        (d, t, speed, detail) =>
           emit({
             stage: 'assets',
-            progress: t ? d / t : 1,
+            progress: detail.fraction ?? 0,
             text: `下载资源文件 ${d}/${t}`,
             speed,
+            etaSeconds: detail.etaSeconds ?? undefined,
+            bytesDone: detail.bytesDone,
+            bytesTotal: detail.bytesTotal ?? undefined,
+            indeterminate: detail.indeterminate,
             source: sourceText
           }),
         8,
@@ -450,7 +473,11 @@ export async function installVanilla(
       }
     }
 
-    emit({ stage: 'done', progress: 1, text: `校验完成，${versionId} 安装成功` })
+    emit(
+      finalEvent
+        ? { stage: 'done', progress: 1, text: `校验完成，${versionId} 安装成功` }
+        : { stage: 'assets', progress: 1, text: `原版 ${versionId} 依赖准备完成` }
+    )
     // 全部步骤成功：移除事务标记
     fs.rmSync(mark, { force: true })
   } catch (e) {
@@ -470,6 +497,7 @@ export async function installVersion(
   emit: ProgressEmit,
   signal?: AbortSignal
 ): Promise<string> {
+  const report = createWeightedProgressEmit(emit, VERSION_INSTALL_STAGE_RANGES)
   if (opts.loader) {
     // 动态 import 避免与 loaders.ts 的循环依赖
     const { installLoader, listLoaderVersions, installFabricApi } = await import('./loaders')
@@ -479,14 +507,21 @@ export async function installVersion(
       loaderVersion = list[0]
       if (!loaderVersion) throw new Error(`${opts.loader} 没有适配 ${versionId} 的版本`)
     }
-    const installedId = await installLoader(opts.loader, versionId, loaderVersion, emit, opts.instanceName, signal)
+    const installedId = await installLoader(
+      opts.loader,
+      versionId,
+      loaderVersion,
+      report,
+      opts.instanceName,
+      signal
+    )
     // Fabric：可选同时安装 Fabric API 到 mods 文件夹
     if (opts.loader === 'fabric' && opts.fabricApi) {
-      await installFabricApi(versionId, opts.fabricApi, emit, signal)
+      await installFabricApi(versionId, opts.fabricApi, report, signal)
     }
     return installedId
   }
-  return await installVanilla(versionId, emit, 'versions', opts.instanceName, signal)
+  return await installVanilla(versionId, report, 'versions', opts.instanceName, signal)
 }
 
 /** 链底客户端 jar 的实际位置（versions 区优先，缺省时取 .kamucl/base 依赖原版区） */

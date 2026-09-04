@@ -254,10 +254,17 @@ export async function installLoader(
   instanceName?: string,
   signal?: AbortSignal
 ): Promise<string> {
-  emit({ stage: 'loader', progress: 0, text: `检查原版 ${mcVersion}` })
+  emit({ stage: 'version-json', progress: 0, text: `检查原版 ${mcVersion}` })
   const vanillaPreExisted = fs.existsSync(versionJsonPath(mcVersion))
   const installerBased = loader === 'forge' || loader === 'neoforge'
-  await installVanilla(mcVersion, emit, vanillaPreExisted || installerBased ? 'versions' : 'base', undefined, signal)
+  await installVanilla(
+    mcVersion,
+    emit,
+    vanillaPreExisted || installerBased ? 'versions' : 'base',
+    undefined,
+    signal,
+    false
+  )
 
   // ---- fabric / quilt：profile json 直写 ----
   if (loader === 'fabric' || loader === 'quilt') {
@@ -282,12 +289,16 @@ export async function installLoader(
     const mirror = getSettings().mirror
     await downloadAll(
       tasks,
-      (d, t, speed) =>
+      (d, t, speed, detail) =>
         emit({
           stage: 'loader',
-          progress: 0.1 + (t ? (d / t) * 0.9 : 0),
+          progress: 0.1 + (detail.fraction ?? 0) * 0.9,
           text: `${loader} 依赖库 ${d}/${t}`,
-          speed
+          speed,
+          etaSeconds: detail.etaSeconds ?? undefined,
+          bytesDone: detail.bytesDone,
+          bytesTotal: detail.bytesTotal ?? undefined,
+          indeterminate: detail.indeterminate
         }),
       8,
       mirror,
@@ -365,12 +376,16 @@ export async function installLoader(
       emit({ stage: 'loader', progress: 0.94, text: `补全 ${missing.length} 个缺失依赖库…` })
       await downloadAll(
         missing,
-        (d, t, speed) =>
+        (d, t, speed, detail) =>
           emit({
             stage: 'loader',
-            progress: 0.94 + (t ? (d / t) * 0.05 : 0),
+            progress: 0.94 + (detail.fraction ?? 0) * 0.05,
             text: `补全依赖库 ${d}/${t}`,
-            speed
+            speed,
+            etaSeconds: detail.etaSeconds ?? undefined,
+            bytesDone: detail.bytesDone,
+            bytesTotal: detail.bytesTotal ?? undefined,
+            indeterminate: detail.indeterminate
           }),
         8,
         getSettings().mirror,

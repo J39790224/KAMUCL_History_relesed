@@ -303,10 +303,18 @@ export interface ProgressEvent {
   stage: string
   /** 0-1 */
   progress: number
+  /** 跨阶段的任务总进度；由主进程稳定模型计算，存在时优先于 progress。 */
+  overall?: number
   /** 人类可读描述 */
   text: string
   /** 字节/秒，可空 */
   speed?: number
+  /** 平滑后的剩余秒数；未知、暂停或速度不足时省略。 */
+  etaSeconds?: number
+  /** 下载字节统计；总量未知时 bytesTotal 省略并设置 indeterminate。 */
+  bytesDone?: number
+  bytesTotal?: number
+  indeterminate?: boolean
   /** 当前下载源（BMCLAPI 镜像 / 官方源） */
   source?: string
   /** 所属后台任务 id（下载中心按任务聚合；无 = 全局进度条） */
@@ -400,6 +408,8 @@ export const IPC = {
   communityDownload: 'community:download', // (file: CommunityFile, target: { versionId: string; kind: CommunityKind }) => string  同步下载完成返回保存路径；kind=modpack 时下载后自动进入整合包安装流程
 
   tasksCancel: 'tasks:cancel', // (taskId: string) => Promise<boolean>  底层退出并清理完成后才返回
+  tasksPause: 'tasks:pause', // (taskId: string) => boolean
+  tasksResume: 'tasks:resume', // (taskId: string) => boolean
 
   // 皮肤/披风（均需当前选中账号为微软正版账号）
   skinProfile: 'skin:profile', // () => ProfileSkins  拉取当前账号皮肤/披风档案

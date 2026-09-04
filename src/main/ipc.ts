@@ -33,8 +33,16 @@ import { folderOfVersion, instanceIconsDir, versionDir } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
-import { registerTask, cancelTaskAndWait, finishTask, isCancelError } from './core/tasks'
+import {
+  registerTask,
+  cancelTaskAndWait,
+  finishTask,
+  isCancelError,
+  pauseTask,
+  resumeTask
+} from './core/tasks'
 import { exportLaunchLogs } from './core/exportLogs'
+import { ProgressEventGuard } from './core/progress'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -99,15 +107,23 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // 异步执行，不阻塞返回；进度经 event:progress（带 taskId）推送，结束经 event:installDone 推送
   ipcMain.handle(IPC.versionsInstall, (_e, versionId: string, opts?: InstallOptions) => {
     const vid = String(versionId ?? '')
-      const task = registerTask(`安装版本 ${vid}${opts?.loader ? ` + ${opts.loader}` : ''}`, 'version')
-      let lastStage = ''
-      const taskEmit = (e: ProgressEvent): void => {
-        lastStage = e.stage
-        emit({ ...e, taskId: task.id, taskTitle: task.title })
-      }
-      const taskDone = (ok: boolean, error?: string, cancelled = false): void =>
-        send(IPC_EVENT.taskDone, { taskId: task.id, ok, error, cancelled, stage: ok ? undefined : lastStage })
-      void versions
+    const task = registerTask(`安装版本 ${vid}${opts?.loader ? ` + ${opts.loader}` : ''}`, 'version')
+    const progressGuard = new ProgressEventGuard()
+    let lastStage = ''
+    const taskEmit = (e: ProgressEvent): void => {
+      const normalized = progressGuard.normalize(e)
+      lastStage = normalized.stage
+      emit({ ...normalized, taskId: task.id, taskTitle: task.title })
+    }
+    const taskDone = (ok: boolean, error?: string, cancelled = false): void =>
+      send(IPC_EVENT.taskDone, {
+        taskId: task.id,
+        ok,
+        error,
+        cancelled,
+        stage: ok ? undefined : lastStage
+      })
+    void versions
         .installVersion(vid, opts ?? {}, taskEmit, task.controller.signal)
         .then((installedId) => {
           // 设置项生效：新版本默认开启版本隔离（整合包实例本身强制隔离，无需处理）
@@ -152,6 +168,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.tasksCancel, (_e, taskId: string) =>
     cancelTaskAndWait(String(taskId ?? ''))
   )
+  ipcMain.handle(IPC.tasksPause, (_e, taskId: string) => pauseTask(String(taskId ?? '')))
+  ipcMain.handle(IPC.tasksResume, (_e, taskId: string) => resumeTask(String(taskId ?? '')))
   ipcMain.handle(IPC.versionsRemove, (_e, versionId: string) => versions.removeVersion(versionId))
   ipcMain.handle(IPC.versionsRename, (_e, id: string, newName: string) => {
     const vid = String(id ?? '')
@@ -264,10 +282,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       }
       const task = registerTask(`导入整合包 ${path.basename(fp)}`, 'modpack')
       clean.signal = task.controller.signal
+      const progressGuard = new ProgressEventGuard()
       let lastStage = ''
       const taskEmit = (e: ProgressEvent): void => {
-        lastStage = e.stage
-        emit({ ...e, taskId: task.id, taskTitle: task.title })
+        const normalized = progressGuard.normalize(e)
+        lastStage = normalized.stage
+        emit({ ...normalized, taskId: task.id, taskTitle: task.title })
       }
       void modpacks
         .installModpack(fp, taskEmit, clean)
@@ -304,10 +324,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     IPC.communityDownload,
     async (_e, file: CommunityFile, target: { versionId: string; kind: CommunityKind }) => {
       const task = registerTask(`下载 ${file.fileName ?? '资源'}`, 'download')
+      const progressGuard = new ProgressEventGuard()
       let lastStage = ''
       const taskEmit = (e: ProgressEvent): void => {
-        lastStage = e.stage
-        emit({ ...e, taskId: task.id, taskTitle: task.title })
+        const normalized = progressGuard.normalize(e)
+        lastStage = normalized.stage
+        emit({ ...normalized, taskId: task.id, taskTitle: task.title })
       }
       try {
         const r = await community.communityDownload(file, target, taskEmit, (done) => {

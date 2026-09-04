@@ -64,23 +64,14 @@ const typeTagClass = (t: RemoteVersion['type']) =>
 
 const keyword = computed(() => store.searchKeyword.trim().toLowerCase())
 
-/** 任务级计时：进度从 null 变为非 null（新任务开始）时重置，用于剩余时间估算 */
-const stageStart = ref(0)
-watch(
-  () => store.progress,
-  (p, prev) => {
-    if (p && !prev) stageStart.value = Date.now()
-  }
-)
-/** 剩余时间估算（基于单调整体进度；>3s 才显示避免抖动，阶段切换不再乱跳） */
+/** ETA 由主进程基于字节速度指数平滑；未知总量/暂停时不伪造。 */
 const etaText = computed(() => {
   const p = store.progress
-  if (!p || !stageStart.value) return ''
-  const overall = progressMono(p)
-  if (overall <= 0.02 || overall >= 1) return ''
-  const elapsed = (Date.now() - stageStart.value) / 1000
-  const eta = (elapsed * (1 - overall)) / overall
-  return eta > 3 ? `约剩 ${Math.round(eta)}s` : ''
+  const eta = p?.etaSeconds
+  if (eta == null || !Number.isFinite(eta) || eta <= 3) return ''
+  if (eta >= 3600) return `约剩 ${Math.ceil(eta / 3600)}h`
+  if (eta >= 60) return `约剩 ${Math.ceil(eta / 60)}min`
+  return `约剩 ${Math.round(eta)}s`
 })
 
 const filtered = computed(() =>
