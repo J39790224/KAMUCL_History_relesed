@@ -109,7 +109,7 @@ onMounted(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="emit('close')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="emit('close')">
       <div class="modal dup-modal">
         <h3 class="modal-title">清理重复 MOD</h3>
 

@@ -34,6 +34,7 @@ import { managedImageUrl } from './managedAssets'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import { waitForBootTasks, sealBootTasks } from './bootTasks'
+import { acceptsImportDrag, showsImportOverlay } from '@shared/dropIntent'
 import HomeView from './views/HomeView.vue'
 import GameView from './views/GameView.vue'
 import ModsView from './views/ModsView.vue'
@@ -178,6 +179,8 @@ function goBack() {
 const dragActive = ref(false)
 /** 进入/离开子元素会成对触发 dragenter/dragleave，用计数器避免遮罩闪烁 */
 let dragDepth = 0
+let internalDrag = false
+function endDrag() { internalDrag = false; dragDepth = 0; dragActive.value = false }
 
 const dragHasFiles = (e: DragEvent) =>
   Array.from(e.dataTransfer?.types ?? []).includes('Files')
@@ -185,7 +188,7 @@ const dragHasProviderText = (e: DragEvent) => {
   const types = Array.from(e.dataTransfer?.types ?? [])
   return types.includes('text/plain') || types.includes('text/uri-list')
 }
-const dragHasSupportedData = (e: DragEvent) => dragHasFiles(e) || dragHasProviderText(e)
+const dragHasSupportedData = (e: DragEvent) => acceptsImportDrag(Array.from(e.dataTransfer?.types ?? []), internalDrag)
 const looksLikeYggdrasilProvider = (value: string): boolean => {
   const text = value.trim()
   return (
@@ -201,14 +204,14 @@ function onDragEnter(e: DragEvent) {
   if (!dragHasSupportedData(e)) return
   e.preventDefault()
   dragDepth++
-  dragActive.value = true
+  dragActive.value = showsImportOverlay(Array.from(e.dataTransfer?.types ?? []), internalDrag)
 }
 
 function onDragOver(e: DragEvent) {
   if (!dragHasSupportedData(e)) return
   e.preventDefault() // 必须 preventDefault 才允许 drop
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-  dragActive.value = true
+  dragActive.value = showsImportOverlay(Array.from(e.dataTransfer?.types ?? []), internalDrag)
 }
 
 function onDragLeave(e: DragEvent) {
@@ -228,8 +231,6 @@ function onDrop(e: DragEvent) {
       e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text/uri-list') || ''
     if (looksLikeYggdrasilProvider(text)) {
       routeYggdrasilImport({ kind: 'text', value: text })
-    } else if (text.trim()) {
-      toast('拖入的文本不是可识别的外置登录提供商', 'error')
     }
     return
   }
@@ -929,6 +930,8 @@ onUnmounted(() => {
     :class="{ 'edit-mode': store.editMode, 'has-bg': !!bgStyle }"
     @click.capture="onEditClick"
     @dragenter="onDragEnter"
+    @dragstart.capture="internalDrag = true"
+    @dragend.capture="endDrag"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
@@ -1194,7 +1197,7 @@ onUnmounted(() => {
 
   <!-- 启动失败：提示 + 导出错误日志 -->
   <Teleport to="body">
-    <div v-if="launchFail.open" class="modal-mask" @click.self="launchFail.open = false">
+    <div v-if="launchFail.open" class="modal-mask" @pointerdown.self="launchFail.open = false">
       <div class="modal launchfail-modal">
         <h3 class="modal-title">{{ launchFail.title }}</h3>
         <p class="launchfail-text">{{ launchFail.text }}</p>
@@ -1211,7 +1214,7 @@ onUnmounted(() => {
 
   <!-- 整合包导入确认弹窗 -->
   <Teleport to="body">
-    <div v-if="mpModal.open" class="modal-mask" @click.self="closeModpackImport">
+    <div v-if="mpModal.open" class="modal-mask" @pointerdown.self="closeModpackImport">
       <div class="modal mp-modal">
         <h3 class="mp-title">导入整合包</h3>
 
@@ -2119,12 +2122,23 @@ onUnmounted(() => {
 .mp-conflict-actions label,
 .mp-replace-confirm {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
   line-height: 1.4;
 }
+.mp-conflict-actions label:hover, .mp-replace-confirm:hover { background: var(--card-2); }
+.mp-conflict-actions label:has(input:checked), .mp-replace-confirm:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .mp-conflict input {
   accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin: 0;
 }
 .mp-existing-select {
   margin-top: 3px;

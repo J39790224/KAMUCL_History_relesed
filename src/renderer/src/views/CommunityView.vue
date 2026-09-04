@@ -429,7 +429,7 @@ async function confirmDownload() {
 
     <!-- 下载模态框 -->
     <Teleport to="body">
-      <div v-if="modal.open" class="modal-mask" @click.self="!modal.downloading && (modal.open = false)">
+      <div v-if="modal.open" class="modal-mask" @pointerdown.self="!modal.downloading && (modal.open = false)">
         <div class="modal">
           <h3 class="modal-title">下载 {{ modal.item?.title }}</h3>
 

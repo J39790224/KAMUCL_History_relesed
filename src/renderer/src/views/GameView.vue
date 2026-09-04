@@ -971,26 +971,7 @@ async function confirmIsolation() {
         <button class="btn btn-gold btn-sm" @click="tab = 'download'">去版本下载看看</button>
       </div>
       <div v-else class="installed-list">
-        <!-- 已收藏分组（置顶） -->
-        <template v-if="favoriteInstalled.length">
-          <div class="fav-group-head">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
-            已收藏
-          </div>
-          <div v-for="v in favoriteInstalled" :key="'fav-' + v.id" class="installed-row" @contextmenu.prevent="showFolderContextMenu(v.folder, v.id)">
-            <button class="fav-btn on" title="取消收藏" @click="toggleFavorite(v.id)">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z" /></svg>
-            </button>
-            <button class="inst-icon" title="更换实例图标" @click="openIconPicker(v.id)">
-              <img v-if="versionIconUrl(v)" :src="versionIconUrl(v)" alt="" />
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>
-            </button>
-            <div class="inst-names">
-              <span class="version-id editable" :title="`点击改名（目录名：${v.id}）`" @click="openRenameFor(v.id)">{{ displayVersionName(v) }}</span>
-            </div>
-            <span class="muted played-text">最近游玩：{{ fmtLastPlayed(store.lastPlayed[v.id]) }}</span>
-          </div>
-        </template>
+        <!-- 同一实例仅渲染一次；sortWithFavorite 已负责收藏置顶。 -->
 
         <div v-for="v in sortedInstalled" :key="v.id" class="installed-row" @contextmenu.prevent="showFolderContextMenu(v.folder, v.id)">
           <button
@@ -1140,7 +1121,7 @@ async function confirmIsolation() {
 
     <!-- 实例窗口设置；未覆盖时始终跟随全局配置。 -->
     <Teleport to="body">
-      <div v-if="resolutionModal.open" class="modal-mask" @click.self="resolutionModal.open = false">
+      <div v-if="resolutionModal.open" class="modal-mask" @pointerdown.self="resolutionModal.open = false">
         <div class="modal">
           <h3 class="modal-title">窗口设置 · {{ resolutionModal.id }}</h3>
           <p class="modal-label">实例设置优先于全局设置；选择“跟随全局”可删除覆盖。</p>
@@ -1177,7 +1158,7 @@ async function confirmIsolation() {
 
     <!-- 指定 Java 弹窗 -->
     <Teleport to="body">
-      <div v-if="javaModal.open" class="modal-mask" @click.self="javaModal.open = false">
+      <div v-if="javaModal.open" class="modal-mask" @pointerdown.self="javaModal.open = false">
         <div class="modal">
           <h3 class="modal-title">指定 Java · {{ javaModal.id }}</h3>
           <p class="modal-label">选择该版本使用的 Java（默认自动匹配）</p>
@@ -1202,7 +1183,7 @@ async function confirmIsolation() {
 
     <!-- 实例重命名弹窗 -->
     <Teleport to="body">
-      <div v-if="renameModal.open" class="modal-mask" @click.self="renameModal.open = false">
+      <div v-if="renameModal.open" class="modal-mask" @pointerdown.self="renameModal.open = false">
         <div class="modal">
           <h3 class="modal-title">重命名实例</h3>
           <p class="modal-label">新实例名（将作为文件夹名 versions/&lt;名&gt;/）</p>
@@ -1241,7 +1222,7 @@ async function confirmIsolation() {
 
     <!-- 游戏文件夹显示名称 -->
     <Teleport to="body">
-      <div v-if="folderRename.open" class="modal-mask" @click.self="folderRename.open = false">
+      <div v-if="folderRename.open" class="modal-mask" @pointerdown.self="folderRename.open = false">
         <div class="modal">
           <h3 class="modal-title">重命名游戏文件夹</h3>
           <p class="modal-label">只修改 KAMUCL 中的显示名称，不会改动磁盘路径。</p>
@@ -1274,7 +1255,7 @@ async function confirmIsolation() {
 
     <!-- 开启隔离前展示精确迁移范围；确认后才执行事务式复制。 -->
     <Teleport to="body">
-      <div v-if="isolationModal.open && isolationModal.plan" class="modal-mask" @click.self="closeIsolationModal">
+      <div v-if="isolationModal.open && isolationModal.plan" class="modal-mask" @pointerdown.self="closeIsolationModal">
         <div class="modal isolation-modal">
           <h3 class="modal-title">开启版本隔离 · {{ isolationModal.target?.id }}</h3>
           <p class="modal-label isolation-intro">
@@ -1320,7 +1301,7 @@ async function confirmIsolation() {
 
     <!-- 安装模态框 -->
     <Teleport to="body">
-      <div v-if="modal.open" class="modal-mask" @click.self="modal.open = false">
+      <div v-if="modal.open" class="modal-mask" @pointerdown.self="modal.open = false">
         <div class="modal">
           <h3 class="modal-title">安装 {{ modal.version?.id }}</h3>
 
@@ -1682,6 +1663,7 @@ async function confirmIsolation() {
 }
 .installed-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 4px;
@@ -1693,17 +1675,26 @@ async function confirmIsolation() {
 /* 实例名称（主名 + 技术 id 副标） */
 .inst-names {
   display: flex;
-  align-items: baseline;
+  flex: 1 1 200px;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
   flex-wrap: wrap;
 }
 .inst-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   font-family: ui-monospace, Consolas, monospace;
   word-break: break-all;
 }
 /* 下载源切换按钮 */
+.inst-names .version-id { max-width: 100%; overflow-wrap: anywhere; }
+.installed-row > .tag { max-width: 200px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iso-switch { flex-shrink: 0; white-space: nowrap; }
 .mirror-toggle {
   cursor: pointer;
   user-select: none;

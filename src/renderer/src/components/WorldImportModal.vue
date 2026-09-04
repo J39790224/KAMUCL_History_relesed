@@ -219,7 +219,7 @@ async function submit() {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="!busy && emit('close')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="!busy && emit('close')">
       <div class="modal world-modal">
         <h3 class="world-title">导入 Minecraft 存档</h3>
 

@@ -647,7 +647,7 @@ onUnmounted(() => {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="logOpen" class="log-mask" @click.self="logOpen = false">
+      <div v-if="logOpen" class="log-mask" @pointerdown.self="logOpen = false">
         <section class="log-dialog">
           <header>
             <div><h3>启动日志</h3><span>{{ store.logs.length }} 行 · {{ heroStatus.text }}</span></div>

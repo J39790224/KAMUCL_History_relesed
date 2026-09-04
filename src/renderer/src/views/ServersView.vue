@@ -355,7 +355,7 @@ const filteredServers = computed(() =>
 
     <!-- 添加模态框 -->
     <Teleport to="body">
-      <div v-if="addModal.open" class="modal-mask" @click.self="addModal.open = false">
+      <div v-if="addModal.open" class="modal-mask" @pointerdown.self="addModal.open = false">
         <div class="modal">
           <h3 class="modal-title">添加服务器</h3>
           <p class="modal-label">服务器名称</p>
@@ -378,7 +378,7 @@ const filteredServers = computed(() =>
       </div>
 
       <!-- 删除确认 -->
-      <div v-if="delModal.open" class="modal-mask" @click.self="delModal.open = false">
+      <div v-if="delModal.open" class="modal-mask" @pointerdown.self="delModal.open = false">
         <div class="modal">
           <h3 class="modal-title">删除服务器</h3>
           <p class="confirm-text">
@@ -394,7 +394,7 @@ const filteredServers = computed(() =>
       </div>
 
       <!-- 进入游戏（选版本） -->
-      <div v-if="joinModal.open" class="modal-mask" @click.self="joinModal.open = false">
+      <div v-if="joinModal.open" class="modal-mask" @pointerdown.self="joinModal.open = false">
         <div class="modal">
           <h3 class="modal-title">进入 {{ joinModal.target?.name }}</h3>
           <p class="modal-label">选择游戏实例（将保存关联并启动 {{ joinModal.target?.address }}）</p>

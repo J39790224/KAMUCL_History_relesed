@@ -16,7 +16,7 @@ const emit = defineEmits<{
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="emit('cancel')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="emit('cancel')">
       <div class="modal">
         <h3 class="modal-title">{{ title }}</h3>
         <p class="confirm-text">{{ message }}</p>

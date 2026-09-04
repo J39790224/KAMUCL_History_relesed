@@ -51,7 +51,7 @@ async function onUpload() {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="emit('close')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="emit('close')">
       <div class="modal iconpick-modal">
         <h3 class="modal-title">选择实例图标</h3>
 

@@ -485,7 +485,7 @@ function saveResolution() {
 
       <!-- 窗口分辨率 -->
       <div class="card group">
-        <h3 class="group-title">窗口分辨率</h3>
+        <h3 class="group-title">游戏窗口分辨率</h3>
         <div class="resolution-row">
           <div class="res-field">
             <span class="muted res-label">宽</span>

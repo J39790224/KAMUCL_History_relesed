@@ -592,7 +592,7 @@ async function onRemove(acc: Account) {
       </div>
 
       <!-- 外置登录提供商探测与确认 -->
-      <div v-if="providerModal.open" class="modal-mask" @click.self="providerModal.open = false">
+      <div v-if="providerModal.open" class="modal-mask" @pointerdown.self="providerModal.open = false">
         <div class="modal provider-modal">
           <h3 class="modal-title">添加外置登录提供商</h3>
           <p class="muted ms-tip">支持 API Root、authlib-injector 拖拽 URI，以及 KAMUCL 提供商 JSON/TXT 文件。</p>

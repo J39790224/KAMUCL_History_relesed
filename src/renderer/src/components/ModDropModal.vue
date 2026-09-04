@@ -253,7 +253,7 @@ const modCompatOf = (m: ModInfo): string[] => matchMap.value[m.filePath] ?? []
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="emit('close')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="emit('close')">
       <div class="modal moddrop-modal">
         <h3 class="modal-title">MOD 识别与安装</h3>
 

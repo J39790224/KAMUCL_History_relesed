@@ -93,7 +93,7 @@ async function resetImage() {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-mask" @click.self="emit('close')">
+    <div v-if="open" class="modal-mask" @pointerdown.self="emit('close')">
       <div class="modal thumbnail-modal">
         <div class="thumbnail-head">
           <div>
