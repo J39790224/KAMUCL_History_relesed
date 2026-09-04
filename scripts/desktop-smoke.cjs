@@ -30,6 +30,7 @@ mod.writeZip(qaMod)
 console.log('QA_MOD_FIXTURE=' + qaMod)
 app.on('browser-window-created', (_event, window) => {
   if (window.getTitle().includes('正在启动')) return
+  if (process.argv.includes('--qa-small')) window.setSize(960, 620)
   window.on('show', () => {
     window.setTitle('KAMUCL 0.6.8 · UI 验收')
     // Read-only layout diagnostics; UI interactions are performed through the native window.
