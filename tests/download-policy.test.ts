@@ -144,3 +144,34 @@ test('临时 503 使用退避重试，内容哈希错误则直接切换来源', 
     await fs.promises.rm(root, { recursive: true, force: true })
   }
 })
+
+test('404 持续响应体被关闭后切换来源，不遗留幽灵网络流', async () => {
+  let closed = false
+  let resolveClosed!: () => void
+  const closedPromise = new Promise<void>(resolve => { resolveClosed = resolve })
+  const server = http.createServer((req, res) => {
+    if (req.url === '/missing') {
+      res.writeHead(404)
+      res.write('missing')
+      const timer = setInterval(() => res.write('still streaming'), 20)
+      res.once('close', () => { clearInterval(timer); closed = true; resolveClosed() })
+    } else res.end('ok')
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kamucl-response-close-'))
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    const base = `http://127.0.0.1:${address.port}`
+    await downloadFile(`${base}/missing`, path.join(root, 'ok'), undefined, undefined, 'official', undefined, [`${base}/ok`])
+    await Promise.race([closedPromise, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('404 流没有被关闭')), 1000) })])
+    assert.ok(closed)
+    assert.equal(await fs.promises.readFile(path.join(root, 'ok'), 'utf8'), 'ok')
+  } finally {
+    clearTimeout(timeout)
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    await fs.promises.rm(root, { recursive: true, force: true })
+  }
+})

@@ -245,17 +245,22 @@ async function doDownload(
       headers
     })
     if (res.status === 416 && expectedSize != null && offset === expectedSize) {
+      await res.body?.cancel()
       clearInactivity()
       onProgress?.(offset, expectedSize)
       return { tmp, received: offset, total: expectedSize }
     }
-    if (!res.ok || !res.body) throw new DownloadHttpError(res.status, url)
+    if (!res.ok || !res.body) {
+      await res.body?.cancel()
+      throw new DownloadHttpError(res.status, url)
+    }
 
     const append = offset > 0 && res.status === 206
     if (!append) offset = 0 // 服务端忽略 Range 并返回 200 时从头覆盖
     const contentRange = res.headers.get('content-range')
     const rangeMatch = contentRange?.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i)
     if (append && rangeMatch && Number(rangeMatch[1]) !== offset) {
+      await res.body.cancel()
       fs.rmSync(tmp, { force: true })
       throw new DownloadIntegrityError(`断点位置不匹配：请求 ${offset}，响应 ${rangeMatch[1]}`)
     }
@@ -263,6 +268,7 @@ async function doDownload(
     const rangeTotal = rangeMatch?.[3] && rangeMatch[3] !== '*' ? Number(rangeMatch[3]) : 0
     const total = expectedSize ?? (rangeTotal || (contentLength > 0 ? offset + contentLength : 0))
     if (expectedSize != null && rangeTotal > 0 && rangeTotal !== expectedSize) {
+      await res.body.cancel()
       throw new DownloadIntegrityError(`远端大小 ${rangeTotal} 与元数据 ${expectedSize} 不一致`)
     }
 
