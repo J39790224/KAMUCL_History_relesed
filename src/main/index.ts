@@ -1,7 +1,18 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, net, protocol } from 'electron'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { registerIpc } from './ipc'
+import { authorizeManagedImage } from './core/appearanceAssets'
 import { initializeLauncherLog, launcherLog } from './core/launcherLog'
+import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'kamucl-asset',
+    // 仅供 <img>/CSS 读取，不开放 renderer fetch，缩小本地资源协议的攻击面。
+    privileges: { standard: true, secure: true, stream: true }
+  }
+])
 
 let win: BrowserWindow | null = null
 
@@ -37,9 +48,30 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   initializeLauncherLog()
   launcherLog('Electron ready')
+  try {
+    await migrateLegacyAppearanceAssets()
+  } catch (error) {
+    launcherLog(
+      `Appearance asset migration failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  protocol.handle('kamucl-asset', (request) => {
+    if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 })
+    try {
+      const candidate = new URL(request.url).searchParams.get('path') ?? ''
+      const authorized = authorizeManagedImage(
+        candidate,
+        getSettings().folders.map((folder) => folder.path)
+      )
+      if (!authorized) return new Response('Not Found', { status: 404 })
+      return net.fetch(pathToFileURL(authorized).toString())
+    } catch {
+      return new Response('Not Found', { status: 404 })
+    }
+  })
   registerIpc(() => win)
 
   ipcMain.on('window:minimize', () => win?.minimize())

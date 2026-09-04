@@ -15,6 +15,7 @@ import { enterEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
 import type { Settings, ThemeName } from '@shared/types'
 import transparentWallpaper from '../assets/banner1.png'
+import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {

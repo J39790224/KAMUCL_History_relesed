@@ -14,7 +14,8 @@ import {
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshAccounts, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
-import type { InstalledVersion, JavaInfo } from '@shared/types'
+import type { ImageFit, InstalledVersion, JavaInfo } from '@shared/types'
+import { managedImageUrl } from '../managedAssets'
 import banner1 from '../assets/banner1.png'
 import banner2 from '../assets/banner2.png'
 import banner3 from '../assets/banner3.png'
@@ -22,7 +23,7 @@ import banner3 from '../assets/banner3.png'
 const LS_KEY = 'kamucl.lastVersion'
 
 // ---------------- Banner 三图轮播（5s 自动切换，圆点可点） ----------------
-const banners = [banner1, banner2, banner3]
+const builtInBanners = [banner1, banner2, banner3]
 const bannerIdx = ref(0)
 
 /** 打开卡慕SaMa 的 B 站页面（经主进程 setWindowOpenHandler 转系统浏览器） */
@@ -33,8 +34,9 @@ let bannerTimer: ReturnType<typeof setInterval> | null = null
 
 function startBannerTimer() {
   stopBannerTimer()
+  if (banners.value.length < 2) return
   bannerTimer = setInterval(() => {
-    bannerIdx.value = (bannerIdx.value + 1) % banners.length
+    bannerIdx.value = (bannerIdx.value + 1) % banners.value.length
   }, 5000)
 }
 
@@ -46,7 +48,7 @@ function stopBannerTimer() {
 }
 
 function goBanner(i: number) {
-  bannerIdx.value = i
+  bannerIdx.value = Math.max(0, Math.min(i, banners.value.length - 1))
   startBannerTimer() // 手动切换后重新计时
 }
 
@@ -84,6 +86,52 @@ const loaderText = (v: InstalledVersion) =>
 const currentVersion = computed(() =>
   store.installed.find((v) => v.id === selectedId.value)
 )
+const failedBanner = ref('')
+
+function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
+  return fit === 'fill' ? 'fill' : fit === 'fit' ? 'contain' : 'cover'
+}
+
+const customBanner = computed(() => {
+  const instance = currentVersion.value
+  if (instance?.thumbnail) {
+    return {
+      path: instance.thumbnail,
+      src: managedImageUrl(instance.thumbnail),
+      fit: instance.thumbnailFit ?? 'crop' as ImageFit
+    }
+  }
+  const global = store.settings?.launchThumbnail
+  if (global?.image) {
+    return { path: global.image, src: managedImageUrl(global.image), fit: global.fit }
+  }
+  return null
+})
+
+const banners = computed(() => {
+  const custom = customBanner.value
+  if (custom && failedBanner.value !== custom.path) {
+    return [{ src: custom.src, fit: fitCss(custom.fit), custom: true, path: custom.path }]
+  }
+  return builtInBanners.map((src) => ({ src, fit: 'cover' as const, custom: false, path: src }))
+})
+
+watch(
+  () => customBanner.value?.path ?? '',
+  () => {
+    failedBanner.value = ''
+    bannerIdx.value = 0
+    startBannerTimer()
+  }
+)
+
+function onBannerError(item: { custom: boolean; path: string }) {
+  if (!item.custom) return
+  failedBanner.value = item.path
+  bannerIdx.value = 0
+  startBannerTimer()
+  toast('启动卡缩略图不可用，已回退到内置轮播', 'error')
+}
 const capsuleLabel = computed(() =>
   currentVersion.value ? versionLabel(currentVersion.value) : '未安装版本'
 )
@@ -403,13 +451,15 @@ async function onToggleAccountType() {
       >
         <!-- 三图轮播背景（绝对定位叠放，opacity 过渡） -->
         <img
-          v-for="(src, i) in banners"
-          :key="i"
-          :src="src"
+          v-for="(item, i) in banners"
+          :key="item.path"
+          :src="item.src"
           class="banner-img"
           :class="{ active: i === bannerIdx }"
+          :style="{ objectFit: item.fit }"
           alt=""
           aria-hidden="true"
+          @error="onBannerError(item)"
         />
         <div class="banner-shade"></div>
 
@@ -478,7 +528,7 @@ async function onToggleAccountType() {
         </div>
 
         <!-- 轮播圆点（点击切换，当前点 accent 实心） -->
-        <div class="banner-dots">
+        <div v-if="banners.length > 1" class="banner-dots">
           <button
             v-for="(_, i) in banners"
             :key="i"

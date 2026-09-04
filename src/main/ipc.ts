@@ -6,7 +6,7 @@ import { ipcMain, dialog, shell, type BrowserWindow } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { IPC, IPC_EVENT } from '../shared/types'
+import { DEFAULT_BACKGROUND, DEFAULT_LAUNCH_THUMBNAIL, IPC, IPC_EVENT } from '../shared/types'
 import type {
   CommunityFile,
   CommunityKind,
@@ -14,6 +14,7 @@ import type {
   CommunitySource,
   FsEntry,
   GameResolution,
+  ImageFit,
   InstallOptions,
   LaunchState,
   LoaderName,
@@ -53,6 +54,7 @@ import * as gameFolders from './core/gameFolders'
 import * as instances from './core/instances'
 import * as worlds from './core/worlds'
 import * as yggdrasil from './core/yggdrasil'
+import * as appearance from './core/appearanceAssets'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -66,19 +68,70 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   const emit = (e: ProgressEvent): void => send(IPC_EVENT.progress, e)
   const sendState = (s: LaunchState): void => send(IPC_EVENT.launchState, s)
   let activeJavaScanTaskId: string | null = null
+  const pickImage = async (title: string): Promise<string | null> => {
+    const win = getWin()
+    const opts = {
+      properties: ['openFile' as const],
+      title,
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    }
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  }
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => settings.saveSettings(patch))
   ipcMain.handle(IPC.appSelectImage, async () => {
-    const win = getWin()
-    const opts = {
-      properties: ['openFile' as const],
-      title: '选择背景图片',
-      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    return pickImage('选择图片')
+  })
+  ipcMain.handle(IPC.appearanceImportBackground, async () => {
+    const source = await pickImage('导入自定义背景')
+    if (!source) return null
+    const previous = settings.getSettings()
+    const imported = await appearance.importGlobalImage(source, 'background')
+    try {
+      const next = settings.saveSettings({
+        background: { ...previous.background, image: imported.path, mode: 'image' }
+      })
+      if (previous.background.image !== imported.path) {
+        appearance.removeGlobalImage(previous.background.image, 'background')
+      }
+      return next
+    } catch (error) {
+      appearance.removeGlobalImage(imported.path, 'background')
+      throw error
     }
-    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
+  ipcMain.handle(IPC.appearanceResetBackground, () => {
+    const previous = settings.getSettings().background.image
+    const next = settings.saveSettings({ background: structuredClone(DEFAULT_BACKGROUND) })
+    appearance.removeGlobalImage(previous, 'background')
+    return next
+  })
+  ipcMain.handle(IPC.appearanceImportLaunchThumbnail, async () => {
+    const source = await pickImage('导入首页启动卡缩略图')
+    if (!source) return null
+    const previous = settings.getSettings()
+    const imported = await appearance.importGlobalImage(source, 'launch-thumbnail')
+    try {
+      const next = settings.saveSettings({
+        launchThumbnail: { ...previous.launchThumbnail, image: imported.path }
+      })
+      if (previous.launchThumbnail.image !== imported.path) {
+        appearance.removeGlobalImage(previous.launchThumbnail.image, 'launch-thumbnail')
+      }
+      return next
+    } catch (error) {
+      appearance.removeGlobalImage(imported.path, 'launch-thumbnail')
+      throw error
+    }
+  })
+  ipcMain.handle(IPC.appearanceResetLaunchThumbnail, () => {
+    const previous = settings.getSettings().launchThumbnail.image
+    const next = settings.saveSettings({ launchThumbnail: structuredClone(DEFAULT_LAUNCH_THUMBNAIL) })
+    appearance.removeGlobalImage(previous, 'launch-thumbnail')
+    return next
   })
   ipcMain.handle(IPC.appSelectDir, async () => {
     const win = getWin()
@@ -308,6 +361,31 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     versions.setVersionIcon(vid, icon)
     return icon
   })
+  ipcMain.handle(IPC.versionsUploadThumbnail, async (_e, id: string) => {
+    const versionId = String(id ?? '')
+    const version = versions.readVersionJson(versionId)
+    const source = await pickImage('导入实例启动卡缩略图')
+    if (!source) return null
+    const folder = folderOfVersion(versionId)
+    const imported = await appearance.importInstanceThumbnail(source, folder)
+    try {
+      versions.setVersionThumbnail(
+        versionId,
+        imported.path,
+        version._thumbnailFit ?? 'crop'
+      )
+      return imported.path
+    } catch (error) {
+      appearance.removeInstanceThumbnail(imported.path, folder)
+      throw error
+    }
+  })
+  ipcMain.handle(IPC.versionsSetThumbnailFit, (_e, id: string, fit: ImageFit) =>
+    versions.setVersionThumbnailFit(String(id ?? ''), fit)
+  )
+  ipcMain.handle(IPC.versionsResetThumbnail, (_e, id: string) =>
+    versions.resetVersionThumbnail(String(id ?? ''))
+  )
   ipcMain.handle(IPC.versionsSetIsolation, (_e, versionId: string, isolated: boolean) =>
     versions.setIsolation(String(versionId ?? ''), isolated === true)
   )

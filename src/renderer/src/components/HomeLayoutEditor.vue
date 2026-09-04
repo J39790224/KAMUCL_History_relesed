@@ -4,10 +4,18 @@
  * 布局存 settings.homeLayout（main=主列，side=右栏，数组顺序即渲染顺序）。
  */
 import { reactive, ref } from 'vue'
-import { errText, saveSettings, selectImage } from '../api'
+import {
+  errText,
+  importBackground,
+  importLaunchThumbnail,
+  resetBackground,
+  resetLaunchThumbnail,
+  saveSettings
+} from '../api'
 import { store, toast } from '../store'
-import { DEFAULT_BACKGROUND, DEFAULT_HOME_LAYOUT, HOME_MODULE_LABELS } from '@shared/types'
-import type { BackgroundSettings, HomeLayout, Settings } from '@shared/types'
+import { managedImageUrl } from '../managedAssets'
+import { DEFAULT_HOME_LAYOUT, HOME_MODULE_LABELS } from '@shared/types'
+import type { BackgroundSettings, HomeLayout, ImageFit, Settings } from '@shared/types'
 
 function save(patch: Partial<Settings>) {
   void saveSettings(patch)
@@ -53,6 +61,19 @@ const bgModes = [
   { value: 'color', label: '纯色' },
   { value: 'image', label: '图片' }
 ] as const
+const fitModes: Array<{ value: ImageFit; label: string }> = [
+  { value: 'fill', label: '填充' },
+  { value: 'fit', label: '适应' },
+  { value: 'crop', label: '裁切' }
+]
+const importingBackground = ref(false)
+const importingThumbnail = ref(false)
+const backgroundPreviewFailed = ref(false)
+const thumbnailPreviewFailed = ref(false)
+
+function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
+  return fit === 'fill' ? 'fill' : fit === 'fit' ? 'contain' : 'cover'
+}
 
 function setBg(patch: Partial<BackgroundSettings>) {
   if (!store.settings) return
@@ -60,17 +81,62 @@ function setBg(patch: Partial<BackgroundSettings>) {
 }
 
 async function pickImage() {
+  if (importingBackground.value) return
+  importingBackground.value = true
   try {
-    const p = await selectImage()
-    if (p) setBg({ image: p, mode: 'image' })
+    const settings = await importBackground()
+    if (settings) {
+      store.settings = settings
+      backgroundPreviewFailed.value = false
+      toast('背景已复制并优化到 KAMUCL 资源目录', 'success')
+    }
   } catch (e) {
-    toast('选择图片失败：' + errText(e), 'error')
+    toast('导入背景失败：' + errText(e), 'error')
+  } finally {
+    importingBackground.value = false
   }
 }
 
-function resetBg() {
-  save({ background: structuredClone(DEFAULT_BACKGROUND) })
-  toast('背景已恢复默认', 'success')
+async function resetBg() {
+  try {
+    store.settings = await resetBackground()
+    backgroundPreviewFailed.value = false
+    toast('背景已恢复默认', 'success')
+  } catch (error) {
+    toast('恢复背景失败：' + errText(error), 'error')
+  }
+}
+
+async function pickLaunchThumbnail() {
+  if (importingThumbnail.value) return
+  importingThumbnail.value = true
+  try {
+    const settings = await importLaunchThumbnail()
+    if (settings) {
+      store.settings = settings
+      thumbnailPreviewFailed.value = false
+      toast('启动卡缩略图已保存到 KAMUCL 资源目录', 'success')
+    }
+  } catch (error) {
+    toast('导入缩略图失败：' + errText(error), 'error')
+  } finally {
+    importingThumbnail.value = false
+  }
+}
+
+async function resetThumbnail() {
+  try {
+    store.settings = await resetLaunchThumbnail()
+    thumbnailPreviewFailed.value = false
+    toast('启动卡已恢复内置轮播图片', 'success')
+  } catch (error) {
+    toast('恢复缩略图失败：' + errText(error), 'error')
+  }
+}
+
+function setLaunchFit(fit: ImageFit) {
+  if (!store.settings) return
+  save({ launchThumbnail: { ...store.settings.launchThumbnail, fit } })
 }
 </script>
 
@@ -140,12 +206,39 @@ function resetBg() {
     </template>
 
     <template v-if="store.settings?.background.mode === 'image'">
+      <div v-if="store.settings.background.image && !backgroundPreviewFailed" class="image-preview background-preview">
+        <img
+          :src="managedImageUrl(store.settings.background.image)"
+          :style="{ objectFit: fitCss(store.settings.background.fit) }"
+          alt="自定义背景预览"
+          @error="backgroundPreviewFailed = true"
+        />
+      </div>
+      <div v-else class="image-preview image-preview-empty">
+        {{ backgroundPreviewFailed ? '受管背景不可用，将自动回退默认背景' : '尚未导入背景图片' }}
+      </div>
       <div class="bg-row">
         <span class="muted bg-label">背景图片</span>
-        <button class="btn btn-ghost btn-sm" @click="pickImage">选择图片…</button>
+        <button class="btn btn-ghost btn-sm" :disabled="importingBackground" @click="pickImage">
+          {{ importingBackground ? '处理中…' : '导入图片…' }}
+        </button>
         <span class="muted bg-img-path" :title="store.settings.background.image">
-          {{ store.settings.background.image ? '已选择' : '未选择' }}
+          {{ store.settings.background.image ? '已由 KAMUCL 管理' : '未选择' }}
         </span>
+      </div>
+      <div class="bg-row">
+        <span class="muted bg-label">显示方式</span>
+        <div class="fit-options">
+          <button
+            v-for="fit in fitModes"
+            :key="fit.value"
+            class="capsule"
+            :class="{ active: store.settings.background.fit === fit.value }"
+            @click="setBg({ fit: fit.value })"
+          >
+            {{ fit.label }}
+          </button>
+        </div>
       </div>
       <div class="bg-row">
         <span class="muted bg-label">透明度</span>
@@ -174,6 +267,51 @@ function resetBg() {
         <span class="muted bg-val">{{ store.settings.background.blur }}px</span>
       </div>
     </template>
+  </div>
+
+  <!-- 首页启动卡全局缩略图 -->
+  <div class="card group">
+    <div class="layout-head">
+      <div>
+        <h3 class="group-title" style="margin-bottom: 2px">首页启动卡</h3>
+        <p class="muted group-hint" style="margin: 0">实例专属图片优先；未设置时使用这里的全局图片，再回退内置轮播。</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" @click="resetThumbnail">恢复内置轮播</button>
+    </div>
+    <div v-if="store.settings?.launchThumbnail.image && !thumbnailPreviewFailed" class="image-preview launch-preview">
+      <img
+        :src="managedImageUrl(store.settings.launchThumbnail.image)"
+        :style="{ objectFit: fitCss(store.settings.launchThumbnail.fit) }"
+        alt="启动卡缩略图预览"
+        @error="thumbnailPreviewFailed = true"
+      />
+    </div>
+    <div v-else class="image-preview image-preview-empty">
+      {{ thumbnailPreviewFailed ? '缩略图不可用，将自动使用内置轮播' : '当前使用内置三图轮播' }}
+    </div>
+    <div class="bg-row">
+      <span class="muted bg-label">默认图片</span>
+      <button class="btn btn-ghost btn-sm" :disabled="importingThumbnail" @click="pickLaunchThumbnail">
+        {{ importingThumbnail ? '处理中…' : '导入图片…' }}
+      </button>
+      <span class="muted bg-img-path">
+        {{ store.settings?.launchThumbnail.image ? '已由 KAMUCL 管理' : '内置轮播' }}
+      </span>
+    </div>
+    <div class="bg-row">
+      <span class="muted bg-label">显示方式</span>
+      <div class="fit-options">
+        <button
+          v-for="fit in fitModes"
+          :key="fit.value"
+          class="capsule"
+          :class="{ active: store.settings?.launchThumbnail.fit === fit.value }"
+          @click="setLaunchFit(fit.value)"
+        >
+          {{ fit.label }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -232,6 +370,39 @@ function resetBg() {
   display: flex;
   gap: 6px;
   margin-bottom: 12px;
+}
+.fit-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.image-preview {
+  width: 100%;
+  height: 150px;
+  margin: 12px 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-2);
+}
+.image-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.image-preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+.launch-preview {
+  aspect-ratio: 16 / 7;
+  height: auto;
+  max-height: 220px;
 }
 .bg-row {
   display: flex;

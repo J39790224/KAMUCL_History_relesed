@@ -9,6 +9,7 @@ import {
   DEFAULT_BACKGROUND,
   DEFAULT_CUSTOM_THEME,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_LAUNCH_THUMBNAIL,
   DEFAULT_MS_CLIENT_ID,
   normalizeThemeName
 } from '../../shared/types'
@@ -17,6 +18,11 @@ import {
   normalizeStoredResolution,
   resolutionValidationError
 } from './gameWindow'
+import {
+  ensureGlobalImage,
+  importGlobalImage,
+  removeGlobalImage
+} from './appearanceAssets'
 
 let cached: Settings | null = null
 
@@ -46,6 +52,7 @@ function defaults(): Settings {
     favoriteVersions: [],
     homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
     background: structuredClone(DEFAULT_BACKGROUND),
+    launchThumbnail: structuredClone(DEFAULT_LAUNCH_THUMBNAIL),
     closeAfterLaunch: false
   }
 }
@@ -69,6 +76,7 @@ export function getSettings(): Settings {
         side: Array.isArray(raw.homeLayout?.side) ? raw.homeLayout.side : def.homeLayout.side
       },
       background: { ...def.background, ...(raw.background ?? {}) },
+      launchThumbnail: { ...def.launchThumbnail, ...(raw.launchThumbnail ?? {}) },
       // 兼容旧配置：无 folders 时由 gameDir 迁移为唯一默认文件夹
       folders:
         Array.isArray(raw.folders) && raw.folders.length
@@ -81,6 +89,17 @@ export function getSettings(): Settings {
     }
     const c = cached
     c.theme = normalizeThemeName(raw.theme)
+    c.background.fit = ['fill', 'fit', 'crop'].includes(c.background.fit)
+      ? c.background.fit
+      : 'crop'
+    c.launchThumbnail.fit = ['fill', 'fit', 'crop'].includes(c.launchThumbnail.fit)
+      ? c.launchThumbnail.fit
+      : 'crop'
+    const storedBackground = c.background.image
+    const storedThumbnail = c.launchThumbnail.image
+    c.background.image = ensureGlobalImage(storedBackground, 'background', true)
+    c.launchThumbnail.image = ensureGlobalImage(storedThumbnail, 'launch-thumbnail', true)
+    if (c.background.mode === 'image' && !c.background.image) c.background.mode = 'none'
     const migratedResolution = normalizeStoredResolution(c.resolution, def.resolution)
     c.resolution = resolutionValidationError(migratedResolution)
       ? def.resolution
@@ -93,6 +112,19 @@ export function getSettings(): Settings {
     }
     c.gameDir = c.activeFolder
     cached = c
+    // 将旧主题 key、旧外部背景路径和损坏资源回退一次性落盘，避免每次启动重复迁移。
+    if (
+      c.theme !== raw.theme ||
+      c.background.image !== storedBackground ||
+      c.launchThumbnail.image !== storedThumbnail
+    ) {
+      try {
+        fs.mkdirSync(path.dirname(settingsFile()), { recursive: true })
+        fs.writeFileSync(settingsFile(), JSON.stringify(c, null, 2), 'utf-8')
+      } catch (error) {
+        console.error('[KAMUCL] 旧外观设置迁移写入失败:', error)
+      }
+    }
   } catch {
     cached = def
   }
@@ -102,6 +134,18 @@ export function getSettings(): Settings {
 /** 合并 patch 并写盘，返回合并后的完整 Settings */
 export function saveSettings(patch: Partial<Settings>): Settings {
   const cur = getSettings()
+  if (
+    patch.background?.fit !== undefined &&
+    !['fill', 'fit', 'crop'].includes(patch.background.fit)
+  ) {
+    throw new Error('非法的背景显示方式')
+  }
+  if (
+    patch.launchThumbnail?.fit !== undefined &&
+    !['fill', 'fit', 'crop'].includes(patch.launchThumbnail.fit)
+  ) {
+    throw new Error('非法的启动卡显示方式')
+  }
   let nextResolution = cur.resolution
   if (patch.resolution) {
     const requested = { ...cur.resolution, ...patch.resolution }
@@ -123,7 +167,17 @@ export function saveSettings(patch: Partial<Settings>): Settings {
       main: Array.isArray(patch.homeLayout?.main) ? patch.homeLayout.main : cur.homeLayout.main,
       side: Array.isArray(patch.homeLayout?.side) ? patch.homeLayout.side : cur.homeLayout.side
     },
-    background: { ...cur.background, ...(patch.background ?? {}) }
+    background: { ...cur.background, ...(patch.background ?? {}) },
+    launchThumbnail: { ...cur.launchThumbnail, ...(patch.launchThumbnail ?? {}) }
+  }
+  if (patch.background?.image !== undefined) {
+    merged.background.image = ensureGlobalImage(patch.background.image, 'background')
+  }
+  if (patch.launchThumbnail?.image !== undefined) {
+    merged.launchThumbnail.image = ensureGlobalImage(
+      patch.launchThumbnail.image,
+      'launch-thumbnail'
+    )
   }
   // activeFolder 与 gameDir 语义一致：改其一跟随另一个
   if (patch.activeFolder && merged.folders.some((f) => f.path === patch.activeFolder)) {
@@ -137,12 +191,51 @@ export function saveSettings(patch: Partial<Settings>): Settings {
       ]
     }
   }
-  cached = merged
   try {
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true })
     fs.writeFileSync(settingsFile(), JSON.stringify(merged, null, 2), 'utf-8')
-  } catch (e) {
-    console.error('[KAMUCL] 设置写入失败:', e)
+  } catch (error) {
+    throw new Error(`设置写入失败：${error instanceof Error ? error.message : String(error)}`)
   }
+  cached = merged
   return merged
+}
+
+/** 将旧版保存的外部图片复制到 KAMUCL 目录；原文件永不删除。 */
+export async function migrateLegacyAppearanceAssets(): Promise<void> {
+  const current = getSettings()
+  const imported: Array<{ path: string; purpose: 'background' | 'launch-thumbnail' }> = []
+  const background = { ...current.background }
+  const launchThumbnail = { ...current.launchThumbnail }
+  let changed = false
+
+  if (background.image && !ensureGlobalImage(background.image, 'background')) {
+    changed = true
+    try {
+      const image = await importGlobalImage(background.image, 'background')
+      background.image = image.path
+      imported.push({ path: image.path, purpose: 'background' })
+    } catch {
+      background.image = ''
+      background.mode = 'none'
+    }
+  }
+  if (launchThumbnail.image && !ensureGlobalImage(launchThumbnail.image, 'launch-thumbnail')) {
+    changed = true
+    try {
+      const image = await importGlobalImage(launchThumbnail.image, 'launch-thumbnail')
+      launchThumbnail.image = image.path
+      imported.push({ path: image.path, purpose: 'launch-thumbnail' })
+    } catch {
+      launchThumbnail.image = ''
+    }
+  }
+  if (!changed) return
+
+  try {
+    saveSettings({ background, launchThumbnail })
+  } catch (error) {
+    for (const image of imported) removeGlobalImage(image.path, image.purpose)
+    throw error
+  }
 }

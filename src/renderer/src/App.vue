@@ -30,6 +30,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
 import transparentWallpaper from './assets/banner1.png'
+import { managedImageUrl } from './managedAssets'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import SplashScreen from './components/SplashScreen.vue'
@@ -550,6 +551,27 @@ function fmtNoticeTime(ts: number): string {
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
+const failedBackground = ref('')
+
+watch(
+  () => [store.settings?.background.mode, store.settings?.background.image] as const,
+  ([mode, imagePath]) => {
+    failedBackground.value = ''
+    if (mode !== 'image' || !imagePath) return
+    const probe = new Image()
+    probe.onload = () => {
+      if (store.settings?.background.image === imagePath) failedBackground.value = ''
+    }
+    probe.onerror = () => {
+      if (store.settings?.background.image !== imagePath) return
+      failedBackground.value = imagePath
+      toast('自定义背景不可用，已回退到主题默认背景', 'error')
+    }
+    probe.src = managedImageUrl(imagePath)
+  },
+  { immediate: true }
+)
+
 /** 自定义背景层；透明主题在未指定图片时使用启动器内置风景资源。 */
 const bgStyle = computed(() => {
   const bg = store.settings?.background
@@ -568,14 +590,25 @@ const bgStyle = computed(() => {
       opacity: String(bg.opacity)
     }
   }
-  if (bg.mode === 'image' && bg.image) {
-    const url = 'file:///' + bg.image.replace(/\\/g, '/')
+  if (bg.mode === 'image' && bg.image && failedBackground.value !== bg.image) {
+    const size = bg.fit === 'fill' ? '100% 100%' : bg.fit === 'fit' ? 'contain' : 'cover'
     return {
-      backgroundImage: `url("${url}")`,
-      backgroundSize: 'cover',
+      inset: bg.blur > 0 ? `${-Math.ceil(bg.blur * 1.5)}px` : '0',
+      backgroundColor: bg.color,
+      backgroundImage: `url("${managedImageUrl(bg.image)}")`,
+      backgroundSize: size,
       backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
       opacity: String(bg.opacity),
       filter: bg.blur > 0 ? `blur(${bg.blur}px)` : 'none'
+    }
+  }
+  if (store.settings?.theme === 'transparent') {
+    return {
+      backgroundImage: `url("${transparentWallpaper}")`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      opacity: '1'
     }
   }
   return null

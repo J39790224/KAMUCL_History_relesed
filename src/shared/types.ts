@@ -132,6 +132,10 @@ export interface InstalledVersion {
   resolution?: GameResolution
   /** 实例图标：'mob:<内置生物头像id>' | 'file:<自定义图标文件名>'（空 = 默认图标） */
   icon?: string
+  /** 首页启动卡专属缩略图；主进程只返回已验证的 KAMUCL 受管文件路径。 */
+  thumbnail?: string
+  /** 专属缩略图显示方式。 */
+  thumbnailFit?: ImageFit
   /** 该版本所属的游戏文件夹路径 */
   folder: string
 }
@@ -384,6 +388,8 @@ export interface Settings {
   homeLayout: HomeLayout
   /** 背景自定义 */
   background: BackgroundSettings
+  /** 首页启动卡的全局默认缩略图（实例专属缩略图优先）。 */
+  launchThumbnail: LaunchThumbnailSettings
   closeAfterLaunch: boolean
 }
 
@@ -435,6 +441,16 @@ export interface BackgroundSettings {
   opacity: number
   /** 0-40 模糊度 px */
   blur: number
+  /** fill=拉伸填充 / fit=完整适应 / crop=等比裁切 */
+  fit: ImageFit
+}
+
+export type ImageFit = 'fill' | 'fit' | 'crop'
+
+export interface LaunchThumbnailSettings {
+  /** KAMUCL userData 受管资源路径；空字符串使用内置轮播。 */
+  image: string
+  fit: ImageFit
 }
 
 export const DEFAULT_BACKGROUND: BackgroundSettings = {
@@ -442,7 +458,13 @@ export const DEFAULT_BACKGROUND: BackgroundSettings = {
   color: '#1b2437',
   image: '',
   opacity: 0.5,
-  blur: 0
+  blur: 0,
+  fit: 'crop'
+}
+
+export const DEFAULT_LAUNCH_THUMBNAIL: LaunchThumbnailSettings = {
+  image: '',
+  fit: 'crop'
 }
 
 // ---------------- 皮肤/披风 ----------------
@@ -520,6 +542,10 @@ export const IPC = {
   appSelectDir: 'app:selectDir', // () => string | null
   appSelectFile: 'app:selectFile', // () => string | null  选择整合包文件（.mrpack/.zip）
   appSelectImage: 'app:selectImage', // () => string | null  选择图片文件（png/jpg/webp）
+  appearanceImportBackground: 'appearance:importBackground', // () => Settings | null  导入受管背景并保存
+  appearanceResetBackground: 'appearance:resetBackground', // () => Settings  恢复默认并清理旧受管背景
+  appearanceImportLaunchThumbnail: 'appearance:importLaunchThumbnail', // () => Settings | null
+  appearanceResetLaunchThumbnail: 'appearance:resetLaunchThumbnail', // () => Settings
 
   // 账号
   accountsList: 'accounts:list', // () => Account[]
@@ -562,6 +588,9 @@ export const IPC = {
 
   versionsSetIcon: 'versions:setIcon', // (versionId: string, icon: string) => void  设置实例图标（'mob:<id>' / 'file:<文件名>' / '' 恢复默认）
   versionsUploadIcon: 'versions:uploadIcon', // (versionId: string) => string | null  弹窗选择图片并落地为自定义图标，返回新 icon 值（取消 = null）
+  versionsUploadThumbnail: 'versions:uploadThumbnail', // (versionId: string) => string | null  导入实例专属首页缩略图
+  versionsSetThumbnailFit: 'versions:setThumbnailFit', // (versionId: string, fit: ImageFit) => void
+  versionsResetThumbnail: 'versions:resetThumbnail', // (versionId: string) => void
   loadersList: 'loaders:list', // (loader: LoaderName, mcVersion: string) => string[]
   fabricApiList: 'loaders:fabricApi', // (mcVersion: string) => FabricApiVersion[]
 

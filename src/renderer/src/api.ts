@@ -15,6 +15,7 @@ import type {
   FsEntry,
   GameFolder,
   GameResolution,
+  ImageFit,
   InstallOptions,
   InstalledVersion,
   IsolationMigrationPlan,
@@ -72,6 +73,12 @@ export const saveSettings = (patch: Partial<Settings>) =>
   invoke<Settings>(IPC.settingsSet, JSON.parse(JSON.stringify(patch)) as Partial<Settings>)
 export const selectDir = () => invoke<string | null>(IPC.appSelectDir)
 export const selectImage = () => invoke<string | null>(IPC.appSelectImage)
+export const importBackground = () => invoke<Settings | null>(IPC.appearanceImportBackground)
+export const resetBackground = () => invoke<Settings>(IPC.appearanceResetBackground)
+export const importLaunchThumbnail = () =>
+  invoke<Settings | null>(IPC.appearanceImportLaunchThumbnail)
+export const resetLaunchThumbnail = () =>
+  invoke<Settings>(IPC.appearanceResetLaunchThumbnail)
 /** 游戏目录迁移（异步）；结束经 onGameDirDone 回调 */
 export const migrateGameDir = (newDir: string, migrate: boolean) =>
   invoke<void>(IPC.gameDirMigrate, newDir, migrate)
@@ -152,6 +159,12 @@ export const setVersionIcon = (id: string, icon: string) =>
 /** 上传自定义实例图标，返回新 icon 值（取消 = null） */
 export const uploadVersionIcon = (id: string) =>
   invoke<string | null>(IPC.versionsUploadIcon, id)
+export const uploadVersionThumbnail = (id: string) =>
+  invoke<string | null>(IPC.versionsUploadThumbnail, id)
+export const setVersionThumbnailFit = (id: string, fit: ImageFit) =>
+  invoke<void>(IPC.versionsSetThumbnailFit, id, fit)
+export const resetVersionThumbnail = (id: string) =>
+  invoke<void>(IPC.versionsResetThumbnail, id)
 export const listLoaders = (loader: LoaderName, mc: string) =>
   invoke<string[]>(IPC.loadersList, loader, mc)
 export const listFabricApi = (mc: string) => invoke<FabricApiVersion[]>(IPC.fabricApiList, mc)

@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type {
   GameResolution,
+  ImageFit,
   InstalledVersion,
   InstallOptions,
   ProgressEvent,
@@ -32,6 +33,7 @@ import {
   baseVersionDir,
   baseVersionJarPath,
   baseVersionJsonPath,
+  folderOfVersion,
   gameDir,
   installMarkPath,
   instanceIconsDir,
@@ -43,6 +45,7 @@ import {
   versionsDir,
   virtualLegacyDir
 } from './paths'
+import { ensureInstanceThumbnail, removeInstanceThumbnail } from './appearanceAssets'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
@@ -117,6 +120,9 @@ export interface VersionJson {
   _mcVersion?: string
   /** KAMUCL 自定义字段：实例图标（'mob:<内置id>' / 'file:<自定义文件名>'） */
   _icon?: string
+  /** KAMUCL 自定义字段：首页启动卡专属缩略图（受管绝对路径）。 */
+  _thumbnail?: string
+  _thumbnailFit?: ImageFit
 }
 
 // ---------------- rules 评估 ----------------
@@ -653,6 +659,13 @@ export function scanInstalledFolder(folder: string): {
       if (j._javaPath) item.javaPath = j._javaPath
       if (j._resolution) item.resolution = normalizeStoredResolution(j._resolution)
       if (j._icon) item.icon = j._icon
+      if (j._thumbnail) {
+        const thumbnail = ensureInstanceThumbnail(j._thumbnail, root)
+        if (thumbnail) item.thumbnail = thumbnail
+      }
+      if (j._thumbnailFit && ['fill', 'fit', 'crop'].includes(j._thumbnailFit)) {
+        item.thumbnailFit = j._thumbnailFit
+      }
       const directory = instanceDirectoryState(name, j, root)
       item.isolated = directory.isolated
       item.gameDirectory = directory.path
@@ -760,12 +773,13 @@ export function renameVersion(id: string, newName: string): void {
   }
 }
 export function removeVersion(id: string): void {
-  // 自定义图标文件随实例删除（内置 mob 头像无文件落地）
+  // 自定义图标与启动卡缩略图随实例删除（内置资源无文件落地）。
   try {
     const j = readVersionJson(id)
     if (j._icon?.startsWith('file:')) {
       fs.rmSync(path.join(instanceIconsDir(), j._icon.slice(5)), { force: true })
     }
+    if (j._thumbnail) removeInstanceThumbnail(j._thumbnail, folderOfVersion(id))
   } catch {
     /* 清理图标失败不阻断删除 */
   }
@@ -791,6 +805,43 @@ export function setVersionIcon(id: string, icon: string): void {
       /* 清理失败不影响设置 */
     }
   }
+}
+
+/** 设置实例专属启动卡缩略图；只接受该游戏文件夹受管目录中的已验证图片。 */
+export function setVersionThumbnail(id: string, imagePath: string, fit: ImageFit = 'crop'): void {
+  if (!['fill', 'fit', 'crop'].includes(fit)) throw new Error('非法的缩略图显示方式')
+  const folder = folderOfVersion(id)
+  const managed = ensureInstanceThumbnail(imagePath, folder)
+  if (!managed) throw new Error('缩略图不在 KAMUCL 受管目录中或图片已损坏')
+  const jsonPath = versionJsonPath(id)
+  const version = readVersionJson(id)
+  const previous = version._thumbnail
+  version._thumbnail = managed
+  version._thumbnailFit = fit
+  fs.writeFileSync(jsonPath, JSON.stringify(version, null, 2), 'utf-8')
+  if (previous && previous !== managed) removeInstanceThumbnail(previous, folder)
+}
+
+export function setVersionThumbnailFit(id: string, fit: ImageFit): void {
+  if (!['fill', 'fit', 'crop'].includes(fit)) throw new Error('非法的缩略图显示方式')
+  const jsonPath = versionJsonPath(id)
+  const version = readVersionJson(id)
+  if (!version._thumbnail || !ensureInstanceThumbnail(version._thumbnail, folderOfVersion(id))) {
+    throw new Error('该实例尚未设置有效缩略图')
+  }
+  version._thumbnailFit = fit
+  fs.writeFileSync(jsonPath, JSON.stringify(version, null, 2), 'utf-8')
+}
+
+export function resetVersionThumbnail(id: string): void {
+  const folder = folderOfVersion(id)
+  const jsonPath = versionJsonPath(id)
+  const version = readVersionJson(id)
+  const previous = version._thumbnail
+  delete version._thumbnail
+  delete version._thumbnailFit
+  fs.writeFileSync(jsonPath, JSON.stringify(version, null, 2), 'utf-8')
+  if (previous) removeInstanceThumbnail(previous, folder)
 }
 
 /**

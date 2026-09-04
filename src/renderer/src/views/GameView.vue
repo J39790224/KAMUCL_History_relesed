@@ -31,6 +31,7 @@ import {
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import IconPickerModal from '../components/IconPickerModal.vue'
+import ThumbnailPickerModal from '../components/ThumbnailPickerModal.vue'
 import type {
   FabricApiVersion,
   FolderScanResult,
@@ -39,6 +40,7 @@ import type {
   GameWindowMode,
   InstallOptions,
   InstalledVersion,
+  ImageFit,
   IsolationMigrationPlan,
   LoaderName,
   RemoteVersion
@@ -548,6 +550,23 @@ function openIconPicker(id: string) {
   iconModal.id = id
   iconModal.current = store.installed.find((v) => v.id === id)?.icon ?? ''
   iconModal.open = true
+  manageMenu.id = ''
+}
+
+// ---------------- 首页启动卡缩略图 ----------------
+const thumbnailModal = reactive({
+  open: false,
+  id: '',
+  current: '',
+  fit: 'crop' as ImageFit
+})
+
+function openThumbnailPicker(id: string) {
+  const version = store.installed.find((item) => item.id === id)
+  thumbnailModal.id = id
+  thumbnailModal.current = version?.thumbnail ?? ''
+  thumbnailModal.fit = version?.thumbnailFit ?? 'crop'
+  thumbnailModal.open = true
   manageMenu.id = ''
 }
 
@@ -1097,6 +1116,10 @@ async function confirmIsolation() {
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
           更换图标
         </button>
+        <button class="menu-item" @click="openThumbnailPicker(manageMenu.id)">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="16.5" cy="8.5" r="1.5"/></svg>
+          启动卡图片
+        </button>
         <button class="menu-item" @click="openJavaModal">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a3 3 0 0 1 0 6h-1M3 8h15v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M7 12h6M7 15h4"/></svg>
           指定 Java
@@ -1199,6 +1222,14 @@ async function confirmIsolation() {
       :version-id="iconModal.id"
       :current-icon="iconModal.current"
       @close="iconModal.open = false"
+    />
+
+    <ThumbnailPickerModal
+      :open="thumbnailModal.open"
+      :version-id="thumbnailModal.id"
+      :current-path="thumbnailModal.current"
+      :current-fit="thumbnailModal.fit"
+      @close="thumbnailModal.open = false"
     />
 
     <!-- 游戏文件夹显示名称 -->
