@@ -1,6 +1,7 @@
 /**
  * 版本管理：版本清单缓存、rules 评估、原版安装、已装列表、删除
  */
+import { resolveInstanceMetadata } from './instanceMetadata'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -91,6 +92,7 @@ export interface AssetIndexRef {
 
 export interface VersionJson {
   id: string
+  clientVersion?: string
   inheritsFrom?: string
   mainClass?: string
   minecraftArguments?: string
@@ -577,35 +579,6 @@ function versionJsonInFolder(folder: string, id: string): string {
   return path.join(folder, 'versions', id, `${id}.json`)
 }
 
-/** 沿 inheritsFrom 链解析原版版本，并把断链作为完整性错误返回。 */
-function resolveBaseMcId(
-  j: VersionJson,
-  fallback: string,
-  folder: string
-): { id: string; broken: boolean } {
-  let cur = j
-  let id = j.inheritsFrom ?? j._mcVersion ?? j.id ?? fallback
-  let hops = 0
-  let broken = false
-  while (cur.inheritsFrom && hops++ < 8) {
-    try {
-      const local = versionJsonInFolder(folder, cur.inheritsFrom)
-      const sharedBase = baseVersionJsonPath(cur.inheritsFrom)
-      let parent: VersionJson
-      if (fs.existsSync(local)) parent = parseVersionFile(local)
-      else if (fs.existsSync(sharedBase)) parent = parseVersionFile(sharedBase)
-      else throw new Error(`缺少继承版本 ${cur.inheritsFrom}`)
-      id = parent.inheritsFrom ?? parent._mcVersion ?? parent.id ?? id
-      cur = parent
-    } catch {
-      broken = true
-      break
-    }
-  }
-  if (hops >= 8 && cur.inheritsFrom) broken = true
-  return { id, broken }
-}
-
 /** 扫描指定 Minecraft 根目录；损坏条目不会静默消失，而以 incomplete + errors 返回。 */
 export function scanInstalledFolder(folder: string): {
   versions: InstalledVersion[]
@@ -639,21 +612,13 @@ export function scanInstalledFolder(folder: string): {
     }
     try {
       const j = parseVersionFile(jp)
-      const resolved = resolveBaseMcId(j, name, root)
-      const item: InstalledVersion = { id: name, mcVersion: resolved.id, folder: root }
-      if (j._loader) item.loader = j._loader
-      else {
-        const mainClass = (j.mainClass ?? '').toLowerCase()
-        if (mainClass.includes('neoforged')) item.loader = 'neoforge'
-        else if (mainClass.includes('forge')) item.loader = 'forge'
-        else if (mainClass.includes('fabricmc')) item.loader = 'fabric'
-        else if (mainClass.includes('quiltmc')) item.loader = 'quilt'
-      }
-      if (j._loaderVersion) item.loaderVersion = j._loaderVersion
-      else if (item.loader === 'forge') item.loaderVersion = /-forge-(.+)$/i.exec(name)?.[1]
-      else if (item.loader === 'neoforge') item.loaderVersion = /(?:^|-)(?:neoforge)-(.+)$/i.exec(name)?.[1]
-      else if (item.loader === 'fabric') item.loaderVersion = /^fabric-loader-(.+?)-\d/i.exec(name)?.[1]
-      else if (item.loader === 'quilt') item.loaderVersion = /^quilt-loader-(.+?)-\d/i.exec(name)?.[1]
+      const resolved = resolveInstanceMetadata(j, id => {
+        try {
+          const local = versionJsonInFolder(root, id)
+          return parseVersionFile(fs.existsSync(local) ? local : baseVersionJsonPath(id))
+        } catch { return undefined }
+      })
+      const item: InstalledVersion = { id: name, mcVersion: resolved.mcVersion, loader: resolved.loader, loaderVersion: resolved.loaderVersion, folder: root }
       if (j._modpackName) item.modpackName = j._modpackName
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
       if (j._javaPath) item.javaPath = j._javaPath

@@ -254,9 +254,10 @@ export const prepareServerLaunch = (id: string, versionId?: string, folder?: str
   invoke<ServerLaunchPreparation>(IPC.serversPrepareLaunch, id, versionId, folder)
 
 // ---------------- MOD 拖入即装 ----------------
+export const getModTargets = () => invoke<{ versions: InstalledVersion[]; errors: string[] }>(IPC.modsTargets)
 export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)
-export const installMods = (files: string[], targetVersionId: string) =>
-  invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId)
+export const installMods = (files: string[], targetVersionId: string, folder?: string) =>
+  invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId, folder)
 export const findModDuplicates = (versionId: string) =>
   invoke<ModDuplicateGroup[]>(IPC.modsDuplicates, versionId)
 export const findModCrossDuplicates = (versionIds: string[]) =>

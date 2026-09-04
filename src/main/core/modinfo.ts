@@ -3,6 +3,7 @@
  * neoforge.mods.toml / mods.toml / mcmod.info，提取名称、版本、
  * 加载器类型、MC 版本范围、前置依赖与图标。
  */
+import { dependencyRange } from '../../shared/modCompatibility'
 import fs from 'node:fs'
 import path from 'node:path'
 import AdmZip from 'adm-zip'
@@ -74,68 +75,7 @@ function parseModsToml(text: string): { mods: TomlModSection[]; deps: TomlDepSec
 
 // ---------------- 版本范围匹配 ----------------
 
-/** 比较两个版本号（按数字段；26.2 与 1.21.8 这类新命名直接数值比） */
-export function compareMcVersion(a: string, b: string): number {
-  const pa = a.split(/[.-]/)
-  const pb = b.split(/[.-]/)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = parseInt(pa[i] ?? '0', 10)
-    const nb = parseInt(pb[i] ?? '0', 10)
-    const xa = Number.isFinite(na) ? na : 0
-    const xb = Number.isFinite(nb) ? nb : 0
-    if (xa !== xb) return xa - xb
-  }
-  return 0
-}
-
-/** 单段范围匹配：[a,b) / (a,b] / [a,b] / (a,b) / >=a / >a / <=a / <a / ~a / a / * */
-function matchOne(seg: string, mc: string): boolean {
-  let s = seg.trim()
-  if (!s || s === '*') return true
-  // 单元素区间（[26.2] / (1.20.1)）等价精确匹配：剥掉外层括号
-  if (/^[\[(][^,]+[\])]$/.test(s)) s = s.slice(1, -1)
-  const range = /^([\[(])([^,]*),([^\])]*)[\])]$/.exec(s)
-  if (range) {
-    const [, open, minS, maxS] = range
-    const closedEnd = s.endsWith(']')
-    if (minS && compareMcVersion(mc, minS) < 0) return false
-    if (maxS) {
-      const c = compareMcVersion(mc, maxS)
-      if (closedEnd ? c > 0 : c >= 0) return false
-    }
-    return true
-  }
-  if (s.startsWith('~')) {
-    const base = s.slice(1)
-    const parts = base.split('.')
-    const upper = `${parts[0]}.${(parseInt(parts[1] ?? '0', 10) || 0) + 1}`
-    return compareMcVersion(mc, base) >= 0 && compareMcVersion(mc, upper) < 0
-  }
-  const op = /^(>=|<=|>|<)(.+)$/.exec(s)
-  if (op) {
-    const c = compareMcVersion(mc, op[2].trim())
-    switch (op[1]) {
-      case '>=':
-        return c >= 0
-      case '<=':
-        return c <= 0
-      case '>':
-        return c > 0
-      case '<':
-        return c < 0
-    }
-  }
-  // 精确版本（如 1.20.1）或形如 1.20.x
-  if (s.endsWith('.x')) return mc.startsWith(s.slice(0, -1))
-  return compareMcVersion(mc, s) === 0
-}
-
-/** 判断 mc 版本是否满足范围声明（逗号/空格分隔取「任一匹配」语义） */
-export function matchMcRange(range: string, mc: string): boolean {
-  const r = (range ?? '').trim()
-  if (!r || r === '*') return true
-  return r.split(/\s*,\s*|\s+/).some((seg) => matchOne(seg, mc))
-}
+export { compareVersions as compareMcVersion, matchesVersionRange as matchMcRange } from '../../shared/modCompatibility'
 
 /** 从范围声明中解析出下界（用于「自动下载最新兼容版本」的版本排序参考），无下界返回 '' */
 export function rangeLowerBound(range: string): string {
@@ -206,10 +146,8 @@ export function parseModFile(filePath: string): ModInfo {
       info.name = j.name ?? j.id ?? ''
       info.version = String(j.version ?? '')
       const dep = j.depends ?? {}
-      info.mcRange = Array.isArray(dep.minecraft)
-        ? (dep.minecraft as string[]).join(', ')
-        : String(dep.minecraft ?? '')
-      info.loaderRange = String(dep.fabricloader ?? '')
+      info.mcRange = dependencyRange(dep.minecraft)
+      info.loaderRange = dependencyRange(dep.fabricloader)
       info.dependencies = Object.keys(dep).filter(
         (k) => !['minecraft', 'fabricloader', 'fabric', 'java'].includes(k)
       )
@@ -230,6 +168,7 @@ export function parseModFile(filePath: string): ModInfo {
           id?: string
           metadata?: { name?: string; icon?: string }
           version?: string
+          depends?: Array<{ id?: string; versions?: unknown }>
         }
         minecraft?: { environment?: string }
         depends?: Record<string, unknown> | Array<{ id?: string; versions?: string }>
@@ -239,12 +178,12 @@ export function parseModFile(filePath: string): ModInfo {
       info.id = ql.id ?? ''
       info.name = ql.metadata?.name ?? ql.id ?? ''
       info.version = String(ql.version ?? '')
-      const deps = j.depends
+      const deps = ql.depends ?? j.depends
       if (Array.isArray(deps)) {
         const mc = deps.find((d) => d.id === 'minecraft')
-        info.mcRange = mc?.versions ?? ''
+        info.mcRange = dependencyRange(mc?.versions)
         const qld = deps.find((d) => d.id === 'quilt_loader')
-        info.loaderRange = qld?.versions ?? ''
+        info.loaderRange = dependencyRange(qld?.versions)
         info.dependencies = deps
           .map((d) => d.id ?? '')
           .filter((id) => id && !['minecraft', 'quilt_loader', 'quilted_fabric_api', 'java'].includes(id))
@@ -288,13 +227,13 @@ export function parseModFile(filePath: string): ModInfo {
     const { mods, deps } = parseModsToml(forgeText)
     const m = mods[0]
     if (m) {
-      info.loader = 'forge'
+      info.loader = deps.some(d => d.modId === 'neoforge') ? 'neoforge' : 'forge'
       info.id = m.modId ?? ''
       info.name = m.displayName ?? m.modId ?? ''
       info.version = (m.version ?? '').replace(/^"|"$/g, '')
       const mcDep = deps.find((d) => d.modId === 'minecraft')
       info.mcRange = mcDep?.versionRange ?? ''
-      const loaderDep = deps.find((d) => d.modId === 'forge')
+      const loaderDep = deps.find((d) => d.modId === info.loader)
       info.loaderRange = loaderDep?.versionRange ?? ''
       info.dependencies = deps
         .filter((d) => d.modId && !['minecraft', 'forge', 'java'].includes(d.modId) && d.mandatory !== false)

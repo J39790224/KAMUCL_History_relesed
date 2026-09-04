@@ -33,6 +33,7 @@ import * as loaders from './core/loaders'
 import * as java from './core/java'
 import * as launch from './core/launch'
 import * as servers from './core/servers'
+import { scanModTargets, selectModTarget, copyCompatibleMods } from './core/modTargets'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
 import { folderOfVersion, instanceIconsDir } from './core/paths'
@@ -740,21 +741,11 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     modinfo.findCrossDuplicates(Array.isArray(versionIds) ? versionIds.map(String) : [])
   )
 
-  ipcMain.handle(IPC.modsInstall, (_e, files: string[], targetVersionId: string) => {
-    const vid = String(targetVersionId ?? '')
-    // 与启动器最终 --gameDir 共用目录判定，防止 MOD 安装到错误实例。
-    const base = instances.instanceDirectoryState(vid, versions.readVersionJson(vid)).path
-    const modsDir = path.join(base, 'mods')
-    fs.mkdirSync(modsDir, { recursive: true })
-    return (Array.isArray(files) ? files : []).map((f) => {
-      const name = path.basename(String(f))
-      try {
-        fs.copyFileSync(String(f), path.join(modsDir, name))
-        return { fileName: name, ok: true, message: '已装入' }
-      } catch (e) {
-        return { fileName: name, ok: false, message: errText(e) }
-      }
-    })
+  const modTargets = () => scanModTargets(settings.getSettings().folders.map(f => f.path), versions.scanInstalledFolder)
+  ipcMain.handle(IPC.modsTargets, () => modTargets())
+  ipcMain.handle(IPC.modsInstall, async (_e, files: string[], targetVersionId: string, folder?: string) => {
+    const target = selectModTarget(modTargets().versions, String(targetVersionId ?? ''), folder ?? folderOfVersion(targetVersionId))
+    return copyCompatibleMods(Array.isArray(files) ? files.map(String) : [], target, modinfo.parseModFile)
   })
 
   // ---------------- 文件/目录 ----------------
