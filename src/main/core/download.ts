@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { once } from 'node:events'
+import { abortableDelay } from './tasks'
 
 export type MirrorPref = 'official' | 'bmclapi'
 export type ProgressFn = (done: number, total: number) => void
@@ -19,15 +20,14 @@ export interface DownloadTask {
 }
 
 const BMCLAPI_HOST = 'bmclapi2.bangbang93.com'
+export const BMCL_MAVEN_ROOT = `https://${BMCLAPI_HOST}/maven/`
 
 /** 这些域名在 BMCLAPI 下为透明镜像，直接换 host、路径不变 */
 const PLAIN_MIRROR_HOSTS = new Set([
   'piston-meta.mojang.com',
   'piston-data.mojang.com',
   'launchermeta.mojang.com',
-  'launcher.mojang.com',
-  'resources.download.minecraft.net',
-  'files.minecraftforge.net'
+  'launcher.mojang.com'
 ])
 
 /**
@@ -35,27 +35,70 @@ const PLAIN_MIRROR_HOSTS = new Set([
  * maven 系仓库（libraries.minecraft.net / fabric / quilt / forge / neoforge）
  * 在 BMCLAPI 下对应 /maven 前缀，等价于 host 替换 + 路径前补 /maven。
  */
-const MAVEN_MIRROR_HOSTS = new Set([
-  'libraries.minecraft.net',
-  'maven.fabricmc.net',
-  'maven.quiltmc.org',
-  'maven.minecraftforge.net',
-  'maven.neoforged.net'
-])
 export function mirrorUrl(url: string, mirror: MirrorPref): string {
   if (mirror !== 'bmclapi') return url
   try {
     const u = new URL(url)
-    if (MAVEN_MIRROR_HOSTS.has(u.host)) {
-      return `https://${BMCLAPI_HOST}/maven${u.pathname}${u.search}`
-    }
-    if (PLAIN_MIRROR_HOSTS.has(u.host)) {
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return url
+    const host = u.hostname.toLowerCase()
+    if (PLAIN_MIRROR_HOSTS.has(host)) {
       return `https://${BMCLAPI_HOST}${u.pathname}${u.search}`
     }
+    // BMCLAPI 的 Assets 根比 Mojang 多一层 /assets。
+    if (host === 'resources.download.minecraft.net') {
+      return `https://${BMCLAPI_HOST}/assets${u.pathname}${u.search}`
+    }
+    if (host === 'libraries.minecraft.net' || host === 'maven.fabricmc.net' || host === 'maven.minecraftforge.net') {
+      return `${BMCL_MAVEN_ROOT}${u.pathname.replace(/^\/+/, '')}${u.search}`
+    }
+    // 官方文档将 /releases 映射到 BMCL /maven 根，不能得到 /maven/releases/...。
+    if (host === 'maven.neoforged.net' && u.pathname.startsWith('/releases/')) {
+      return `${BMCL_MAVEN_ROOT}${u.pathname.slice('/releases/'.length)}${u.search}`
+    }
+    // files.minecraftforge.net 只有 /maven 子树有明确镜像规则。
+    if (host === 'files.minecraftforge.net' && u.pathname.startsWith('/maven/')) {
+      return `${BMCL_MAVEN_ROOT}${u.pathname.slice('/maven/'.length)}${u.search}`
+    }
+    // BMCL 文档目前把 Quilt 镜像标记为不可用，保留元数据原地址。
     return url
   } catch {
     return url
   }
+}
+
+export type HttpFailureKind = 'unavailable' | 'transient' | 'fatal'
+
+/** 404/410 表示该地址永久不可用；仅临时状态允许对同一 URL 退避重试。 */
+export function classifyHttpStatus(status: number): HttpFailureKind {
+  if (status === 404 || status === 410) return 'unavailable'
+  if (status === 408 || status === 425 || status === 429) return 'transient'
+  if (status >= 500 && status <= 599 && status !== 501 && status !== 505) return 'transient'
+  return 'fatal'
+}
+
+export class DownloadHttpError extends Error {
+  readonly status: number
+  readonly url: string
+
+  constructor(status: number, url: string) {
+    super(`HTTP ${status}: ${url}`)
+    this.name = 'DownloadHttpError'
+    this.status = status
+    this.url = url
+  }
+}
+
+/** 元数据给出的真实地址始终优先；仅配置镜像且规则明确支持时追加 BMCL 备用地址。 */
+export function downloadCandidates(urls: string[], mirror: MirrorPref): string[] {
+  const out: string[] = []
+  for (const url of urls) {
+    if (url && !out.includes(url)) out.push(url)
+    if (mirror === 'bmclapi') {
+      const mirrored = mirrorUrl(url, mirror)
+      if (mirrored && mirrored !== url && !out.includes(mirrored)) out.push(mirrored)
+    }
+  }
+  return out
 }
 
 /** 合并 30s 超时与外部取消信号（版本清单等裸 fetch 调用点使用；取消立即中断） */
@@ -95,7 +138,7 @@ async function doDownload(
   if (extSignal?.aborted) throw new Error('已取消')
   const signal = fetchSignal(extSignal)
   const res = await fetch(url, { signal, redirect: 'follow' })
-  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}: ${url}`)
+  if (!res.ok || !res.body) throw new DownloadHttpError(res.status, url)
 
   const total = Number(res.headers.get('content-length') ?? 0)
   const tmp = dest + '.part'
@@ -149,7 +192,8 @@ export async function downloadFile(
   onProgress?: ProgressFn,
   sha1?: string,
   mirror: MirrorPref = 'official',
-  extSignal?: AbortSignal
+  extSignal?: AbortSignal,
+  alternateUrls: string[] = []
 ): Promise<void> {
   if (fs.existsSync(dest)) {
     if (!sha1) return
@@ -158,9 +202,7 @@ export async function downloadFile(
     fs.rmSync(dest, { force: true })
   }
 
-  // 候选 URL：按镜像偏好排序，去重
-  const alt = mirrorUrl(url, 'bmclapi')
-  const candidates = [...new Set(mirror === 'bmclapi' ? [alt, url] : [url, alt])]
+  const candidates = downloadCandidates([url, ...alternateUrls], mirror)
 
   // 单文件进度单调：官方/镜像重试时 received 不重置（防进度条回跳）
   let maxReceived = 0
@@ -171,32 +213,51 @@ export async function downloadFile(
       }
     : undefined
 
+  const failures: string[] = []
   let lastErr: unknown = null
   let downloaded = false
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (extSignal?.aborted) throw new Error('已取消')
-    const u = candidates[attempt % candidates.length]
-    try {
-      await doDownload(u, dest, monoOnProgress, extSignal)
-      downloaded = true
-      if (sha1) {
-        const h = await sha1Of(dest, extSignal)
-        if (h !== sha1.toLowerCase()) {
-          fs.rmSync(dest, { force: true })
-          throw new Error(`sha1 校验失败: ${path.basename(dest)}`)
+  for (const candidate of candidates) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (extSignal?.aborted) throw new Error('已取消')
+      try {
+        await doDownload(candidate, dest, monoOnProgress, extSignal)
+        downloaded = true
+        if (sha1) {
+          const h = await sha1Of(dest, extSignal)
+          if (h !== sha1.toLowerCase()) {
+            fs.rmSync(dest, { force: true })
+            failures.push(`${candidate} -> sha1 校验失败`)
+            lastErr = new Error(`sha1 校验失败: ${path.basename(dest)}`)
+            // 完整响应但内容错误：切换来源，不对同一地址无脑重试。
+            break
+          }
         }
+        return
+      } catch (e) {
+        if (extSignal?.aborted) {
+          if (downloaded) fs.rmSync(dest, { force: true })
+          fs.rmSync(dest + '.part', { force: true })
+          throw new Error('已取消')
+        }
+        lastErr = e
+        const kind =
+          e instanceof DownloadHttpError
+            ? classifyHttpStatus(e.status)
+            : e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')
+              ? 'transient'
+              : 'transient'
+        failures.push(
+          `${candidate} -> ${e instanceof Error ? e.message : String(e)}${attempt ? `（重试 ${attempt}）` : ''}`
+        )
+        // 404/410 以及其他确定性 4xx 对同一地址不重试，立即尝试下一个合法来源。
+        if (kind !== 'transient') break
+        if (attempt < 2) await abortableDelay(350 * 2 ** attempt, extSignal)
       }
-      return
-    } catch (e) {
-      if (extSignal?.aborted) {
-        if (downloaded) fs.rmSync(dest, { force: true })
-        fs.rmSync(dest + '.part', { force: true })
-        throw new Error('已取消')
-      }
-      lastErr = e
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  const detail = failures.length ? `；已尝试：${failures.join('；')}` : ''
+  const reason = lastErr instanceof Error ? lastErr.message : String(lastErr)
+  throw new Error(`下载失败：${path.basename(dest)}（${reason}）${detail}`)
 }
 
 /**

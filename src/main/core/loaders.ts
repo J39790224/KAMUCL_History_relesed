@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
-import { downloadAll, downloadFile, fetchSignal } from './download'
+import { BMCL_MAVEN_ROOT, downloadAll, downloadFile, fetchSignal } from './download'
 import { isCancelError } from './tasks'
 import { getSettings } from './settings'
 import { gameDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
@@ -141,7 +141,7 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
 
   const buildArgs = (withMirror: boolean): string[] => {
     const args = ['-jar', jar, '--installClient', gameDir()]
-    if (withMirror) args.push('--mirror=https://bmclapi2.bangbang93.com/maven')
+    if (withMirror) args.push(`--mirror=${BMCL_MAVEN_ROOT}`)
     return args
   }
 

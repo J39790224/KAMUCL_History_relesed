@@ -10,7 +10,15 @@ import type {
   ProgressEvent,
   RemoteVersion
 } from '../../shared/types'
-import { downloadAll, downloadFile, fetchSignal, mirrorUrl, type DownloadTask, type MirrorPref } from './download'
+import {
+  classifyHttpStatus,
+  downloadAll,
+  downloadCandidates,
+  downloadFile,
+  fetchSignal,
+  type DownloadTask,
+  type MirrorPref
+} from './download'
 import { getSettings } from './settings'
 import { abortableDelay, throwIfCancelled } from './tasks'
 import {
@@ -163,22 +171,26 @@ export async function fetchVersionManifest(
     }
   }
   try {
-    // 镜像链路偶发失败（302 跳转/TLS 抖动），最多重试 3 次再回退缓存；取消立即中断
+    // 元数据官方地址优先，BMCL 仅作受支持的备用源；404/410 不重试同址。
     let data: { versions?: unknown[] } | null = null
     let lastErr: unknown = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (signal?.aborted) throw new Error('已取消')
-      try {
-        const res = await fetch(mirrorUrl(MANIFEST_URL, mirror), {
-          signal: fetchSignal(signal)
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        data = (await res.json()) as { versions?: unknown[] }
-        break
-      } catch (e) {
+    sourceLoop: for (const source of downloadCandidates([MANIFEST_URL], mirror)) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         if (signal?.aborted) throw new Error('已取消')
-        lastErr = e
-        await abortableDelay(800 * (attempt + 1), signal)
+        try {
+          const res = await fetch(source, { signal: fetchSignal(signal) })
+          if (!res.ok) {
+            lastErr = new Error(`HTTP ${res.status}: ${source}`)
+            if (classifyHttpStatus(res.status) !== 'transient') break
+            throw lastErr
+          }
+          data = (await res.json()) as { versions?: unknown[] }
+          break sourceLoop
+        } catch (e) {
+          if (signal?.aborted) throw new Error('已取消')
+          lastErr = e
+          if (attempt < 2) await abortableDelay(800 * (attempt + 1), signal)
+        }
       }
     }
     if (!data) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
