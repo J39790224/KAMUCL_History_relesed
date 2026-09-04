@@ -20,4 +20,12 @@ interface KamuclBridge {
 
 interface Window {
   kamucl: KamuclBridge
+  kamuclSplash: {
+    ready(): void
+    assembled(): void
+    finished(): void
+    failed(message: string): void
+    onState(callback: (state: import('../../shared/startup').BootState) => void): () => void
+    onReveal(callback: () => void): () => void
+  }
 }

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain, net, protocol } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { registerIpc } from './ipc'
+import { createStartupSplash } from './startupSplash'
 import { authorizeManagedImage } from './core/appearanceAssets'
 import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
@@ -19,7 +19,7 @@ protocol.registerSchemesAsPrivileged([
 
 let win: BrowserWindow | null = null
 
-function createWindow(): void {
+function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
   applyNativeAppearance(null, getSettings())
   win = new BrowserWindow({
     ...windowAppearance(),
@@ -30,7 +30,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false
     }
   })
 
@@ -46,7 +47,8 @@ function createWindow(): void {
     }
   }
 
-  win.on('ready-to-show', () => win?.show())
+  if (startup) startup.attach(win)
+  else win.on('ready-to-show', () => win?.show())
   applyNativeAppearance(win, getSettings())
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -63,6 +65,8 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   initializeLauncherLog()
   launcherLog('Electron ready')
+  const startup = createStartupSplash()
+  const { registerIpc } = await import('./ipc')
   try {
     await migrateLegacyAppearanceAssets()
   } catch (error) {
@@ -90,7 +94,7 @@ app.whenReady().then(async () => {
   ipcMain.on('window:maximize', () => (win?.isMaximized() ? win?.unmaximize() : win?.maximize()))
   ipcMain.on('window:close', () => win?.close())
 
-  createWindow()
+  createWindow(startup)
   launcherLog('Main window created')
 
   app.on('activate', () => {

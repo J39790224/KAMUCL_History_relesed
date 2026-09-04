@@ -37,6 +37,7 @@ import type {
   ProfileSkins,
   SkinVariant
 } from '@shared/types'
+import { trackBootTask } from '../bootTasks'
 import { managedImageUrl } from '../managedAssets'
 import banner1 from '../assets/banner1.png'
 import banner2 from '../assets/banner2.png'
@@ -260,7 +261,8 @@ const memoryText = computed(() => {
   return mb % 1024 === 0 ? `${mb / 1024} GB` : `${(mb / 1024).toFixed(1)} GB`
 })
 
-async function loadJavaSummary() {
+function loadJavaSummary() { return trackBootTask(loadJavaSummaryImpl) }
+async function loadJavaSummaryImpl() {
   try {
     javas.value = await listJava()
   } catch {
@@ -291,7 +293,8 @@ const skinVariant = computed<SkinVariant>(() =>
   currentSkin.value?.variant === 'slim' ? 'slim' : 'classic'
 )
 
-async function reloadSkin() {
+function reloadSkin() { return trackBootTask(reloadSkinImpl) }
+async function reloadSkinImpl() {
   const request = ++skinRequestToken
   skinError.value = ''
   skinProfile.value = null

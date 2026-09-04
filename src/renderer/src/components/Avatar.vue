@@ -9,6 +9,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import type { Account } from '@shared/types'
 import { getSkinAvatar } from '../api'
 import { renderSkinHead } from '../skin-render'
+import { trackBootTask } from '../bootTasks'
 import { store } from '../store'
 
 const props = withDefaults(defineProps<{ size?: number; account?: Account | null }>(), { size: 48 })
@@ -18,7 +19,8 @@ const head = ref('')
 let generation = 0
 onUnmounted(() => { generation++ })
 
-async function load() {
+function load() { return trackBootTask(loadImpl) }
+async function loadImpl() {
   const request = ++generation
   head.value = ''
   const acc = account.value

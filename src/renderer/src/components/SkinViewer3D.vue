@@ -6,6 +6,7 @@
  * - NearestFilter 保持像素风；走路动画（四肢绕顶部轴心摆动、头部微幅点头）
  * - 鼠标拖动旋转视角，松手后缓慢回到初始角度；WebGL 不可用时显示兜底提示
  */
+import { beginBootTask } from '../bootTasks'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 
@@ -221,12 +222,16 @@ function disposeModel() {
 }
 
 /** 加载皮肤纹理并重建人偶；src / variant 变化时调用 */
+let finishBootTexture = () => {}
 function rebuild() {
+  finishBootTexture()
+  finishBootTexture = beginBootTask()
   const src = props.src
   const token = ++loadToken
-  if (!renderer) return
+  if (!renderer) { finishBootTexture(); return }
   if (!src) {
     useFallbackTexture()
+    finishBootTexture()
     return
   }
   new THREE.TextureLoader().load(
@@ -247,11 +252,14 @@ function rebuild() {
       fallbackTextureActive = false
       buildModel()
       old?.dispose()
+      renderer?.render(scene, camera)
+      finishBootTexture()
     },
     undefined,
     () => {
       if (token !== loadToken) return
       useFallbackTexture()
+      finishBootTexture()
     }
   )
 }
@@ -362,6 +370,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  finishBootTexture()
   loadToken++ // 丢弃已卸载后才完成的纹理请求，避免重新创建 GPU 资源。
   cancelAnimationFrame(rafId)
   observer?.disconnect()

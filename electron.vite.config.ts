@@ -13,13 +13,15 @@ export default defineConfig({
   },
   preload: {
     build: {
-      outDir: 'out/preload'
+      outDir: 'out/preload',
+      rollupOptions: { input: { index: resolve(__dirname, 'src/preload/index.ts'), splash: resolve(__dirname, 'src/preload/splash.ts') } }
     }
   },
   renderer: {
     root: 'src/renderer',
     build: {
-      outDir: 'out/renderer'
+      outDir: 'out/renderer',
+      rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html'), splash: resolve(__dirname, 'src/renderer/splash.html') } }
     },
     plugins: [vue()],
     define: {

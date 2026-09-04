@@ -33,7 +33,7 @@ import { readableCustomColors } from '@shared/themeContrast'
 import { managedImageUrl } from './managedAssets'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
-import SplashScreen from './components/SplashScreen.vue'
+import { waitForBootTasks, sealBootTasks } from './bootTasks'
 import HomeView from './views/HomeView.vue'
 import GameView from './views/GameView.vue'
 import ModsView from './views/ModsView.vue'
@@ -67,25 +67,6 @@ const viewMap: Record<ViewName, Component> = {
 }
 
 const currentComponent = computed(() => viewMap[store.currentView])
-
-// ---------------- 开屏动画 ----------------
-/** 初始化完成（settings/accounts/installed 加载 + 主题应用），最短展示 2.4s 后置 true */
-const booted = ref(false)
-/** 开屏动画自身时间线是否播放完成（SplashScreen done 事件） */
-const splashAnimDone = ref(false)
-/** 正在淡出（400ms opacity 过渡中） */
-const splashLeaving = ref(false)
-/** 淡出结束，v-if 彻底移除 splash */
-const splashRemoved = ref(false)
-
-// 初始化与动画都完成后再淡出，保证动画播完且内容就绪
-watch([booted, splashAnimDone], ([b, a]) => {
-  if (!b || !a || splashLeaving.value) return
-  splashLeaving.value = true
-  setTimeout(() => {
-    splashRemoved.value = true
-  }, 400)
-})
 
 const navItems: Array<{ key: ViewName; label: string; icon: string }> = [
   {
@@ -899,10 +880,12 @@ onMounted(async () => {
   )
 
   try {
+    store.settings = await getSettings()
+    window.kamucl.send('boot:stage', 'settings')
     await Promise.all([
-      (async () => {
-        store.settings = await getSettings()
-        await Promise.all([refreshAccounts(), refreshInstalled()])
+      refreshAccounts().then(() => window.kamucl.send('boot:stage', 'accounts')),
+      refreshInstalled().then(() => window.kamucl.send('boot:stage', 'instances'))
+    ])
         // 启动自检：发现上次下载未完成的残缺版本，提示去已安装页处理
         const broken = store.installed.filter((v) => v.incomplete)
         if (broken.length) {
@@ -911,15 +894,24 @@ onMounted(async () => {
             'info'
           )
         }
-      })(),
-      // 开屏动画最短展示 2.4s
-      new Promise((r) => setTimeout(r, 2400))
-    ])
+
   } catch (e) {
     toast('初始化失败：' + errText(e), 'error')
   } finally {
     store.initialized = true
-    booted.value = true
+    await nextTick()
+    await waitForBootTasks()
+    await nextTick()
+    await document.fonts.ready
+    // Decode rendered assets after async account/skin/thumbnail bindings have settled.
+    await Promise.all([...document.images].map(img => img.decode().catch(() => undefined)))
+    await nextTick()
+    await waitForBootTasks()
+    sealBootTasks()
+    window.kamucl.send('boot:stage', 'assets')
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    window.kamucl.send('boot:stage', 'paint')
+    window.kamucl.send('boot:renderer-ready')
   }
 })
 
@@ -1352,12 +1344,7 @@ onUnmounted(() => {
     </Transition>
   </Teleport>
 
-  <!-- 开屏动画：初始化未完成或动画未播完时遮盖（splash 期间内容正常渲染），完成后淡出 400ms 再移除 -->
-  <SplashScreen
-    v-if="!splashRemoved"
-    :leaving="splashLeaving"
-    @done="splashAnimDone = true"
-  />
+
 </template>
 
 <style scoped>
