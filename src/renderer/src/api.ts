@@ -40,7 +40,12 @@ import type {
   SkinVariant,
   WorldImportInfo,
   WorldImportOptions,
-  WorldImportResult
+  WorldImportResult,
+  YggdrasilLoginResult,
+  YggdrasilProvider,
+  YggdrasilProviderCandidate,
+  YggdrasilProviderInput,
+  YggdrasilRuntimeInfo
 } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -85,6 +90,26 @@ export const selectAccount = (id: string) => invoke<Account | null>(IPC.accounts
 export const getSelectedAccount = () => invoke<Account | null>(IPC.accountsSelected)
 export const msBeginLogin = () => invoke<MsDeviceCodeInfo>(IPC.accountsMsBegin)
 export const msCancelLogin = () => invoke<void>(IPC.accountsMsCancel)
+export const listYggdrasilProviders = () =>
+  invoke<YggdrasilProvider[]>(IPC.accountsYggProviders)
+export const probeYggdrasilProvider = (
+  input: YggdrasilProviderInput,
+  allowInsecure = false
+) => invoke<YggdrasilProviderCandidate>(IPC.accountsYggProbe, input, allowInsecure)
+export const saveYggdrasilProvider = (
+  candidate: YggdrasilProviderCandidate,
+  allowInsecure = false
+) =>
+  invoke<YggdrasilProvider[]>(IPC.accountsYggSaveProvider, candidate, allowInsecure)
+export const removeYggdrasilProvider = (id: string) =>
+  invoke<YggdrasilProvider[]>(IPC.accountsYggRemoveProvider, id)
+export const loginYggdrasil = (providerId: string, identifier: string, password: string) =>
+  invoke<YggdrasilLoginResult>(IPC.accountsYggLogin, providerId, identifier, password)
+export const selectYggdrasilProfile = (challengeId: string, profileId: string) =>
+  invoke<Account>(IPC.accountsYggSelectProfile, challengeId, profileId)
+export const prepareYggdrasilRuntime = () =>
+  invoke<YggdrasilRuntimeInfo>(IPC.accountsYggRuntime)
+export const refreshAccount = (id: string) => invoke<Account>(IPC.accountsRefresh, id)
 
 // ---------------- 版本 ----------------
 export const getManifest = (refresh = false) => invoke<RemoteVersion[]>(IPC.versionsManifest, refresh)

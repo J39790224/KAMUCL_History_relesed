@@ -4,7 +4,7 @@
  */
 
 // ---------------- 账号 ----------------
-export type AccountType = 'offline' | 'microsoft'
+export type AccountType = 'offline' | 'microsoft' | 'yggdrasil'
 
 export interface Account {
   id: string
@@ -16,6 +16,15 @@ export interface Account {
   refreshToken?: string
   /** MC accessToken 过期时间（epoch 秒） */
   expiresAt?: number
+  /** 外置 Yggdrasil 账号所属提供商。 */
+  providerId?: string
+  providerName?: string
+  apiRoot?: string
+  /** 外置登录内部字段；IPC 列表会剥离凭据和用户属性。 */
+  clientToken?: string
+  loginIdentifier?: string
+  userId?: string
+  userProperties?: Array<{ name: string; value: string }>
 }
 
 /** 微软 device code 登录开始时返回给前端的展示信息 */
@@ -24,6 +33,52 @@ export interface MsDeviceCodeInfo {
   verificationUri: string
   message: string
 }
+
+export interface YggdrasilProviderInput {
+  kind: 'text' | 'file'
+  value: string
+}
+
+export interface YggdrasilProvider {
+  id: string
+  name: string
+  apiRoot: string
+  authServer: string
+  accountServer: string
+  sessionServer: string
+  servicesUrl?: string
+  skinDomains: string[]
+  insecure: boolean
+  metadataFetchedAt: string
+}
+
+/** 网络探测后的待确认配置；保存前不会进入提供商列表。 */
+export interface YggdrasilProviderCandidate extends YggdrasilProvider {
+  sourceLabel: string
+  aliRedirected: boolean
+}
+
+export interface YggdrasilProfileChoice {
+  id: string
+  name: string
+}
+
+export interface YggdrasilRuntimeInfo {
+  path: string
+  version: string
+  buildNumber: number
+  sha256: string
+}
+
+export type YggdrasilLoginResult =
+  | { status: 'complete'; account: Account }
+  | {
+      status: 'select-profile'
+      challengeId: string
+      providerName: string
+      profiles: YggdrasilProfileChoice[]
+      expiresAt: number
+    }
 
 // ---------------- 版本 ----------------
 export interface RemoteVersion {
@@ -392,6 +447,14 @@ export const IPC = {
   accountsSelected: 'accounts:selected', // () => Account | null
   accountsMsBegin: 'accounts:msBegin', // () => MsDeviceCodeInfo  开始 device code 流程
   accountsMsCancel: 'accounts:msCancel', // () => void
+  accountsYggProviders: 'accounts:yggProviders', // () => YggdrasilProvider[]
+  accountsYggProbe: 'accounts:yggProbe', // (YggdrasilProviderInput, allowInsecure?) => YggdrasilProviderCandidate
+  accountsYggSaveProvider: 'accounts:yggSaveProvider', // (candidate, allowInsecure) => YggdrasilProvider[]
+  accountsYggRemoveProvider: 'accounts:yggRemoveProvider', // (id) => YggdrasilProvider[]
+  accountsYggLogin: 'accounts:yggLogin', // (providerId, identifier, password) => YggdrasilLoginResult
+  accountsYggSelectProfile: 'accounts:yggSelectProfile', // (challengeId, profileId) => Account
+  accountsYggRuntime: 'accounts:yggRuntime', // () => YggdrasilRuntimeInfo  下载/校验 authlib-injector
+  accountsRefresh: 'accounts:refresh', // (id) => Account
 
   // 版本
   versionsManifest: 'versions:manifest', // (refresh?: boolean) => RemoteVersion[]

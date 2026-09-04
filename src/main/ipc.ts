@@ -21,7 +21,9 @@ import type {
   ProgressEvent,
   Settings,
   SkinVariant,
-  WorldImportOptions
+  WorldImportOptions,
+  YggdrasilProviderCandidate,
+  YggdrasilProviderInput
 } from '../shared/types'
 import * as settings from './core/settings'
 import * as accounts from './core/accounts'
@@ -50,6 +52,7 @@ import { launcherLog } from './core/launcherLog'
 import * as gameFolders from './core/gameFolders'
 import * as instances from './core/instances'
 import * as worlds from './core/worlds'
+import * as yggdrasil from './core/yggdrasil'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -101,11 +104,55 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   )
   ipcMain.handle(IPC.accountsRemove, (_e, id: string) => accounts.removeAccount(id))
   ipcMain.handle(IPC.accountsSelect, (_e, id: string) => accounts.selectAccount(id))
-  ipcMain.handle(IPC.accountsSelected, () => accounts.selectedAccount())
+  ipcMain.handle(IPC.accountsSelected, () => accounts.selectedAccountPublic())
   ipcMain.handle(IPC.accountsMsBegin, () =>
-    accounts.beginMsDeviceCode((account) => send(IPC_EVENT.msLoginDone, account))
+    accounts.beginMsDeviceCode((account) =>
+      send(IPC_EVENT.msLoginDone, account ? accounts.publicAccount(account) : null)
+    )
   )
   ipcMain.handle(IPC.accountsMsCancel, () => accounts.cancelMsLogin())
+  ipcMain.handle(IPC.accountsYggProviders, () => yggdrasil.listProviders())
+  ipcMain.handle(
+    IPC.accountsYggProbe,
+    (_e, input: YggdrasilProviderInput, allowInsecure?: boolean) =>
+      yggdrasil.probeProvider(input, allowInsecure === true)
+  )
+  ipcMain.handle(
+    IPC.accountsYggSaveProvider,
+    (_e, candidate: YggdrasilProviderCandidate, allowInsecure?: boolean) =>
+      yggdrasil.saveProvider(candidate, allowInsecure === true)
+  )
+  ipcMain.handle(IPC.accountsYggRemoveProvider, (_e, id: string) => {
+    const providerId = String(id ?? '')
+    return yggdrasil.removeProvider(providerId, accounts.hasProviderAccounts(providerId))
+  })
+  ipcMain.handle(
+    IPC.accountsYggLogin,
+    async (_e, providerId: string, identifier: string, password: string) => {
+      const result = await yggdrasil.authenticate(
+        String(providerId ?? ''),
+        String(identifier ?? ''),
+        String(password ?? '')
+      )
+      return result.status === 'complete'
+        ? { status: 'complete' as const, account: accounts.saveYggdrasilAccount(result.account) }
+        : result
+    }
+  )
+  ipcMain.handle(
+    IPC.accountsYggSelectProfile,
+    async (_e, challengeId: string, profileId: string) =>
+      accounts.saveYggdrasilAccount(
+        await yggdrasil.completeProfileSelection(
+          String(challengeId ?? ''),
+          String(profileId ?? '')
+        )
+      )
+  )
+  ipcMain.handle(IPC.accountsYggRuntime, () => yggdrasil.runtimeInfo())
+  ipcMain.handle(IPC.accountsRefresh, (_e, id: string) =>
+    accounts.refreshAccountById(String(id ?? ''))
+  )
 
   // ---------------- 版本 ----------------
   ipcMain.handle(IPC.versionsManifest, (_e, refresh?: boolean) =>

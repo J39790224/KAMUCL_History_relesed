@@ -35,6 +35,8 @@ import { downloadAll } from './download'
 import { instanceDirectoryState } from './instances'
 import { buildGameWindowArguments, resolveGameResolution } from './gameWindow'
 import { supportsQuickPlayMultiplayer } from './serverUtils'
+import * as yggdrasil from './yggdrasil'
+import { serializeYggdrasilUserProperties } from './yggdrasilProvider'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 export type SendLog = (line: string) => void
@@ -272,7 +274,11 @@ export async function launch(
   // b) 账号
   const account = selectedAccount()
   if (!account) throw new Error('尚未选择账号，请先在账号页添加并选择一个账号')
-  const validAccount = await getValidAccount(account)
+  // 外置登录的会话验证、元数据预取与 agent 校验彼此独立，并行避免拉长启动准备。
+  const [validAccount, externalAuthArgs] = await Promise.all([
+    getValidAccount(account),
+    yggdrasil.launchArguments(account)
+  ])
 
   // c) Java：版本独立指定 > 手动指定 > 自动管理
   emit({ stage: 'java', progress: 0, text: '检查 Java 环境' })
@@ -337,17 +343,23 @@ export async function launch(
   }
 
   // f) 变量替换表
+  const userProperties = serializeYggdrasilUserProperties(validAccount.userProperties)
   const vars: Record<string, string> = {
     auth_player_name: validAccount.username,
     version_name: versionId,
     game_directory: effectiveGameDir,
     assets_root: assetsRoot,
     assets_index_name: merged.assets ?? indexId,
-    auth_uuid: validAccount.uuid,
+    auth_uuid:
+      validAccount.type === 'yggdrasil'
+        ? validAccount.uuid.replace(/-/g, '')
+        : validAccount.uuid,
     auth_access_token: validAccount.accessToken ?? '',
+    auth_session: validAccount.accessToken ?? '',
     clientid: '',
     auth_xuid: '',
     user_type: validAccount.type === 'microsoft' ? 'msa' : 'mojang',
+    user_properties: userProperties,
     version_type: 'KAMUCL',
     natives_directory: nativesPath,
     launcher_name: 'KAMUCL',
@@ -395,6 +407,8 @@ export async function launch(
     ...(process.platform === 'darwin' ? ['-XstartOnFirstThread'] : []),
     `-Djava.library.path=${nativesPath}`,
     `-Djna.tmpdir=${nativesPath}`,
+    // 外置登录 javaagent 与预取元数据必须位于主类之前。
+    ...externalAuthArgs,
     // 版本 json 自带的 JVM 参数（forge 的 -p ${classpath} 等依赖它）
     ...expandEntries(merged.arguments?.jvm),
     ...splitArgs(settings.jvmArgs)
@@ -424,7 +438,21 @@ export async function launch(
   // g) 启动进程
   const args = [...jvmArgs, '-cp', classpath, merged.mainClass, ...gameArgs]
   // 日志中隐藏 accessToken
-  const logArgs = args.map((a) => (a === validAccount.accessToken ? '***' : a))
+  const privateLaunchValues = new Set(
+    [validAccount.accessToken, validAccount.clientToken, userProperties].filter(
+      (value): value is string => !!value
+    )
+  )
+  const logArgs = args.map((argument) => {
+    if (argument.startsWith('-Dauthlibinjector.yggdrasil.prefetched=')) {
+      return '-Dauthlibinjector.yggdrasil.prefetched=<metadata>'
+    }
+    if (privateLaunchValues.has(argument)) return '***'
+    if (validAccount.accessToken && argument.includes(validAccount.accessToken)) {
+      return argument.replaceAll(validAccount.accessToken, '***')
+    }
+    return argument
+  })
   const commandSummary = `${javaPath} ${logArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`
   log(
     `[KAMUCL] 游戏窗口: mode=${windowArgs.mode}` +

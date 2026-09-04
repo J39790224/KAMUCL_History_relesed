@@ -2,12 +2,13 @@
  * 账号模块：离线账号 + 微软 device code 登录（XBL → XSTS → MC）
  * 存储：userData/accounts.json
  */
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import type { Account, MsDeviceCodeInfo } from '../../shared/types'
 import { getSettings } from './settings'
+import * as yggdrasil from './yggdrasil'
 
 /** 微软 OAuth 端点（consumers 租户：支持个人 MSA 账号的 device code 流程） */
 const MS_SCOPE = 'XboxLive.signin offline_access'
@@ -22,51 +23,178 @@ interface AccountsFile {
   selectedId: string | null
 }
 
+type SecretKey =
+  | 'accessToken'
+  | 'refreshToken'
+  | 'clientToken'
+  | 'loginIdentifier'
+  | 'userProperties'
+
+interface StoredAccount extends Omit<Account, SecretKey> {
+  secure?: Partial<Record<SecretKey, string>>
+  /** 仅用于从 0.6.5 及更早版本迁移；新写入文件绝不会保留这些明文字段。 */
+  accessToken?: string
+  refreshToken?: string
+  clientToken?: string
+  loginIdentifier?: string
+  userProperties?: Array<{ name: string; value: string }>
+}
+
+interface StoredAccountsFile {
+  accounts?: StoredAccount[]
+  selectedId?: string | null
+}
+
+const SECRET_KEYS: SecretKey[] = [
+  'accessToken',
+  'refreshToken',
+  'clientToken',
+  'loginIdentifier',
+  'userProperties'
+]
+
 let cached: AccountsFile | null = null
 
 function storeFile(): string {
   return path.join(app.getPath('userData'), 'accounts.json')
 }
 
+function encryptSecret(value: unknown): string {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('系统安全存储当前不可用，无法安全保存登录令牌')
+  }
+  const plain = typeof value === 'string' ? value : JSON.stringify(value)
+  return safeStorage.encryptString(plain).toString('base64')
+}
+
+function decryptSecret(value: string): string | undefined {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return undefined
+    return safeStorage.decryptString(Buffer.from(value, 'base64'))
+  } catch {
+    return undefined
+  }
+}
+
+function deserializeAccount(stored: StoredAccount): { account: Account; legacySecrets: boolean } {
+  const account = { ...stored } as Account & { secure?: StoredAccount['secure'] }
+  delete account.secure
+  let legacySecrets = false
+  for (const key of SECRET_KEYS) {
+    const encrypted = stored.secure?.[key]
+    if (encrypted) {
+      const plain = decryptSecret(encrypted)
+      if (plain !== undefined) {
+        if (key === 'userProperties') {
+          try {
+            account.userProperties = JSON.parse(plain) as Account['userProperties']
+          } catch {
+            account.userProperties = []
+          }
+        } else {
+          ;(account as unknown as Record<string, unknown>)[key] = plain
+        }
+      }
+    } else if (stored[key] !== undefined) {
+      legacySecrets = true
+    }
+  }
+  return { account, legacySecrets }
+}
+
+function serializeAccount(account: Account): StoredAccount {
+  const stored = { ...account } as StoredAccount
+  const secure: StoredAccount['secure'] = {}
+  for (const key of SECRET_KEYS) {
+    const value = account[key]
+    delete (stored as unknown as Record<string, unknown>)[key]
+    if (value !== undefined && value !== '') secure[key] = encryptSecret(value)
+  }
+  if (Object.keys(secure).length) stored.secure = secure
+  return stored
+}
+
 function load(): AccountsFile {
   if (cached) return cached
+  let migrate = false
   try {
-    const raw = JSON.parse(fs.readFileSync(storeFile(), 'utf-8')) as AccountsFile
+    const raw = JSON.parse(fs.readFileSync(storeFile(), 'utf-8')) as StoredAccountsFile
+    const accounts = Array.isArray(raw.accounts)
+      ? raw.accounts.map((stored) => {
+          const parsed = deserializeAccount(stored)
+          migrate ||= parsed.legacySecrets
+          return parsed.account
+        })
+      : []
     cached = {
-      accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+      accounts,
       selectedId: raw.selectedId ?? null
     }
   } catch {
     cached = { accounts: [], selectedId: null }
+  }
+  if (migrate && safeStorage.isEncryptionAvailable()) {
+    try {
+      persist()
+    } catch (error) {
+      console.error('[KAMUCL] 账号凭据安全迁移失败，原文件保持不变:', error)
+    }
   }
   return cached
 }
 
 function persist(): void {
   const data = load()
-  try {
-    fs.mkdirSync(path.dirname(storeFile()), { recursive: true })
-    fs.writeFileSync(storeFile(), JSON.stringify(data, null, 2), 'utf-8')
-  } catch (e) {
-    console.error('[KAMUCL] 账号写入失败:', e)
+  fs.mkdirSync(path.dirname(storeFile()), { recursive: true })
+  const stored: StoredAccountsFile = {
+    accounts: data.accounts.map(serializeAccount),
+    selectedId: data.selectedId
   }
+  fs.writeFileSync(storeFile(), JSON.stringify(stored, null, 2), 'utf-8')
+}
+
+/** 渲染进程只拿展示字段，token、登录标识和用户属性始终留在主进程。 */
+export function publicAccount(account: Account): Account {
+  const result = { ...account }
+  delete result.accessToken
+  delete result.refreshToken
+  delete result.clientToken
+  delete result.loginIdentifier
+  delete result.userProperties
+  return result
 }
 
 /** 插入或更新账号（按 uuid 去重），并设为当前选中 */
 function upsert(account: Account): Account {
   const data = load()
-  const idx = data.accounts.findIndex((a) => a.uuid === account.uuid)
-  if (idx >= 0) data.accounts[idx] = { ...data.accounts[idx], ...account }
-  else data.accounts.push(account)
+  const previousAccounts = data.accounts
+  const previousSelectedId = data.selectedId
+  const nextAccounts = [...data.accounts]
+  const idx = data.accounts.findIndex(
+    (existing) =>
+      existing.id === account.id ||
+      (account.type !== 'yggdrasil' &&
+        existing.type !== 'yggdrasil' &&
+        existing.uuid === account.uuid)
+  )
+  if (idx >= 0) nextAccounts[idx] = { ...nextAccounts[idx], ...account }
+  else nextAccounts.push(account)
+  data.accounts = nextAccounts
   data.selectedId = account.id
-  persist()
+  try {
+    persist()
+  } catch (error) {
+    data.accounts = previousAccounts
+    data.selectedId = previousSelectedId
+    throw error
+  }
   return account
 }
 
 // ---------------- 基础操作 ----------------
 
 export function listAccounts(): Account[] {
-  return load().accounts
+  return load().accounts.map(publicAccount)
 }
 
 export function selectedAccount(): Account | null {
@@ -74,22 +202,54 @@ export function selectedAccount(): Account | null {
   return data.accounts.find((a) => a.id === data.selectedId) ?? null
 }
 
+export function selectedAccountPublic(): Account | null {
+  const account = selectedAccount()
+  return account ? publicAccount(account) : null
+}
+
 export function selectAccount(id: string): Account | null {
   const data = load()
   const acc = data.accounts.find((a) => a.id === id) ?? null
   if (acc) {
+    const previousSelectedId = data.selectedId
     data.selectedId = acc.id
-    persist()
+    try {
+      persist()
+    } catch (error) {
+      data.selectedId = previousSelectedId
+      throw error
+    }
   }
-  return acc
+  return acc ? publicAccount(acc) : null
 }
 
-export function removeAccount(id: string): Account[] {
+export async function removeAccount(id: string): Promise<Account[]> {
   const data = load()
+  const account = data.accounts.find((item) => item.id === id)
+  if (account?.type === 'yggdrasil') await yggdrasil.invalidateAccount(account)
+  const previousAccounts = data.accounts
+  const previousSelectedId = data.selectedId
   data.accounts = data.accounts.filter((a) => a.id !== id)
   if (data.selectedId === id) data.selectedId = data.accounts[0]?.id ?? null
-  persist()
-  return data.accounts
+  try {
+    persist()
+  } catch (error) {
+    data.accounts = previousAccounts
+    data.selectedId = previousSelectedId
+    throw error
+  }
+  return data.accounts.map(publicAccount)
+}
+
+export function hasProviderAccounts(providerId: string): boolean {
+  return load().accounts.some(
+    (account) => account.type === 'yggdrasil' && account.providerId === providerId
+  )
+}
+
+export function saveYggdrasilAccount(account: Account): Account {
+  if (account.type !== 'yggdrasil') throw new Error('无效的外置登录账号')
+  return publicAccount(upsert(account))
 }
 
 // ---------------- 离线账号 ----------------
@@ -354,9 +514,23 @@ export async function refreshMicrosoft(account: Account): Promise<Account> {
 /** 返回可用账号：离线直接返回；微软临期（<5分钟）自动刷新 */
 export async function getValidAccount(account: Account): Promise<Account> {
   if (account.type === 'offline') return account
+  if (account.type === 'yggdrasil') {
+    const refreshed = await yggdrasil.refreshAccount(account)
+    if (refreshed !== account) upsert(refreshed)
+    return refreshed
+  }
   const now = Math.floor(Date.now() / 1000)
   if (!account.accessToken || !account.expiresAt || account.expiresAt - now < 300) {
     return await refreshMicrosoft(account)
   }
   return account
+}
+
+/** 账号页手动验证/刷新；只向前端返回展示字段。 */
+export async function refreshAccountById(id: string): Promise<Account> {
+  const account = load().accounts.find((item) => item.id === id)
+  if (!account) throw new Error('账号不存在')
+  const refreshed = await getValidAccount(account)
+  if (refreshed !== account) upsert(refreshed)
+  return publicAccount(refreshed)
 }

@@ -17,6 +17,7 @@ import type {
 } from '../../shared/types'
 import { getValidAccount, selectedAccount } from './accounts'
 import { gameDir } from './paths'
+import { externalProfile } from './yggdrasil'
 
 const API = 'https://api.minecraftservices.com'
 /** 历史皮肤上限，超出删除最旧 */
@@ -130,6 +131,21 @@ function appendLauncherLog(line: string): void {
 
 /** 拉取当前账号皮肤/披风档案 */
 export async function getProfile(): Promise<ProfileSkins> {
+  const account = selectedAccount()
+  if (!account) throw new Error('请先选择账号')
+  if (account.type === 'yggdrasil') {
+    const valid = await getValidAccount(account)
+    const profile = await externalProfile(valid)
+    await Promise.all([
+      ...profile.skins.map(async (skin) => {
+        skin.dataUrl = await fetchDataUrl(skin.url)
+      }),
+      ...profile.capes.map(async (cape) => {
+        if (cape.url) cape.dataUrl = await fetchDataUrl(cape.url)
+      })
+    ])
+    return profile
+  }
   const token = await requireMcToken()
   const res = await fetch(`${API}/minecraft/profile`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -205,6 +221,11 @@ export async function getAvatar(): Promise<string | null> {
           if (skin?.url) data = (await fetchDataUrl(skin.url)) ?? null
         }
       }
+    } else if (acc.type === 'yggdrasil') {
+      const valid = await getValidAccount(acc)
+      const profile = await externalProfile(valid)
+      const skin = profile.skins[0]
+      if (skin?.url) data = (await fetchDataUrl(skin.url)) ?? null
     } else {
       const url = `https://minotar.net/helm/${encodeURIComponent(acc.username)}/64.png`
       data = (await fetchDataUrl(url)) ?? null

@@ -21,7 +21,13 @@ import {
 } from './api'
 import { dismissTask, exitEditMode, finalizeTask, markNoticesRead, recordLastPlayed, refreshAccounts, refreshInstalled, resetProgressMono, stageLabel, store, toast, upsertTaskProgress } from './store'
 import type { ViewName } from './store'
-import type { CustomTheme, ModpackInfo, ThemeName, WorldImportInfo } from '@shared/types'
+import type {
+  CustomTheme,
+  ModpackInfo,
+  ThemeName,
+  WorldImportInfo,
+  YggdrasilProviderInput
+} from '@shared/types'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import SplashScreen from './components/SplashScreen.vue'
@@ -155,36 +161,65 @@ let dragDepth = 0
 
 const dragHasFiles = (e: DragEvent) =>
   Array.from(e.dataTransfer?.types ?? []).includes('Files')
+const dragHasProviderText = (e: DragEvent) => {
+  const types = Array.from(e.dataTransfer?.types ?? [])
+  return types.includes('text/plain') || types.includes('text/uri-list')
+}
+const dragHasSupportedData = (e: DragEvent) => dragHasFiles(e) || dragHasProviderText(e)
+const looksLikeYggdrasilProvider = (value: string): boolean => {
+  const text = value.trim()
+  return (
+    /^authlib-injector:yggdrasil-server:/i.test(text) ||
+    /^https?:\/\//i.test(text) ||
+    /^\{[\s\S]*\}$/i.test(text) ||
+    /(?:api\s*root|yggdrasil(?:\s*server)?)\s*[:=]/i.test(text) ||
+    /^[\w.-]+\.[a-z]{2,}(?:[/:][^\s]*)?$/i.test(text)
+  )
+}
 
 function onDragEnter(e: DragEvent) {
-  if (!dragHasFiles(e)) return
+  if (!dragHasSupportedData(e)) return
   e.preventDefault()
   dragDepth++
   dragActive.value = true
 }
 
 function onDragOver(e: DragEvent) {
-  if (!dragHasFiles(e)) return
+  if (!dragHasSupportedData(e)) return
   e.preventDefault() // 必须 preventDefault 才允许 drop
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
   dragActive.value = true
 }
 
 function onDragLeave(e: DragEvent) {
-  if (!dragHasFiles(e)) return
+  if (!dragHasSupportedData(e)) return
   dragDepth = Math.max(0, dragDepth - 1)
   if (dragDepth === 0) dragActive.value = false
 }
 
 function onDrop(e: DragEvent) {
-  if (!dragHasFiles(e)) return
+  if (!dragHasSupportedData(e)) return
   e.preventDefault()
   dragDepth = 0
   dragActive.value = false
   const dropped = Array.from(e.dataTransfer?.files ?? [])
-  if (!dropped.length) return
+  if (!dropped.length) {
+    const text =
+      e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text/uri-list') || ''
+    if (looksLikeYggdrasilProvider(text)) {
+      routeYggdrasilImport({ kind: 'text', value: text })
+    } else if (text.trim()) {
+      toast('拖入的文本不是可识别的外置登录提供商', 'error')
+    }
+    return
+  }
   const paths = dropped.map((f) => window.kamucl.getFilePath(f))
   const names = dropped.map((f) => f.name.toLowerCase())
+
+  if (names.length === 1 && /\.(json|txt|url|yggdrasil)$/.test(names[0])) {
+    routeYggdrasilImport({ kind: 'file', value: paths[0] })
+    return
+  }
 
   // 单项拖入先按内容识别：.mrpack 始终优先，ZIP/文件夹可能是世界存档。
   if (names.length === 1) {
@@ -198,6 +233,18 @@ function onDrop(e: DragEvent) {
     return
   }
   toast('不能混合拖入整合包与其他文件，请分开拖入', 'error')
+}
+
+function routeYggdrasilImport(input: YggdrasilProviderInput) {
+  store.pendingYggdrasilImport = input
+  store.currentView = 'accounts'
+  void nextTick(() => {
+    const pending = store.pendingYggdrasilImport
+    if (pending && store.yggdrasilImportHandler) {
+      store.pendingYggdrasilImport = null
+      store.yggdrasilImportHandler(pending)
+    }
+  })
 }
 
 // ---------------- MOD 拖入即装 ----------------
@@ -1001,7 +1048,7 @@ onUnmounted(() => {
           <path d="m7 8 5-5 5 5" />
           <path d="M12 3v12" />
         </svg>
-        <p class="drop-title">松开导入：存档文件夹 / ZIP、整合包（.mrpack）或 MOD</p>
+        <p class="drop-title">松开导入：存档 / 整合包 / MOD / 外置登录提供商</p>
       </div>
     </div>
   </Teleport>

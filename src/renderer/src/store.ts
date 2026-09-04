@@ -7,7 +7,8 @@ import type {
   InstalledVersion,
   LaunchState,
   ProgressEvent,
-  Settings
+  Settings,
+  YggdrasilProviderInput
 } from '@shared/types'
 import { errText, getInstalled, getSelectedAccount, listAccounts, saveSettings } from './api'
 
@@ -102,6 +103,9 @@ export const store = reactive({
   noticesUnread: false,
   /** 整合包导入处理器（App.vue 注册，供任意页面触发导入确认弹窗） */
   importHandler: null as ((filePath: string) => void) | null,
+  /** 外置登录提供商拖拽入口；切换到账号页期间先暂存在 pending 中。 */
+  yggdrasilImportHandler: null as ((input: YggdrasilProviderInput) => void) | null,
+  pendingYggdrasilImport: null as YggdrasilProviderInput | null,
   /** 后台任务列表（版本安装/整合包导入/资源下载），驱动顶栏下载中心 */
   tasks: [] as TaskItem[],
   toasts: [] as ToastItem[]

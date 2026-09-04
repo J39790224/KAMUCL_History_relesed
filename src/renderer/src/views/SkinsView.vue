@@ -16,6 +16,8 @@ import type { CapeInfo, ProfileSkins, SkinHistoryEntry, SkinVariant } from '@sha
 
 /** 仅微软正版账号可用 */
 const isMs = computed(() => store.selectedAccount?.type === 'microsoft')
+const isExternal = computed(() => store.selectedAccount?.type === 'yggdrasil')
+const canViewProfile = computed(() => isMs.value || isExternal.value)
 
 // ---------------- 档案 ----------------
 const profile = ref<ProfileSkins | null>(null)
@@ -53,6 +55,7 @@ async function renderCapes() {
 
 /** 点击披风：使用中 → 卸下；其他 → 激活 */
 async function onCapeClick(c: CapeInfo) {
+  if (!isMs.value) return
   if (capeBusy.value) return
   capeBusy.value = c.id
   try {
@@ -136,6 +139,7 @@ function fileToDataUrl(f: File): Promise<string> {
 
 /** 统一入口：文件选择框与拖拽都来此 */
 async function pickFile(f: File | undefined | null) {
+  if (!isMs.value) return
   if (!f) return
   if (!/\.png$/i.test(f.name)) {
     toast('请选择 PNG 格式的皮肤文件', 'error')
@@ -221,11 +225,11 @@ function fmtTime(t: number): string {
 // ---------------- 生命周期 ----------------
 function loadAll() {
   void loadProfile()
-  void loadHistory()
+  if (isMs.value) void loadHistory()
 }
 
 onMounted(() => {
-  if (isMs.value) loadAll()
+  if (canViewProfile.value) loadAll()
 })
 
 /** 切换账号后重置并重新加载 */
@@ -237,7 +241,7 @@ watch(
     historyRenders.value = {}
     capeRenders.value = {}
     clearPending()
-    if (isMs.value) loadAll()
+    if (canViewProfile.value) loadAll()
   }
 )
 </script>
@@ -246,15 +250,17 @@ watch(
   <div class="page">
     <div class="page-head">
       <h1 class="page-title">皮肤与披风</h1>
-      <p class="page-sub">管理微软正版账号的皮肤与披风</p>
+      <p class="page-sub">
+        {{ isExternal ? `查看 ${store.selectedAccount?.providerName ?? '外置皮肤站'} 的角色材质` : '管理微软正版账号的皮肤与披风' }}
+      </p>
     </div>
 
     <!-- 非微软账号：整页引导 -->
-    <div v-if="!isMs" class="card empty need-ms">
+    <div v-if="!canViewProfile" class="card empty need-ms">
       <svg class="need-ms-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="m9 4-6 3 2 5 3-1v9h8v-9l3 1 2-5-6-3a3 3 0 0 1-6 0Z" />
       </svg>
-      <p class="need-ms-text">皮肤与披风功能需要微软正版账号</p>
+      <p class="need-ms-text">皮肤与披风需要微软正版账号或外置 Yggdrasil 账号</p>
       <button class="btn btn-gold" @click="store.currentView = 'accounts'">去登录</button>
     </div>
 
@@ -299,7 +305,7 @@ watch(
             </div>
 
             <!-- 待上传文件 -->
-            <div v-if="pending" class="pending-box">
+            <div v-if="isMs && pending" class="pending-box">
               <div class="pending-viewer">
                 <SkinViewer3D v-if="pendingDataUrl" :src="pendingDataUrl" :variant="variant" />
               </div>
@@ -329,13 +335,17 @@ watch(
               </button>
             </div>
 
-            <div class="skin-actions">
+            <div v-if="isMs" class="skin-actions">
               <button class="btn btn-ghost" @click="fileInput?.click()">选择皮肤文件…</button>
               <button class="btn btn-gold" :disabled="!pending || uploading" @click="doUpload">
                 {{ uploading ? '上传中…' : '上传' }}
               </button>
             </div>
-            <p class="muted skin-hint">支持 64×64 的 PNG 皮肤文件，可直接拖拽到本卡片</p>
+            <p v-if="isMs" class="muted skin-hint">支持 64×64 的 PNG 皮肤文件，可直接拖拽到本卡片</p>
+            <div v-else class="external-skin-note">
+              <span class="tag tag-cyan">{{ store.selectedAccount?.providerName }}</span>
+              <p class="muted skin-hint">外置账号的皮肤与披风由所属皮肤站管理；KAMUCL 会读取并在启动时加载当前材质。</p>
+            </div>
           </div>
         </div>
         <input
@@ -360,8 +370,8 @@ watch(
             :key="c.id"
             class="cape-item"
             :class="{ active: c.active }"
-            :disabled="capeBusy !== null"
-            :title="c.active ? '点击卸下披风' : '点击使用该披风'"
+            :disabled="capeBusy !== null || isExternal"
+            :title="isExternal ? '请在所属皮肤站管理披风' : c.active ? '点击卸下披风' : '点击使用该披风'"
             @click="onCapeClick(c)"
           >
             <div class="cape-preview">
@@ -376,7 +386,7 @@ watch(
       </div>
 
       <!-- ============ 历史皮肤 ============ -->
-      <div class="card">
+      <div v-if="isMs" class="card">
         <h3 class="section-title">历史皮肤（{{ historyList.length }}）</h3>
         <div v-if="loadingHistory" class="empty cape-loading"><span class="spin"></span></div>
         <div v-else-if="!historyList.length" class="empty history-empty">
@@ -455,6 +465,15 @@ watch(
 .skin-card.drag-over {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.external-skin-note {
+  display: grid;
+  justify-items: start;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-2);
 }
 .skin-main {
   display: flex;

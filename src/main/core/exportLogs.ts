@@ -177,7 +177,12 @@ export async function exportLaunchLogs(
   if (result.canceled || !result.filePath) return null
 
   const account = selectedAccount()
-  const secrets = [account?.accessToken ?? '', account?.refreshToken ?? ''].filter(Boolean)
+  const secrets = [
+    account?.accessToken ?? '',
+    account?.refreshToken ?? '',
+    account?.clientToken ?? '',
+    account?.loginIdentifier ?? ''
+  ].filter(Boolean)
   const currentLaunch = last?.versionId === vid ? last : null
   const manifest: DiagnosticManifest = {
     schemaVersion: 1,
