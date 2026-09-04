@@ -544,10 +544,24 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.serversPing, (_e, address: string) =>
     servers.pingServer(String(address ?? ''))
   )
-  ipcMain.handle(IPC.serversBind, (_e, id: string, versionId: string) =>
-    servers.bindServer(String(id ?? ''), String(versionId ?? ''))
+  ipcMain.handle(IPC.serversBind, (_e, id: string, versionId: string, folder?: string) =>
+    servers.bindServer(String(id ?? ''), String(versionId ?? ''), folder ? String(folder) : undefined)
   )
-  ipcMain.handle(IPC.serversSyncFromDat, () => servers.syncFromServersDat())
+  ipcMain.handle(IPC.serversSyncFromDat, (_e, versionId?: string, folder?: string) =>
+    servers.syncFromServersDat(
+      versionId ? String(versionId) : undefined,
+      folder ? String(folder) : undefined
+    )
+  )
+  ipcMain.handle(
+    IPC.serversPrepareLaunch,
+    (_e, id: string, versionId?: string, folder?: string) =>
+      servers.prepareServerLaunch(
+        String(id ?? ''),
+        versionId ? String(versionId) : undefined,
+        folder ? String(folder) : undefined
+      )
+  )
 
   // ---------------- MOD 拖入即装 ----------------
   ipcMain.handle(IPC.modsParse, (_e, paths: string[]) => {

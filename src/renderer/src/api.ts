@@ -32,7 +32,9 @@ import type {
   ProfileSkins,
   RemoteVersion,
   ServerEntry,
+  ServerLaunchPreparation,
   ServerPingResult,
+  ServerSyncResult,
   Settings,
   SkinHistoryEntry,
   SkinVariant,
@@ -198,10 +200,12 @@ export const addServer = (name: string, address: string) =>
 export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
 export const pingServer = (address: string) =>
   invoke<ServerPingResult>(IPC.serversPing, address)
-export const bindServer = (id: string, versionId: string) =>
-  invoke<ServerEntry[]>(IPC.serversBind, id, versionId)
-export const syncServersFromDat = () =>
-  invoke<{ list: ServerEntry[]; added: number }>(IPC.serversSyncFromDat)
+export const bindServer = (id: string, versionId: string, folder?: string) =>
+  invoke<ServerEntry[]>(IPC.serversBind, id, versionId, folder)
+export const syncServersFromDat = (versionId?: string, folder?: string) =>
+  invoke<ServerSyncResult>(IPC.serversSyncFromDat, versionId, folder)
+export const prepareServerLaunch = (id: string, versionId?: string, folder?: string) =>
+  invoke<ServerLaunchPreparation>(IPC.serversPrepareLaunch, id, versionId, folder)
 
 // ---------------- MOD 拖入即装 ----------------
 export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)

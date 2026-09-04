@@ -1,12 +1,26 @@
-/**
- * 服务器：列表 CRUD（userData/servers.json）+ MC Server List Ping（1.7+ 协议）
- */
+/** 服务器：启动器记录、servers.dat 只读同步与 MC Server List Ping。 */
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import net from 'node:net'
+import dns from 'node:dns/promises'
 import crypto from 'node:crypto'
-import type { ServerEntry, ServerPingResult } from '../../shared/types'
+import type {
+  InstalledVersion,
+  ServerEntry,
+  ServerLaunchPreparation,
+  ServerPingResult,
+  ServerSyncResult
+} from '../../shared/types'
+import { parseNbt } from './nbt'
+import { listAllInstalled } from './versions'
+import { setActiveGameFolder } from './gameFolders'
+import { canonicalPath, pathIdentity } from './folderPaths'
+import {
+  parseServerAddress,
+  serverAssociationKey,
+  supportsQuickPlayMultiplayer
+} from './serverUtils'
 
 function storeFile(): string {
   return path.join(app.getPath('userData'), 'servers.json')
@@ -15,7 +29,43 @@ function storeFile(): string {
 export function listServers(): ServerEntry[] {
   try {
     const raw = JSON.parse(fs.readFileSync(storeFile(), 'utf-8'))
-    return Array.isArray(raw) ? raw : []
+    if (!Array.isArray(raw)) return []
+    const result: ServerEntry[] = []
+    for (const value of raw) {
+      if (!value || typeof value !== 'object') continue
+      const old = value as Partial<ServerEntry>
+      try {
+        const parsed = parseServerAddress(String(old.address ?? ''))
+        const entry: ServerEntry = {
+          id: typeof old.id === 'string' && old.id ? old.id : crypto.randomUUID(),
+          name: typeof old.name === 'string' && old.name.trim() ? old.name.trim() : parsed.address,
+          address: parsed.address,
+          normalizedAddress: parsed.normalizedAddress,
+          host: parsed.host,
+          port: parsed.port
+        }
+        if (old.versionId) entry.versionId = String(old.versionId)
+        if (old.folder) entry.folder = canonicalPath(String(old.folder))
+        if (old.minecraftVersion) entry.minecraftVersion = String(old.minecraftVersion)
+        if (old.loader && ['forge', 'fabric', 'quilt', 'neoforge'].includes(old.loader)) {
+          entry.loader = old.loader
+        }
+        if (old.loaderVersion) entry.loaderVersion = String(old.loaderVersion)
+        if (old.lastUsedAt) entry.lastUsedAt = String(old.lastUsedAt)
+        if (old.lastSeenAt) entry.lastSeenAt = String(old.lastSeenAt)
+        if (old.source === 'minecraft' || old.source === 'launcher') entry.source = old.source
+        if (Array.isArray(old.candidateVersionIds)) {
+          entry.candidateVersionIds = [...new Set(old.candidateVersionIds.map(String))]
+        }
+        if (old.sourceGameDirectory) {
+          entry.sourceGameDirectory = canonicalPath(String(old.sourceGameDirectory))
+        }
+        result.push(entry)
+      } catch {
+        // 旧记录若已损坏则不让它阻断整个服务器页。
+      }
+    }
+    return result
   } catch {
     return []
   }
@@ -28,12 +78,28 @@ function persist(list: ServerEntry[]): void {
 
 export function addServer(name: string, address: string): ServerEntry[] {
   const n = name.trim()
-  const a = address.trim()
   if (!n) throw new Error('服务器名称不能为空')
-  if (!a) throw new Error('服务器地址不能为空')
+  const parsed = parseServerAddress(address)
   const list = listServers()
-  if (list.some((s) => s.address === a)) throw new Error('该服务器已在列表中')
-  list.push({ id: crypto.randomUUID(), name: n, address: a })
+  if (
+    list.some(
+      (server) =>
+        !server.versionId &&
+        (server.normalizedAddress ?? parseServerAddress(server.address).normalizedAddress) ===
+          parsed.normalizedAddress
+    )
+  ) {
+    throw new Error('该服务器已在未绑定列表中')
+  }
+  list.push({
+    id: crypto.randomUUID(),
+    name: n,
+    address: parsed.address,
+    normalizedAddress: parsed.normalizedAddress,
+    host: parsed.host,
+    port: parsed.port,
+    source: 'launcher'
+  })
   persist(list)
   return list
 }
@@ -44,18 +110,99 @@ export function removeServer(id: string): ServerEntry[] {
   return list
 }
 
-// ---------------- 版本绑定 ----------------
+// ---------------- 实例绑定与启动 ----------------
 
-export function bindServer(id: string, versionId: string): ServerEntry[] {
+function findInstalledTarget(
+  versionId: string,
+  folder?: string,
+  targets = listAllInstalled()
+): InstalledVersion {
+  let matches = targets.filter((target) => target.id === versionId)
+  if (folder) {
+    const identity = pathIdentity(folder)
+    matches = matches.filter((target) => pathIdentity(target.folder) === identity)
+  }
+  if (!matches.length) throw new Error(`关联实例「${versionId}」已被删除或所在磁盘不可用`)
+  if (matches.length > 1) throw new Error(`多个游戏文件夹中都存在「${versionId}」，请重新选择具体实例`)
+  return matches[0]
+}
+
+function applyTarget(entry: ServerEntry, target: InstalledVersion): void {
+  entry.versionId = target.id
+  entry.folder = canonicalPath(target.folder)
+  entry.minecraftVersion = target.mcVersion
+  if (target.loader) entry.loader = target.loader
+  else delete entry.loader
+  if (target.loaderVersion) entry.loaderVersion = target.loaderVersion
+  else delete entry.loaderVersion
+  delete entry.candidateVersionIds
+  delete entry.sourceGameDirectory
+}
+
+export function bindServer(id: string, versionId: string, folder?: string): ServerEntry[] {
   const list = listServers()
   const s = list.find((x) => x.id === id)
   if (!s) throw new Error('服务器不存在')
-  if (versionId) s.versionId = versionId
-  else delete s.versionId
+  if (versionId) {
+    const target = findInstalledTarget(versionId, folder)
+    const endpoint = s.normalizedAddress ?? parseServerAddress(s.address).normalizedAddress
+    const duplicate = list.some(
+      (entry) =>
+        entry.id !== s.id &&
+        (entry.normalizedAddress ?? parseServerAddress(entry.address).normalizedAddress) === endpoint &&
+        entry.versionId === target.id &&
+        !!entry.folder &&
+        pathIdentity(entry.folder) === pathIdentity(target.folder)
+    )
+    if (duplicate) throw new Error('该服务器已关联到所选实例')
+    applyTarget(s, target)
+  } else {
+    delete s.versionId
+    delete s.folder
+    delete s.minecraftVersion
+    delete s.loader
+    delete s.loaderVersion
+  }
   persist(list)
-  // 绑定变更立即写回该版本 servers.dat
-  if (versionId) writeBackToVersion(versionId)
   return list
+}
+
+export function prepareServerLaunch(
+  id: string,
+  versionId?: string,
+  folder?: string
+): ServerLaunchPreparation {
+  const list = listServers()
+  const entry = list.find((server) => server.id === id)
+  if (!entry) throw new Error('服务器记录不存在')
+  const requestedVersion = versionId || entry.versionId
+  if (!requestedVersion) throw new Error('请先选择要启动的游戏实例')
+  const target = findInstalledTarget(requestedVersion, folder || entry.folder)
+  if (target.failed) throw new Error(`实例「${target.id}」安装事务未完成，请先清理或重新安装`)
+  if (target.incomplete) throw new Error(`实例「${target.id}」缺少关键文件，请先修复或重新下载`)
+
+  // 切换活动目录后，versions 的寻址表会在前端刷新时按该目录重建。
+  setActiveGameFolder(target.folder)
+  const parsed = parseServerAddress(entry.address)
+  entry.address = parsed.address
+  entry.normalizedAddress = parsed.normalizedAddress
+  entry.host = parsed.host
+  entry.port = parsed.port
+  entry.lastUsedAt = new Date().toISOString()
+  if (entry.versionId === target.id && (!entry.folder || pathIdentity(entry.folder) === pathIdentity(target.folder))) {
+    applyTarget(entry, target)
+  }
+  persist(list)
+  return {
+    serverId: entry.id,
+    versionId: target.id,
+    folder: canonicalPath(target.folder),
+    address: parsed.address,
+    minecraftVersion: target.mcVersion,
+    loader: target.loader,
+    loaderVersion: target.loaderVersion,
+    directJoin: supportsQuickPlayMultiplayer(target.mcVersion)
+  }
 }
 
 /** 实例重命名后同步 servers.json 中的绑定 versionId */
@@ -67,83 +214,184 @@ export function renameBinding(oldId: string, newId: string): void {
       s.versionId = newId
       changed = true
     }
+    if (s.candidateVersionIds?.includes(oldId)) {
+      s.candidateVersionIds = s.candidateVersionIds.map((id) => (id === oldId ? newId : id))
+      changed = true
+    }
   }
   if (changed) persist(list)
 }
 
-// ---------------- servers.dat 双向同步 ----------------
+// ---------------- servers.dat 只读同步 ----------------
 
 interface DatServer {
   name: string
   ip: string
 }
 
-import { buildServersDat, parseNbt } from './nbt'
-import { listInstalled, readVersionJson } from './versions'
-import { instanceDirectoryState } from './instances'
-
-/** 版本的 servers.dat 所在目录（遵循版本隔离与多文件夹） */
-function serverGameDir(versionId: string): string {
-  return instanceDirectoryState(versionId, readVersionJson(versionId)).path
-}
-
-/** 读取某版本的 servers.dat（不存在返回空数组） */
-function readServersDat(dir: string): DatServer[] {
+function readServersDat(dir: string): { list: DatServer[]; error?: string } {
   const file = path.join(dir, 'servers.dat')
-  if (!fs.existsSync(file)) return []
+  if (!fs.existsSync(file)) return { list: [] }
   try {
     const root = parseNbt(fs.readFileSync(file))
     const list = root.servers
-    if (!Array.isArray(list)) return []
-    return list
-      .map((e) => {
-        const o = e as { name?: unknown; ip?: unknown }
-        return { name: String(o.name ?? ''), ip: String(o.ip ?? '') }
-      })
-      .filter((s) => s.ip)
-  } catch {
-    return []
+    if (!Array.isArray(list)) return { list: [], error: 'servers.dat 缺少 servers 列表' }
+    return {
+      list: list
+        .map((e) => {
+          const o = e as { name?: unknown; ip?: unknown }
+          return { name: String(o.name ?? ''), ip: String(o.ip ?? '') }
+        })
+        .filter((s) => s.ip)
+    }
+  } catch (error) {
+    return { list: [], error: error instanceof Error ? error.message : String(error) }
   }
 }
 
-/** 把启动器列表中绑定该版本的服务器写回其 servers.dat */
-export function writeBackToVersion(versionId: string): void {
-  const dir = serverGameDir(versionId)
-  const mine = listServers().filter((s) => s.versionId === versionId)
-  const list: DatServer[] = mine.map((s) => ({ name: s.name, ip: s.address }))
-  try {
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'servers.dat'), buildServersDat(list))
-  } catch (e) {
-    console.error('[KAMUCL] 写回 servers.dat 失败:', e)
-  }
+interface ScanGroup {
+  directory: string
+  targets: InstalledVersion[]
 }
 
 /**
- * 从所有已安装版本的 servers.dat 合并进启动器列表：
- * 游戏内添加的服务器自动纳入并标注所属版本；同地址已存在则以启动器记录为准。
- * 返回合并后的列表与新增数量。
+ * 从实际实例目录读取 servers.dat。此路径永不写回游戏文件，因此游戏运行时刷新、
+ * 启动器内删除或重新绑定都不会覆盖玩家在 Minecraft 内维护的服务器列表。
+ * 指定 versionId/folder 时用于游戏退出后的精确关联；全量扫描遇到共享目录时保留候选列表。
  */
-export function syncFromServersDat(): { list: ServerEntry[]; added: number } {
+export function syncFromServersDat(versionId?: string, folder?: string): ServerSyncResult {
   const list = listServers()
+  const targets = listAllInstalled()
+  const selected = versionId ? [findInstalledTarget(versionId, folder, targets)] : targets
+  const groupsByDirectory = new Map<string, ScanGroup>()
+  for (const target of selected) {
+    const directory = canonicalPath(target.gameDirectory || target.folder)
+    const identity = pathIdentity(directory)
+    const group = groupsByDirectory.get(identity)
+    if (group) group.targets.push(target)
+    else groupsByDirectory.set(identity, { directory, targets: [target] })
+  }
+
   let added = 0
-  for (const v of listInstalled()) {
-    const dir = serverGameDir(v.id)
-    for (const ds of readServersDat(dir)) {
-      const exists = list.some((s) => s.address.toLowerCase() === ds.ip.toLowerCase())
-      if (!exists) {
-        list.push({
+  let updated = 0
+  const errors: string[] = []
+  const seenAt = new Date().toISOString()
+  for (const [directoryIdentity, group] of groupsByDirectory) {
+    const read = readServersDat(group.directory)
+    if (read.error) {
+      errors.push(`${group.targets.map((target) => target.id).join(' / ')}：${read.error}`)
+      continue
+    }
+    for (const datServer of read.list) {
+      let parsed
+      try {
+        parsed = parseServerAddress(datServer.ip)
+      } catch (error) {
+        errors.push(
+          `${datServer.name || datServer.ip}：${error instanceof Error ? error.message : String(error)}`
+        )
+        continue
+      }
+
+      const exactTarget = group.targets.length === 1 ? group.targets[0] : undefined
+      let matches: ServerEntry[] = []
+      if (exactTarget) {
+        const key = serverAssociationKey(
+          parsed.normalizedAddress,
+          exactTarget.id,
+          pathIdentity(exactTarget.folder)
+        )
+        matches = list.filter(
+          (entry) =>
+            serverAssociationKey(
+              entry.normalizedAddress ?? parseServerAddress(entry.address).normalizedAddress,
+              entry.versionId,
+              entry.folder ? pathIdentity(entry.folder) : undefined,
+              entry.sourceGameDirectory ? pathIdentity(entry.sourceGameDirectory) : undefined
+            ) === key
+        )
+        if (!matches.length) {
+          // 兼容旧格式（只有 versionId、没有 folder）以及先前共享目录的待确认记录。
+          matches = list.filter((entry) => {
+            const sameEndpoint =
+              (entry.normalizedAddress ?? parseServerAddress(entry.address).normalizedAddress) ===
+              parsed.normalizedAddress
+            if (!sameEndpoint) return false
+            if (entry.versionId === exactTarget.id && !entry.folder) return true
+            if (entry.versionId) return false
+            return (
+              !entry.sourceGameDirectory ||
+              pathIdentity(entry.sourceGameDirectory) === directoryIdentity
+            )
+          })
+          // 不把多个手工收藏同时折叠到一个实例；歧义时保留原记录并创建精确关联。
+          if (matches.length > 1) matches = []
+        }
+      } else {
+        // 同一共享根目录对应多个非隔离实例：已有精确关联优先，否则保留一个待确认记录。
+        const candidateKeys = new Set(
+          group.targets.map((target) => `${pathIdentity(target.folder)}\u0000${target.id}`)
+        )
+        matches = list.filter(
+          (entry) =>
+            (entry.normalizedAddress ?? parseServerAddress(entry.address).normalizedAddress) ===
+              parsed.normalizedAddress &&
+            !!entry.versionId &&
+            !!entry.folder &&
+            candidateKeys.has(`${pathIdentity(entry.folder)}\u0000${entry.versionId}`)
+        )
+        if (!matches.length) {
+          matches = list.filter(
+            (entry) =>
+              !entry.versionId &&
+              (entry.normalizedAddress ?? parseServerAddress(entry.address).normalizedAddress) ===
+                parsed.normalizedAddress &&
+              !!entry.sourceGameDirectory &&
+              pathIdentity(entry.sourceGameDirectory) === directoryIdentity
+          )
+        }
+      }
+
+      if (!matches.length) {
+        const entry: ServerEntry = {
           id: crypto.randomUUID(),
-          name: ds.name || ds.ip,
-          address: ds.ip,
-          versionId: v.id
-        })
+          name: datServer.name || parsed.address,
+          address: parsed.address,
+          normalizedAddress: parsed.normalizedAddress,
+          host: parsed.host,
+          port: parsed.port,
+          lastSeenAt: seenAt,
+          source: 'minecraft'
+        }
+        if (exactTarget) applyTarget(entry, exactTarget)
+        else {
+          entry.candidateVersionIds = [...new Set(group.targets.map((target) => target.id))]
+          entry.sourceGameDirectory = group.directory
+        }
+        list.push(entry)
         added++
+        continue
+      }
+
+      for (const entry of matches) {
+        const before = JSON.stringify(entry)
+        entry.address = parsed.address
+        entry.normalizedAddress = parsed.normalizedAddress
+        entry.host = parsed.host
+        entry.port = parsed.port
+        entry.lastSeenAt = seenAt
+        if (entry.source === 'minecraft') entry.name = datServer.name || parsed.address
+        if (exactTarget) applyTarget(entry, exactTarget)
+        else if (!entry.versionId) {
+          entry.candidateVersionIds = [...new Set(group.targets.map((target) => target.id))]
+          entry.sourceGameDirectory = group.directory
+        }
+        if (JSON.stringify(entry) !== before) updated++
       }
     }
   }
-  if (added) persist(list)
-  return { list, added }
+  if (added || updated) persist(list)
+  return { list, targets, added, updated, errors }
 }
 
 // ---------------- Server List Ping ----------------
@@ -202,85 +450,101 @@ export function pingServer(address: string): Promise<ServerPingResult> {
       version: '-',
       latencyMs: 0
     }
-    const [hostRaw, portRaw] = address.split(':')
-    const host = (hostRaw ?? '').trim()
-    const port = portRaw ? parseInt(portRaw, 10) : 25565
-    if (!host || Number.isNaN(port)) {
+    let parsed
+    try {
+      parsed = parseServerAddress(address)
+    } catch {
       resolve(offline)
       return
     }
-
-    const start = Date.now()
-    let done = false
-    const finish = (r: ServerPingResult): void => {
-      if (done) return
-      done = true
-      try {
-        sock.destroy()
-      } catch {
-        /* 忽略 */
+    void (async () => {
+      let connectHost = parsed.host
+      let connectPort = parsed.port
+      // Java 客户端对未显式写端口的域名会查询 _minecraft._tcp SRV；状态探测保持一致。
+      if (!parsed.explicitPort && net.isIP(parsed.host) === 0) {
+        try {
+          const records = await dns.resolveSrv(`_minecraft._tcp.${parsed.host}`)
+          const selected = [...records].sort(
+            (a, b) => a.priority - b.priority || b.weight - a.weight
+          )[0]
+          if (selected) {
+            connectHost = selected.name.replace(/\.$/, '')
+            connectPort = selected.port
+          }
+        } catch {
+          // 没有 SRV 时按默认 25565 直连。
+        }
       }
-      resolve(r)
-    }
 
-    const sock = net.connect({ host, port })
-    sock.setNoDelay(true)
-    sock.setTimeout(6000)
+      const start = Date.now()
+      let done = false
+      const sock = net.connect({ host: connectHost, port: connectPort })
+      const finish = (r: ServerPingResult): void => {
+        if (done) return
+        done = true
+        try {
+          sock.destroy()
+        } catch {
+          /* 忽略 */
+        }
+        resolve(r)
+      }
+      sock.setNoDelay(true)
+      sock.setTimeout(6000)
 
-    sock.on('connect', () => {
-      // Handshake：protocol=-1（任意）、地址、端口、next=1(status)
-      const addrBuf = Buffer.from(host, 'utf-8')
-      const payload = Buffer.concat([
-        writeVarInt(-1),
-        writeVarInt(addrBuf.length),
-        addrBuf,
-        Buffer.from([port >> 8, port & 0xff]),
-        writeVarInt(1)
-      ])
-      sock.write(pack(0x00, payload))
-      sock.write(pack(0x00, Buffer.alloc(0))) // Status Request
-    })
+      sock.on('connect', () => {
+        // Handshake 保留玩家填写的原始主机与逻辑端口，TCP 目标可由 SRV 改写。
+        const addrBuf = Buffer.from(parsed.host, 'utf-8')
+        const payload = Buffer.concat([
+          writeVarInt(-1),
+          writeVarInt(addrBuf.length),
+          addrBuf,
+          Buffer.from([parsed.port >> 8, parsed.port & 0xff]),
+          writeVarInt(1)
+        ])
+        sock.write(pack(0x00, payload))
+        sock.write(pack(0x00, Buffer.alloc(0)))
+      })
 
-    let buf = Buffer.alloc(0)
-    sock.on('data', (chunk) => {
-      buf = Buffer.concat([buf, chunk])
-      // 读 VarInt 包长度
-      let len = 0
-      let shift = 0
-      let i = 0
-      for (; i < buf.length && i < 5; i++) {
-        len |= (buf[i] & 0x7f) << (shift * 7)
-        shift++
-        if ((buf[i] & 0x80) === 0) break
-      }
-      if (i >= buf.length || (i < buf.length && (buf[i] & 0x80) !== 0)) return // 长度未收全
-      const headLen = i + 1
-      if (buf.length < headLen + len) return // 包体未收全
-      const body = buf.subarray(headLen, headLen + len)
-      // body: packetId(0x00) + VarInt jsonLen + json
-      let j = 1
-      let jsonLen = 0
-      let jshift = 0
-      for (; j < body.length && j < 6; j++) {
-        jsonLen |= (body[j] & 0x7f) << (jshift * 7)
-        jshift++
-        if ((body[j] & 0x80) === 0) break
-      }
-      const json = body.subarray(j + 1, j + 1 + jsonLen).toString('utf-8')
-      try {
-        const s = JSON.parse(json) as StatusJson
-        finish({
-          online: true,
-          players: `${s.players?.online ?? 0}/${s.players?.max ?? 0}`,
-          motd: motdText(s.description) || '这个服务器没有介绍',
-          version: s.version?.name ?? '未知',
-          latencyMs: Date.now() - start
-        })
-      } catch {
-        finish(offline)
-      }
-    })
-    sock.on('timeout', () => finish(offline))
-    sock.on('error', () => finish(offline))
+      let buf = Buffer.alloc(0)
+      sock.on('data', (chunk) => {
+        buf = Buffer.concat([buf, chunk])
+        let len = 0
+        let shift = 0
+        let i = 0
+        for (; i < buf.length && i < 5; i++) {
+          len |= (buf[i] & 0x7f) << (shift * 7)
+          shift++
+          if ((buf[i] & 0x80) === 0) break
+        }
+        if (i >= buf.length || (i < buf.length && (buf[i] & 0x80) !== 0)) return
+        const headLen = i + 1
+        if (buf.length < headLen + len) return
+        const body = buf.subarray(headLen, headLen + len)
+        let j = 1
+        let jsonLen = 0
+        let jshift = 0
+        for (; j < body.length && j < 6; j++) {
+          jsonLen |= (body[j] & 0x7f) << (jshift * 7)
+          jshift++
+          if ((body[j] & 0x80) === 0) break
+        }
+        const json = body.subarray(j + 1, j + 1 + jsonLen).toString('utf-8')
+        try {
+          const s = JSON.parse(json) as StatusJson
+          finish({
+            online: true,
+            players: `${s.players?.online ?? 0}/${s.players?.max ?? 0}`,
+            motd: motdText(s.description) || '这个服务器没有介绍',
+            version: s.version?.name ?? '未知',
+            latencyMs: Date.now() - start
+          })
+        } catch {
+          finish(offline)
+        }
+      })
+      sock.on('timeout', () => finish(offline))
+      sock.on('error', () => finish(offline))
+    })().catch(() => resolve(offline))
   })
 }

@@ -441,8 +441,9 @@ export const IPC = {
   serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
   serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
   serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
-  serversBind: 'servers:bind', // (id: string, versionId: string) => ServerEntry[]  绑定/解绑版本（空串解绑）
-  serversSyncFromDat: 'servers:syncFromDat', // () => { list: ServerEntry[]; added: number }  从各版本 servers.dat 合并
+  serversBind: 'servers:bind', // (id: string, versionId: string, folder?: string) => ServerEntry[]  绑定/解绑具体实例
+  serversSyncFromDat: 'servers:syncFromDat', // (versionId?: string, folder?: string) => ServerSyncResult
+  serversPrepareLaunch: 'servers:prepareLaunch', // (id: string, versionId?: string, folder?: string) => ServerLaunchPreparation
 
   // MOD 拖入即装
   modsParse: 'mods:parse', // (paths: string[]) => ModInfo[]  支持文件/文件夹路径，静默解析元数据
@@ -644,9 +645,46 @@ export interface WorldImportResult {
 export interface ServerEntry {
   id: string
   name: string
+  /** 交给 Minecraft 的规范化地址（默认端口省略）。 */
   address: string
-  /** 绑定的游戏版本 id（双击直接启动该版本进服；空 = 未绑定） */
+  /** 用于去重的 host:port；IPv6 host 带方括号。 */
+  normalizedAddress?: string
+  host?: string
+  port?: number
+  /** 绑定的实例 id；folder 一起构成唯一实例引用。 */
   versionId?: string
+  folder?: string
+  minecraftVersion?: string
+  loader?: LoaderName
+  loaderVersion?: string
+  /** KAMUCL 一键启动该条目的时间；servers.dat 本身不包含游玩时间。 */
+  lastUsedAt?: string
+  lastSeenAt?: string
+  source?: 'launcher' | 'minecraft'
+  /** 多个非隔离实例共用同一 servers.dat 时只能确定的候选实例。 */
+  candidateVersionIds?: string[]
+  /** 仅用于稳定区分不同共享目录中的未绑定记录，不在 UI 展示完整路径。 */
+  sourceGameDirectory?: string
+}
+
+export interface ServerSyncResult {
+  list: ServerEntry[]
+  targets: InstalledVersion[]
+  added: number
+  updated: number
+  errors: string[]
+}
+
+export interface ServerLaunchPreparation {
+  serverId: string
+  versionId: string
+  folder: string
+  address: string
+  minecraftVersion: string
+  loader?: LoaderName
+  loaderVersion?: string
+  /** false 时仅启动正确实例，由玩家在多人游戏菜单中选择服务器。 */
+  directJoin: boolean
 }
 
 // ---------------- MOD 拖入即装 ----------------

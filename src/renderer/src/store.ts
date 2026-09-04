@@ -86,6 +86,8 @@ export const store = reactive({
   launchState: null as LaunchState | null,
   /** 最近一次点击启动的版本 id（用于启动成功后记录 lastPlayed） */
   launchingVersionId: '',
+  /** 启动时锁定的游戏根目录；游戏运行期间切换目录也不会让退出同步串到别处。 */
+  launchingFolder: '',
   /** 启动日志行（滚动缓冲，有上限） */
   logs: [] as string[],
   /** 每个版本的最后启动时间戳（localStorage 持久化） */

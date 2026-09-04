@@ -34,6 +34,7 @@ import {
 import { downloadAll } from './download'
 import { instanceDirectoryState } from './instances'
 import { buildGameWindowArguments, resolveGameResolution } from './gameWindow'
+import { supportsQuickPlayMultiplayer } from './serverUtils'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 export type SendLog = (line: string) => void
@@ -412,9 +413,12 @@ export async function launch(
   const windowArgs = buildGameWindowArguments(gameArgs, resolution, workArea)
   gameArgs = windowArgs.args
 
-  // e3) 一键进服（1.20.2+ 支持 --quickPlayMultiplayer）
-  if (serverAddress) {
+  // e3) 官方 Quick Play 自 Java 1.20 起支持；旧版只启动正确实例，不注入未知参数。
+  const minecraftVersion = instanceConfig._mcVersion ?? baseId
+  if (serverAddress && supportsQuickPlayMultiplayer(minecraftVersion)) {
     gameArgs.push('--quickPlayMultiplayer', serverAddress)
+  } else if (serverAddress) {
+    log(`[KAMUCL] Minecraft ${minecraftVersion} 不支持 Quick Play，已仅启动实例`)
   }
 
   // g) 启动进程

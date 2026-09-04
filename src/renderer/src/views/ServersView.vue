@@ -5,17 +5,20 @@ import {
   addServer,
   bindServer,
   errText,
+  getSettings,
   launchGame,
   listServers,
   pingServer,
+  prepareServerLaunch,
   removeServer,
   syncServersFromDat
 } from '../api'
 import { refreshInstalled, store, toast } from '../store'
-import type { ServerEntry, ServerPingResult } from '@shared/types'
+import type { InstalledVersion, ServerEntry, ServerPingResult } from '@shared/types'
 
 // ---------------- 列表与状态 ----------------
 const servers = ref<ServerEntry[]>([])
+const targets = ref<InstalledVersion[]>([])
 const pings = reactive<Record<string, ServerPingResult | 'loading'>>({})
 const loading = ref(true)
 
@@ -25,9 +28,28 @@ async function load() {
     // 先从各版本 servers.dat 合并（游戏内添加的服务器自动纳入并标注所属版本）
     const r = await syncServersFromDat()
     servers.value = r.list
+    targets.value = r.targets ?? store.installed
     if (r.added > 0) toast(`已从游戏内同步 ${r.added} 个服务器`, 'info')
+    if (r.errors?.length) toast(`有 ${r.errors.length} 个服务器列表未能读取：${r.errors[0]}`, 'error')
   } catch (e) {
     toast('读取服务器列表失败：' + errText(e), 'error')
+  } finally {
+    loading.value = false
+  }
+  void pingAll()
+}
+
+async function syncNow() {
+  loading.value = true
+  try {
+    const r = await syncServersFromDat()
+    servers.value = r.list
+    targets.value = r.targets ?? store.installed
+    const detail = r.added || r.updated ? `新增 ${r.added}，更新 ${r.updated ?? 0}` : '没有发现变化'
+    toast(`游戏内服务器同步完成：${detail}`, r.errors?.length ? 'error' : 'success')
+    if (r.errors?.length) toast(r.errors[0], 'error')
+  } catch (e) {
+    toast('同步失败：' + errText(e), 'error')
   } finally {
     loading.value = false
   }
@@ -101,15 +123,51 @@ async function onDelete() {
 // ---------------- 一键进服 ----------------
 const joinModal = reactive({ open: false, target: null as ServerEntry | null, versionId: '' })
 
+const normalizedPath = (value: string) => value.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
+const targetToken = (target: Pick<InstalledVersion, 'id' | 'folder'>) =>
+  JSON.stringify({ id: target.id, folder: target.folder })
+const parseTargetToken = (value: string): { id: string; folder: string } | null => {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as { id?: unknown; folder?: unknown }
+    return typeof parsed.id === 'string' && typeof parsed.folder === 'string'
+      ? { id: parsed.id, folder: parsed.folder }
+      : null
+  } catch {
+    return null
+  }
+}
+const targetOf = (server: ServerEntry): InstalledVersion | undefined =>
+  targets.value.find(
+    (target) =>
+      target.id === server.versionId &&
+      (!server.folder || normalizedPath(target.folder) === normalizedPath(server.folder))
+  )
+const boundToken = (server: ServerEntry): string => {
+  const target = targetOf(server)
+  return target ? targetToken(target) : ''
+}
+const folderLabel = (folder: string): string =>
+  store.settings?.folders.find(
+    (item) => normalizedPath(item.path) === normalizedPath(folder)
+  )?.name ?? folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder
+const targetLabel = (target: InstalledVersion): string =>
+  `${folderLabel(target.folder)} · ${target.id}${target.loader ? ` · ${target.loader} ${target.loaderVersion ?? ''}` : ''}`
+const formatLastUsed = (value?: string): string => {
+  if (!value) return '尚未从启动器进入'
+  const time = new Date(value)
+  return Number.isNaN(time.getTime()) ? '时间未知' : `上次启动 ${time.toLocaleString()}`
+}
+
 /** 双击卡片：已绑定版本直接启动进服；未绑定弹版本选择 */
 function onCardDblClick(s: ServerEntry) {
   if (s.versionId) {
-    const v = store.installed.find((x) => x.id === s.versionId)
+    const v = targetOf(s)
     if (v) {
       void doLaunch(s, s.versionId)
       return
     }
-    toast('绑定版本已缺失，请重新绑定或补装', 'error')
+    relinkMissing(s)
     return
   }
   openJoin(s)
@@ -117,56 +175,65 @@ function onCardDblClick(s: ServerEntry) {
 
 async function doLaunch(s: ServerEntry, versionId: string) {
   try {
-    await launchGame(versionId, s.address)
-    toast(`正在启动并进入 ${s.name}…`, 'info')
+    const target = targets.value.find(
+      (item) => item.id === versionId && (!s.folder || normalizedPath(item.folder) === normalizedPath(s.folder))
+    )
+    const prepared = await prepareServerLaunch(s.id, versionId, target?.folder ?? s.folder)
+    store.settings = await getSettings()
+    await refreshInstalled()
+    store.launchingVersionId = prepared.versionId
+    store.launchingFolder = prepared.folder
+    await launchGame(prepared.versionId, prepared.directJoin ? prepared.address : undefined)
+    servers.value = await listServers()
+    toast(
+      prepared.directJoin
+        ? `正在启动并进入 ${s.name}…`
+        : `Minecraft ${prepared.minecraftVersion} 不支持快速进入，已启动正确实例`,
+      'info'
+    )
   } catch (e) {
     toast('启动失败：' + errText(e), 'error')
   }
 }
 
-/** 绑定版本变更（立即写回该版本 servers.dat） */
-async function onBind(s: ServerEntry, versionId: string) {
+/** 仅更新 KAMUCL 的实例关联；绝不写回或覆盖 Minecraft 的 servers.dat。 */
+async function onBind(s: ServerEntry, token: string) {
   try {
-    servers.value = await bindServer(s.id, versionId)
-    toast(versionId ? `已绑定到 ${versionId}` : '已解绑版本', 'success')
+    const target = parseTargetToken(token)
+    servers.value = await bindServer(s.id, target?.id ?? '', target?.folder)
+    toast(target ? `已关联到 ${target.id}` : '已解除实例关联', 'success')
   } catch (e) {
     toast('绑定失败：' + errText(e), 'error')
   }
 }
 
-/** 版本缺失补装 */
-async function onReinstall(s: ServerEntry) {
-  const v = s.versionId
-  if (!v) return
-  try {
-    const { installVersion } = await import('../api')
-    toast(`开始补装 ${v}…`, 'info')
-    await installVersion(v, {})
-  } catch (e) {
-    toast('补装失败：' + errText(e), 'error')
-  }
+function relinkMissing(s: ServerEntry) {
+  toast('关联实例已缺失；可选择现有实例重新关联，或到游戏版本页重新下载', 'info')
+  openJoin(s)
 }
 
-const versionMissing = (s: ServerEntry): boolean =>
-  !!s.versionId && !store.installed.some((v) => v.id === s.versionId)
+const versionMissing = (s: ServerEntry): boolean => !!s.versionId && !targetOf(s)
 
 function openJoin(s: ServerEntry) {
-  if (!store.installed.length) {
+  if (!targets.value.length) {
     toast('还没有安装任何版本，请先到游戏版本页安装', 'error')
     return
   }
   joinModal.target = s
-  joinModal.versionId = store.installed[0]?.id ?? ''
+  joinModal.versionId = targetOf(s) ? boundToken(s) : targetToken(targets.value[0])
   joinModal.open = true
 }
 
 async function onJoin() {
   const s = joinModal.target
   if (!s || !joinModal.versionId) return
+  const target = parseTargetToken(joinModal.versionId)
+  if (!target) return
   joinModal.open = false
   try {
-    await launchGame(joinModal.versionId, s.address)
-    toast(`正在启动并进入 ${s.name}…`, 'info')
+    servers.value = await bindServer(s.id, target.id, target.folder)
+    const linked = servers.value.find((server) => server.id === s.id) ?? s
+    await doLaunch(linked, target.id)
   } catch (e) {
     toast('启动失败：' + errText(e), 'error')
   }
@@ -208,6 +275,10 @@ const filteredServers = computed(() =>
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
         刷新状态
       </button>
+      <button class="btn btn-ghost" :disabled="loading" @click="syncNow">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-5V2" /><path d="M4 17h5v5" /><path d="M5.1 9a8 8 0 0 1 13.2-3L20 7M4 17l1.7 1A8 8 0 0 0 18.9 15" /></svg>
+        同步游戏列表
+      </button>
     </div>
 
     <!-- 列表 -->
@@ -239,19 +310,26 @@ const filteredServers = computed(() =>
           <div class="server-bind">
             <select
               class="bind-select"
-              :value="s.versionId ?? ''"
+              :value="boundToken(s)"
               :title="s.versionId ? '双击卡片直接启动该版本进服' : '绑定版本后可双击进服'"
               @change="onBind(s, ($event.target as HTMLSelectElement).value)"
             >
-              <option value="">未绑定版本</option>
-              <option v-for="v in store.installed" :key="v.id" :value="v.id">
-                {{ v.id }}{{ v.isolated ? '（隔离）' : '' }}
+              <option value="">未关联实例</option>
+              <option v-for="v in targets" :key="`${v.folder}\u0000${v.id}`" :value="targetToken(v)">
+                {{ targetLabel(v) }}{{ v.isolated ? '（隔离）' : '' }}
               </option>
             </select>
             <template v-if="versionMissing(s)">
-              <span class="tag tag-danger">版本缺失</span>
-              <button class="btn btn-ghost btn-sm" @click="onReinstall(s)">一键补装</button>
+              <span class="tag tag-danger">关联实例缺失</span>
+              <button class="btn btn-ghost btn-sm" @click="relinkMissing(s)">重新关联</button>
+              <button class="btn btn-ghost btn-sm" @click="store.currentView = 'game'">前往版本页</button>
             </template>
+            <span v-else-if="s.candidateVersionIds?.length" class="tag">共享目录，待确认实例</span>
+          </div>
+          <div class="server-instance-meta">
+            <span v-if="s.minecraftVersion">Minecraft {{ s.minecraftVersion }}</span>
+            <span v-if="s.loader">{{ s.loader }} {{ s.loaderVersion ?? '' }}</span>
+            <span>{{ formatLastUsed(s.lastUsedAt) }}</span>
           </div>
         </div>
         <div class="server-meta">
@@ -263,7 +341,13 @@ const filteredServers = computed(() =>
           <span v-else-if="pings[s.id] !== 'loading'" class="tag">离线</span>
         </div>
         <div class="server-actions">
-          <button class="btn btn-gold btn-sm" :disabled="!!store.launchState && store.launchState.status === 'running'" @click="openJoin(s)">进入游戏</button>
+          <button
+            class="btn btn-gold btn-sm"
+            :disabled="!!store.launchState && store.launchState.status === 'running'"
+            @click="s.versionId && !versionMissing(s) ? doLaunch(s, s.versionId) : openJoin(s)"
+          >
+            {{ s.versionId && !versionMissing(s) ? '一键启动' : '选择实例' }}
+          </button>
           <button class="btn btn-danger btn-sm" @click="delModal.open = true; delModal.target = s">删除</button>
         </div>
       </div>
@@ -297,7 +381,9 @@ const filteredServers = computed(() =>
       <div v-if="delModal.open" class="modal-mask" @click.self="delModal.open = false">
         <div class="modal">
           <h3 class="modal-title">删除服务器</h3>
-          <p class="confirm-text">确定要删除「{{ delModal.target?.name }}」吗？此操作不可恢复。</p>
+          <p class="confirm-text">
+            确定要从 KAMUCL 删除「{{ delModal.target?.name }}」吗？这只会删除启动器记录，不会修改 Minecraft 的 servers.dat；下次同步时，游戏内仍存在的条目可能再次出现。
+          </p>
           <div class="modal-actions">
             <button class="btn btn-ghost" @click="delModal.open = false">取消</button>
             <button class="btn btn-danger" :disabled="delModal.busy" @click="onDelete">
@@ -311,11 +397,15 @@ const filteredServers = computed(() =>
       <div v-if="joinModal.open" class="modal-mask" @click.self="joinModal.open = false">
         <div class="modal">
           <h3 class="modal-title">进入 {{ joinModal.target?.name }}</h3>
-          <p class="modal-label">选择游戏版本（将进入服务器 {{ joinModal.target?.address }}）</p>
+          <p class="modal-label">选择游戏实例（将保存关联并启动 {{ joinModal.target?.address }}）</p>
           <select v-model="joinModal.versionId" class="select">
-            <option v-for="v in store.installed" :key="v.id" :value="v.id">{{ v.id }}</option>
+            <option v-for="v in targets" :key="`${v.folder}\u0000${v.id}`" :value="targetToken(v)">
+              {{ targetLabel(v) }}
+            </option>
           </select>
-          <p class="muted join-hint">服务器版本不匹配时可能无法进入，请留意服务器提示的所需版本。</p>
+          <p class="muted join-hint">
+            Java 1.20 及以上会使用官方 Quick Play 直接进入；更旧版本只启动正确实例，并保留服务器记录。
+          </p>
           <div class="modal-actions">
             <button class="btn btn-ghost" @click="joinModal.open = false">取消</button>
             <button class="btn btn-gold" @click="onJoin">启动并进入</button>
@@ -414,12 +504,13 @@ const filteredServers = computed(() =>
 /* 绑定版本行 */
 .server-bind {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 7px;
 }
 .bind-select {
-  max-width: 220px;
+  max-width: min(360px, 100%);
   padding: 4px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -427,6 +518,14 @@ const filteredServers = computed(() =>
   color: var(--text);
   font-size: 12px;
   font-family: inherit;
+}
+.server-instance-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-size: 11.5px;
 }
 .server-meta {
   display: flex;
@@ -458,5 +557,23 @@ const filteredServers = computed(() =>
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.6;
+}
+
+@media (max-width: 820px) {
+  .server-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .server-main {
+    min-width: calc(100% - 28px);
+  }
+  .server-meta {
+    flex-direction: row;
+    align-items: center;
+    margin-left: 24px;
+  }
+  .server-actions {
+    margin-left: auto;
+  }
 }
 </style>

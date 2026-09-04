@@ -138,6 +138,7 @@ async function startVersion(id: string) {
     return
   }
   store.launchingVersionId = id
+  store.launchingFolder = store.settings?.activeFolder ?? store.settings?.gameDir ?? ''
   try {
     await launchGame(id)
   } catch (e) {

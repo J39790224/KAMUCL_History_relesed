@@ -722,9 +722,12 @@ onMounted(async () => {
         } else {
           toast('游戏已退出', 'info')
         }
-        // 游戏退出后重读 servers.dat（玩家在游戏内增删的服务器自动同步回来）
+        // 游戏退出后只扫描刚运行的实例，避免共享 servers.dat 被错误关联到其他版本。
+        const exitedVersionId = store.launchingVersionId
+        const exitedFolder =
+          store.launchingFolder || (store.settings?.activeFolder ?? store.settings?.gameDir)
         void import('./api').then(({ syncServersFromDat }) =>
-          syncServersFromDat().catch(() => undefined)
+          syncServersFromDat(exitedVersionId || undefined, exitedFolder).catch(() => undefined)
         )
       }
     })
