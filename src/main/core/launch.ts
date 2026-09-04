@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import AdmZip from 'adm-zip'
 import type { LaunchState, ProgressEvent } from '../../shared/types'
 import { getSettings } from './settings'
@@ -33,6 +33,7 @@ import {
 } from './versions'
 import { downloadAll } from './download'
 import { instanceDirectoryState } from './instances'
+import { buildGameWindowArguments, resolveGameResolution } from './gameWindow'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 export type SendLog = (line: string) => void
@@ -58,6 +59,9 @@ export interface LastLaunchInfo {
   exitCode?: number | null
   endedAt?: string
   spawnError?: string
+  windowMode?: 'windowed' | 'maximized' | 'fullscreen'
+  windowWidth?: number
+  windowHeight?: number
 }
 let lastLaunch: LastLaunchInfo | null = null
 export function getLastLaunch(): LastLaunchInfo | null {
@@ -239,6 +243,7 @@ export async function launch(
   // a) 版本链合并
   emit({ stage: 'launch', progress: 0, text: '解析版本信息' })
   const { merged, baseId } = resolveChain(versionId)
+  const instanceConfig = readVersionJson(versionId)
   const clientJar = clientJarPath(baseId)
   if (!fs.existsSync(clientJar)) {
     throw new Error(`客户端文件缺失（${baseId}.jar），请先完整安装版本 ${baseId}`)
@@ -271,7 +276,7 @@ export async function launch(
   // c) Java：版本独立指定 > 手动指定 > 自动管理
   emit({ stage: 'java', progress: 0, text: '检查 Java 环境' })
   let javaPath: string
-  const versionJava = readVersionJson(versionId)._javaPath
+  const versionJava = instanceConfig._javaPath
   if (versionJava) {
     if (!fs.existsSync(versionJava)) {
       throw new Error(`该版本指定的 Java 不存在（${versionJava}），请在版本设置中重新选择`)
@@ -394,13 +399,18 @@ export async function launch(
     ...splitArgs(settings.jvmArgs)
   ]
 
-  // e2) 分辨率
-  if (settings.resolution.fullscreen) {
-    gameArgs.push('--fullscreen')
-  } else {
-    if (settings.resolution.width > 0) gameArgs.push('--width', String(settings.resolution.width))
-    if (settings.resolution.height > 0) gameArgs.push('--height', String(settings.resolution.height))
+  // e2) 实例覆盖 > 全局设置。全屏不混入窗口尺寸；最大化使用当前显示器工作区。
+  const resolution = resolveGameResolution(settings.resolution, instanceConfig._resolution)
+  let workArea: { width: number; height: number } | undefined
+  if (resolution.mode === 'maximized') {
+    try {
+      workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workAreaSize
+    } catch {
+      /* 无显示器上下文时回退到配置宽高，仍保持窗口模式。 */
+    }
   }
+  const windowArgs = buildGameWindowArguments(gameArgs, resolution, workArea)
+  gameArgs = windowArgs.args
 
   // e3) 一键进服（1.20.2+ 支持 --quickPlayMultiplayer）
   if (serverAddress) {
@@ -412,6 +422,12 @@ export async function launch(
   // 日志中隐藏 accessToken
   const logArgs = args.map((a) => (a === validAccount.accessToken ? '***' : a))
   const commandSummary = `${javaPath} ${logArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`
+  log(
+    `[KAMUCL] 游戏窗口: mode=${windowArgs.mode}` +
+      (windowArgs.width && windowArgs.height
+        ? `, width=${windowArgs.width}, height=${windowArgs.height}`
+        : ', fullscreen=true')
+  )
   log(`[KAMUCL] 启动命令: ${commandSummary}`)
 
   emit({ stage: 'launch', progress: 1, text: '启动游戏进程' })
@@ -425,6 +441,9 @@ export async function launch(
     effectiveGameDir,
     logDir: launchLogDir,
     commandSummary,
+    windowMode: windowArgs.mode,
+    windowWidth: windowArgs.width,
+    windowHeight: windowArgs.height,
     pid: proc.pid
   }
   onState({ status: 'running', text: '游戏进程已启动' })

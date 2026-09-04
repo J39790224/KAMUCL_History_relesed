@@ -11,6 +11,11 @@ import {
   DEFAULT_HOME_LAYOUT,
   DEFAULT_MS_CLIENT_ID
 } from '../../shared/types'
+import {
+  assertValidResolution,
+  normalizeStoredResolution,
+  resolutionValidationError
+} from './gameWindow'
 
 let cached: Settings | null = null
 
@@ -30,7 +35,7 @@ function defaults(): Settings {
     javaHidden: [],
     memoryMB: 4096,
     jvmArgs: '',
-    resolution: { width: 854, height: 480, fullscreen: false },
+    resolution: { width: 854, height: 480, mode: 'windowed', fullscreen: false },
     mirror: 'bmclapi',
     defaultIsolation: true,
     msClientId: DEFAULT_MS_CLIENT_ID,
@@ -74,6 +79,10 @@ export function getSettings(): Settings {
         def.activeFolder
     }
     const c = cached
+    const migratedResolution = normalizeStoredResolution(c.resolution, def.resolution)
+    c.resolution = resolutionValidationError(migratedResolution)
+      ? def.resolution
+      : migratedResolution
     // 迁移：旧版默认 client_id（Mojang legacy 应用，不支持 device code）→ 新默认
     if (c.msClientId === '00000000402b5328') c.msClientId = def.msClientId
     // 保证 activeFolder 指向已登记文件夹；gameDir 与 activeFolder 保持一致语义
@@ -91,10 +100,19 @@ export function getSettings(): Settings {
 /** 合并 patch 并写盘，返回合并后的完整 Settings */
 export function saveSettings(patch: Partial<Settings>): Settings {
   const cur = getSettings()
+  let nextResolution = cur.resolution
+  if (patch.resolution) {
+    const requested = { ...cur.resolution, ...patch.resolution }
+    assertValidResolution(requested)
+    nextResolution = normalizeStoredResolution(
+      requested,
+      cur.resolution
+    )
+  }
   const merged: Settings = {
     ...cur,
     ...patch,
-    resolution: { ...cur.resolution, ...(patch.resolution ?? {}) },
+    resolution: nextResolution,
     custom: {
       colors: { ...cur.custom.colors, ...(patch.custom?.colors ?? {}) },
       layout: { ...cur.custom.layout, ...(patch.custom?.layout ?? {}) }

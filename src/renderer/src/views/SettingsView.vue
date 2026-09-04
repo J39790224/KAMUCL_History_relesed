@@ -186,14 +186,24 @@ const sliderFill = computed(() => {
 })
 
 // ---------------- 分辨率 ----------------
+const resolutionError = ref('')
+
 function saveResolution() {
   const s = store.settings
   if (!s) return
-  const width = Math.max(854, Math.min(7680, Math.round(s.resolution.width) || 854))
-  const height = Math.max(480, Math.min(4320, Math.round(s.resolution.height) || 480))
-  s.resolution.width = width
-  s.resolution.height = height
-  save({ resolution: { ...s.resolution } })
+  const width = Number(s.resolution.width)
+  const height = Number(s.resolution.height)
+  if (!Number.isInteger(width) || width < 854 || width > 7680) {
+    resolutionError.value = '窗口宽度必须是 854–7680 之间的整数'
+    return
+  }
+  if (!Number.isInteger(height) || height < 480 || height > 4320) {
+    resolutionError.value = '窗口高度必须是 480–4320 之间的整数'
+    return
+  }
+  resolutionError.value = ''
+  s.resolution.fullscreen = s.resolution.mode === 'fullscreen'
+  void save({ resolution: { ...s.resolution } })
 }
 </script>
 
@@ -497,6 +507,7 @@ function saveResolution() {
               class="input"
               min="854"
               max="7680"
+              :disabled="store.settings.resolution.mode !== 'windowed'"
               @change="saveResolution"
             />
           </div>
@@ -509,21 +520,23 @@ function saveResolution() {
               class="input"
               min="480"
               max="4320"
+              :disabled="store.settings.resolution.mode !== 'windowed'"
               @change="saveResolution"
             />
           </div>
-          <div class="fullscreen-toggle">
-            <span class="muted">全屏</span>
-            <label class="switch">
-              <input
-                v-model="store.settings.resolution.fullscreen"
-                type="checkbox"
-                @change="save({ resolution: { ...store.settings!.resolution } })"
-              />
-              <span class="switch-ui"></span>
-            </label>
+          <div class="resolution-mode">
+            <span class="muted res-label">模式</span>
+            <select v-model="store.settings.resolution.mode" class="select" @change="saveResolution">
+              <option value="windowed">窗口化</option>
+              <option value="maximized">最大化</option>
+              <option value="fullscreen">全屏</option>
+            </select>
           </div>
         </div>
+        <p v-if="resolutionError" class="group-error">{{ resolutionError }}</p>
+        <p v-else class="muted group-hint">
+          窗口化使用以上宽高；最大化使用启动时所在显示器的工作区；全屏不会修改显示器分辨率。
+        </p>
       </div>
 
       <!-- JVM 参数 -->
@@ -982,13 +995,16 @@ function saveResolution() {
 .res-x {
   flex-shrink: 0;
 }
-.fullscreen-toggle {
+.resolution-mode {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
   margin-left: 8px;
   font-size: 14px;
+}
+.resolution-mode .select {
+  min-width: 108px;
 }
 
 /* 镜像 */

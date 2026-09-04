@@ -14,6 +14,7 @@ import type {
   FolderScanResult,
   FsEntry,
   GameFolder,
+  GameResolution,
   InstallOptions,
   InstalledVersion,
   IsolationMigrationPlan,
@@ -93,6 +94,8 @@ export const renameVersion = (id: string, newName: string) =>
   invoke<void>(IPC.versionsRename, id, newName)
 export const setVersionJava = (id: string, javaPath: string) =>
   invoke<void>(IPC.versionsSetJava, id, javaPath)
+export const setVersionResolution = (id: string, resolution: GameResolution | null) =>
+  invoke<void>(IPC.versionsSetResolution, id, resolution)
 export const cleanupPartialInstall = (id: string) =>
   invoke<boolean>(IPC.versionsCleanup, id)
 

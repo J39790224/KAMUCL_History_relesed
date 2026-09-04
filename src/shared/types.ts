@@ -73,6 +73,8 @@ export interface InstalledVersion {
   failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
+  /** 实例窗口设置覆盖；未设置时跟随全局设置。 */
+  resolution?: GameResolution
   /** 实例图标：'mob:<内置生物头像id>' | 'file:<自定义图标文件名>'（空 = 默认图标） */
   icon?: string
   /** 该版本所属的游戏文件夹路径 */
@@ -130,6 +132,16 @@ export interface JavaInfo {
 
 // ---------------- 设置 ----------------
 export type ThemeName = 'light' | 'dark' | 'custom'
+
+export type GameWindowMode = 'windowed' | 'maximized' | 'fullscreen'
+
+export interface GameResolution {
+  width: number
+  height: number
+  mode: GameWindowMode
+  /** 兼容 0.6.x 旧配置；保存时始终与 mode 同步。 */
+  fullscreen: boolean
+}
 
 /** 自定义主题：模块化颜色 + 布局位置（theme === 'custom' 时生效） */
 export interface CustomTheme {
@@ -218,7 +230,7 @@ export interface Settings {
   javaHidden: string[]
   memoryMB: number
   jvmArgs: string
-  resolution: { width: number; height: number; fullscreen: boolean }
+  resolution: GameResolution
   mirror: 'official' | 'bmclapi'
   /** 新版本安装后默认开启版本隔离（独立游戏目录），可在设置中关闭 */
   defaultIsolation: boolean
@@ -399,6 +411,7 @@ export const IPC = {
   foldersScan: 'folders:scan', // (path: string) => FolderScanResult
   foldersOpen: 'folders:open', // (path: string) => void
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
+  versionsSetResolution: 'versions:setResolution', // (id: string, resolution: GameResolution | null) => void  null = 跟随全局
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
   versionsIsolationPlan: 'versions:isolationPlan', // (versionId: string) => IsolationMigrationPlan
 

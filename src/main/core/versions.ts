@@ -5,6 +5,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type {
+  GameResolution,
   InstalledVersion,
   InstallOptions,
   ProgressEvent,
@@ -23,6 +24,7 @@ import { getSettings } from './settings'
 import { abortableDelay, throwIfCancelled } from './tasks'
 import { createWeightedProgressEmit, VERSION_INSTALL_STAGE_RANGES } from './progress'
 import { applyIsolation, instanceDirectoryState } from './instances'
+import { assertValidResolution, normalizeStoredResolution } from './gameWindow'
 import {
   allVersionsDirs,
   assetIndexPath,
@@ -109,6 +111,8 @@ export interface VersionJson {
   _modpackVersion?: string
   /** KAMUCL 自定义字段：版本独立指定 Java 路径 */
   _javaPath?: string
+  /** KAMUCL 自定义字段：实例级窗口设置覆盖。 */
+  _resolution?: GameResolution
   /** KAMUCL 自定义字段：自定义命名的原版实例记录其真实 MC 版本 id（修复/推断用） */
   _mcVersion?: string
   /** KAMUCL 自定义字段：实例图标（'mob:<内置id>' / 'file:<自定义文件名>'） */
@@ -647,6 +651,7 @@ export function scanInstalledFolder(folder: string): {
       if (j._modpackName) item.modpackName = j._modpackName
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
       if (j._javaPath) item.javaPath = j._javaPath
+      if (j._resolution) item.resolution = normalizeStoredResolution(j._resolution)
       if (j._icon) item.icon = j._icon
       const directory = instanceDirectoryState(name, j, root)
       item.isolated = directory.isolated
@@ -806,6 +811,20 @@ export function setVersionJava(id: string, javaPath: string): void {
   if (p) j._javaPath = p
   else delete j._javaPath
   fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
+}
+
+/** 实例级窗口设置；null 表示删除覆盖并跟随全局。 */
+export function setVersionResolution(id: string, resolution: GameResolution | null): void {
+  const jp = versionJsonPath(id)
+  const version = readVersionJson(id)
+  if (resolution) {
+    assertValidResolution(resolution)
+    const normalized = normalizeStoredResolution(resolution)
+    version._resolution = normalized
+  } else {
+    delete version._resolution
+  }
+  fs.writeFileSync(jp, JSON.stringify(version, null, 2), 'utf-8')
 }
 
 // ---------------- 版本隔离 ----------------

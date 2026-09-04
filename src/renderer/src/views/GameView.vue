@@ -25,7 +25,8 @@ import {
   setActiveFolder,
   setDefaultFolder,
   setVersionIsolation,
-  setVersionJava
+  setVersionJava,
+  setVersionResolution
 } from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -34,6 +35,8 @@ import type {
   FabricApiVersion,
   FolderScanResult,
   GameFolder,
+  GameResolution,
+  GameWindowMode,
   InstallOptions,
   InstalledVersion,
   IsolationMigrationPlan,
@@ -584,6 +587,64 @@ async function onConfirmJava() {
   }
 }
 
+// ---------------- 实例窗口设置 ----------------
+const resolutionModal = reactive({
+  open: false,
+  id: '',
+  mode: 'inherit' as 'inherit' | GameWindowMode,
+  width: 854,
+  height: 480,
+  error: '',
+  busy: false
+})
+
+function openResolutionModal() {
+  resolutionModal.id = manageMenu.id
+  manageMenu.id = ''
+  const current = store.installed.find((version) => version.id === resolutionModal.id)
+  const fallback = store.settings?.resolution
+  resolutionModal.mode = current?.resolution?.mode ?? 'inherit'
+  resolutionModal.width = current?.resolution?.width ?? fallback?.width ?? 854
+  resolutionModal.height = current?.resolution?.height ?? fallback?.height ?? 480
+  resolutionModal.error = ''
+  resolutionModal.open = true
+}
+
+async function onConfirmResolution() {
+  if (resolutionModal.busy) return
+  resolutionModal.error = ''
+  let override: GameResolution | null = null
+  if (resolutionModal.mode !== 'inherit') {
+    const width = Number(resolutionModal.width)
+    const height = Number(resolutionModal.height)
+    if (!Number.isInteger(width) || width < 854 || width > 7680) {
+      resolutionModal.error = '窗口宽度必须是 854–7680 之间的整数'
+      return
+    }
+    if (!Number.isInteger(height) || height < 480 || height > 4320) {
+      resolutionModal.error = '窗口高度必须是 480–4320 之间的整数'
+      return
+    }
+    override = {
+      width,
+      height,
+      mode: resolutionModal.mode,
+      fullscreen: resolutionModal.mode === 'fullscreen'
+    }
+  }
+  resolutionModal.busy = true
+  try {
+    await setVersionResolution(resolutionModal.id, override)
+    await refreshInstalled()
+    resolutionModal.open = false
+    toast(override ? '已保存实例窗口设置' : '该实例已改为跟随全局窗口设置', 'success')
+  } catch (error) {
+    resolutionModal.error = errText(error)
+  } finally {
+    resolutionModal.busy = false
+  }
+}
+
 function openRename() {
   openRenameFor(manageMenu.id)
   manageMenu.id = ''
@@ -1040,6 +1101,47 @@ async function confirmIsolation() {
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a3 3 0 0 1 0 6h-1M3 8h15v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M7 12h6M7 15h4"/></svg>
           指定 Java
         </button>
+        <button class="menu-item" @click="openResolutionModal">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
+          窗口设置
+        </button>
+      </div>
+    </Teleport>
+
+    <!-- 实例窗口设置；未覆盖时始终跟随全局配置。 -->
+    <Teleport to="body">
+      <div v-if="resolutionModal.open" class="modal-mask" @click.self="resolutionModal.open = false">
+        <div class="modal">
+          <h3 class="modal-title">窗口设置 · {{ resolutionModal.id }}</h3>
+          <p class="modal-label">实例设置优先于全局设置；选择“跟随全局”可删除覆盖。</p>
+          <select v-model="resolutionModal.mode" class="select">
+            <option value="inherit">跟随全局</option>
+            <option value="windowed">窗口化</option>
+            <option value="maximized">最大化</option>
+            <option value="fullscreen">全屏</option>
+          </select>
+          <div class="instance-resolution-size">
+            <label>
+              <span class="muted">宽</span>
+              <input v-model.number="resolutionModal.width" class="input" type="number" min="854" max="7680" :disabled="resolutionModal.mode !== 'windowed'" />
+            </label>
+            <span class="muted">×</span>
+            <label>
+              <span class="muted">高</span>
+              <input v-model.number="resolutionModal.height" class="input" type="number" min="480" max="4320" :disabled="resolutionModal.mode !== 'windowed'" />
+            </label>
+          </div>
+          <p class="muted instance-resolution-tip">
+            最大化会使用启动时所在显示器的可用工作区；全屏不会修改系统显示器分辨率。
+          </p>
+          <p v-if="resolutionModal.error" class="loaders-error">{{ resolutionModal.error }}</p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" :disabled="resolutionModal.busy" @click="resolutionModal.open = false">取消</button>
+            <button class="btn btn-gold" :disabled="resolutionModal.busy" @click="onConfirmResolution">
+              {{ resolutionModal.busy ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </div>
       </div>
     </Teleport>
 
@@ -1749,6 +1851,24 @@ async function confirmIsolation() {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 22px;
+}
+.instance-resolution-size {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+.instance-resolution-size label {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.instance-resolution-tip {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
 }
 .isolation-modal {
   width: min(620px, calc(100vw - 40px));

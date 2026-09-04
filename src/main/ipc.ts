@@ -13,6 +13,7 @@ import type {
   CommunityQuery,
   CommunitySource,
   FsEntry,
+  GameResolution,
   InstallOptions,
   LaunchState,
   LoaderName,
@@ -229,6 +230,11 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   })
   ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
     versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
+  )
+  ipcMain.handle(
+    IPC.versionsSetResolution,
+    (_e, id: string, resolution: GameResolution | null) =>
+      versions.setVersionResolution(String(id ?? ''), resolution ?? null)
   )
   ipcMain.handle(IPC.versionsSetIcon, (_e, id: string, icon: string) =>
     versions.setVersionIcon(String(id ?? ''), String(icon ?? ''))
