@@ -779,7 +779,7 @@ onUnmounted(() => {
 .instance-icon { align-self: center; width: 36px; height: 36px; }
 .instance-icon.image { object-fit: contain; image-rendering: pixelated; }
 .instance-copy { grid-column: 2; padding-right: 7px; align-self: center; display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.instance-copy strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
+.instance-copy strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; word-break: break-all; }
 .instance-copy span, .instance-last { overflow: hidden; color: var(--text-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .instance-more { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); cursor: pointer; }
 .instance-more:hover { background: var(--hover); color: var(--text); }
