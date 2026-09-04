@@ -43,6 +43,7 @@ import {
 } from './core/tasks'
 import { exportLaunchLogs } from './core/exportLogs'
 import { ProgressEventGuard } from './core/progress'
+import { launcherLog } from './core/launcherLog'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -412,6 +413,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送
   ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string) => {
+    launcherLog(`Launch requested: version=${String(versionId ?? '')}`)
     sendState({ status: 'launching', text: '正在准备启动…' })
     void launch
       .launch(
@@ -419,6 +421,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         emit,
         (line) => send(IPC_EVENT.launchLog, line),
         (s) => {
+          launcherLog(
+            `Launch state: ${s.status}${s.status === 'exited' ? ` code=${s.code}` : ''} - ${s.text}`
+          )
           sendState(s)
           // 设置项生效：游戏成功进入运行状态后关闭启动器窗口
           if (s.status === 'running' && settings.getSettings().closeAfterLaunch) {
@@ -427,7 +432,11 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         },
         serverAddress ? String(serverAddress) : undefined
       )
-      .catch((err) => sendState({ status: 'error', text: errText(err) }))
+      .catch((err) => {
+        launch.recordLaunchPreparationError(String(versionId ?? ''), errText(err))
+        launcherLog(`Launch preparation failed: ${errText(err)}`)
+        sendState({ status: 'error', text: errText(err) })
+      })
   })
   ipcMain.handle(IPC.gameKill, () => launch.killGame())
   // 导出启动失败日志包（保存对话框在 main 弹出）

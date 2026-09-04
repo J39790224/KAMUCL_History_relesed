@@ -1,129 +1,263 @@
-/**
- * 启动失败日志导出：latest.log + crash-report + 启动器/版本/Java 摘要打包为 zip
- * 文件名：KAMUCL-错误日志-<版本>-<时间戳>.zip，玩家自选保存位置
- */
+/** 启动失败诊断 ZIP：所有文本先脱敏，缺失项写入 manifest，不因单个日志缺失而失败。 */
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { app, dialog, type BrowserWindow } from 'electron'
-import yazl from 'yazl'
 import { getSettings } from './settings'
-import { gameDir, versionDir } from './paths'
+import { gameDir } from './paths'
 import { readVersionJson, listInstalled } from './versions'
 import { getLastLaunch } from './launch'
-import { scanJava } from './java'
+import { selectedAccount } from './accounts'
+import { launcherLogPath } from './launcherLog'
+import {
+  redactDiagnosticPath,
+  redactDiagnosticText,
+  safeDiagnosticFilePart
+} from './diagnostics'
+import {
+  writeDiagnosticArchive,
+  type DiagnosticManifestEntry,
+  type DiagnosticSource
+} from './diagnosticArchive'
+
+const execFileAsync = promisify(execFile)
+
+export interface DiagnosticManifest {
+  schemaVersion: 1
+  exportedAt: string
+  launcher: { name: 'KAMUCL'; version: string }
+  instance: {
+    id: string
+    name: string
+    minecraftVersion: string
+    loader: string | null
+    loaderVersion: string | null
+    directory: string
+    isolated: boolean
+  }
+  process: {
+    pid: number | null
+    startedAt: string | null
+    endedAt: string | null
+    exitCode: number | null
+    spawnError: string | null
+    command: string | null
+  }
+  java: { path: string; version: string; architecture: string }
+  operatingSystem: { platform: string; release: string; architecture: string }
+  files: DiagnosticManifestEntry[]
+}
 
 function fmtStamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
+  const p = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
-/** 收集摘要文本（启动器自身信息 + 版本与 Java 信息） */
-function buildSummary(versionId: string): string {
-  const s = getSettings()
-  const last = getLastLaunch()
-  const lines: string[] = [
+async function newestCrashReport(dir: string): Promise<string | null> {
+  try {
+    const root = path.join(dir, 'crash-reports')
+    const entries = await fs.promises.readdir(root, { withFileTypes: true })
+    const files = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && /\.(?:txt|log)$/i.test(entry.name))
+        .map(async (entry) => {
+          const file = path.join(root, entry.name)
+          return { file, mtime: (await fs.promises.stat(file)).mtimeMs }
+        })
+    )
+    return files.sort((a, b) => b.mtime - a.mtime)[0]?.file ?? null
+  } catch {
+    return null
+  }
+}
+
+async function javaSummary(
+  javaPath: string
+): Promise<{ path: string; version: string; architecture: string }> {
+  const unknown = {
+    path: redactDiagnosticPath(javaPath),
+    version: '（未知）',
+    architecture: '（未知）'
+  }
+  if (!javaPath) return unknown
+  try {
+    const result = await execFileAsync(javaPath, ['-version'], {
+      encoding: 'utf-8',
+      timeout: 8_000,
+      windowsHide: true,
+      maxBuffer: 256 * 1024
+    })
+    const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
+    const version =
+      /version\s+"([^"]+)"/i.exec(output)?.[1] ?? output.split(/\r?\n/)[0]?.trim() ?? '（未知）'
+    const architecture = /64-Bit|x86_64|aarch64/i.test(output)
+      ? '64-bit'
+      : /32-Bit|i[3-6]86|x86/i.test(output)
+        ? '32-bit'
+        : '（未知）'
+    return { path: redactDiagnosticPath(javaPath), version, architecture }
+  } catch (error) {
+    return {
+      ...unknown,
+      version: `验证失败：${redactDiagnosticText(error instanceof Error ? error.message : String(error))}`
+    }
+  }
+}
+
+function summaryText(manifest: DiagnosticManifest): string {
+  const m = manifest
+  return [
     '================ KAMUCL 启动失败诊断摘要 ================',
-    `导出时间: ${new Date().toLocaleString('zh-CN')}`,
-    `启动器版本: ${app.getVersion()}`,
-    `运行平台: ${process.platform} ${process.arch} / ${os.release()}`,
-    `Electron: ${process.versions.electron ?? '-'} / Node: ${process.versions.node ?? '-'}`,
+    `导出时间: ${m.exportedAt}`,
+    `KAMUCL: ${m.launcher.version}`,
+    `操作系统: ${m.operatingSystem.platform} ${m.operatingSystem.release} (${m.operatingSystem.architecture})`,
     '',
-    '---------------- 最近一次启动 ----------------',
-    `版本: ${last?.versionId ?? versionId ?? '（未知）'}`,
-    `Java: ${last?.javaPath ?? '（未知）'}`,
-    `启动时间: ${last?.startedAt ?? '-'}`,
+    `实例: ${m.instance.name} [${m.instance.id}]`,
+    `Minecraft: ${m.instance.minecraftVersion}`,
+    `Loader: ${m.instance.loader ?? 'vanilla'}${m.instance.loaderVersion ? ` ${m.instance.loaderVersion}` : ''}`,
+    `实例目录: ${m.instance.directory}`,
+    `版本隔离: ${m.instance.isolated ? '开启' : '关闭'}`,
     '',
-    '---------------- 启动器设置（节选） ----------------',
-    `游戏目录: ${s.gameDir}`,
-    `内存上限: ${s.memoryMB} MB`,
-    `下载源: ${s.mirror === 'bmclapi' ? 'BMCLAPI 镜像' : '官方源'}`,
-    `Java 自动管理: ${s.javaAuto ? '开' : '关'}`,
-    `手动指定 Java: ${s.javaPath || '（未指定）'}`,
-    ''
-  ]
-  try {
-    const javas = scanJava()
-    lines.push('---------------- 本机已识别 Java ----------------')
-    for (const j of javas) lines.push(`Java ${j.major}（${j.version}）${j.is64Bit ? '64位' : '32位'} · ${j.path}`)
-    lines.push('')
-  } catch {
-    /* 扫描失败不影响导出 */
-  }
-  try {
-    const installed = listInstalled()
-    lines.push('---------------- 已安装版本 ----------------')
-    for (const v of installed) {
-      lines.push(
-        `${v.id}（MC ${v.mcVersion}${v.loader ? ` · ${v.loader} ${v.loaderVersion ?? ''}` : ''}${v.failed ? ' · 安装失败' : ''}${v.incomplete ? ' · 下载未完成' : ''}）`
-      )
-    }
-  } catch {
-    /* 列表失败不影响导出 */
-  }
-  return lines.join('\n')
+    `Java: ${m.java.version} (${m.java.architecture})`,
+    `Java 路径: ${m.java.path}`,
+    `进程 PID: ${m.process.pid ?? '（未知）'}`,
+    `启动时间: ${m.process.startedAt ?? '（未知）'}`,
+    `退出时间: ${m.process.endedAt ?? '（未知）'}`,
+    `退出码: ${m.process.exitCode ?? '（未知）'}`,
+    `进程错误: ${m.process.spawnError ?? '（无记录）'}`,
+    `启动参数摘要: ${m.process.command ?? '（尚未生成）'}`,
+    '',
+    '每个日志的来源、缺失与截断情况见 manifest.json。'
+  ].join('\n')
 }
 
-/** 实例（或共享）游戏目录下的 crash-reports 最新两份 */
-function collectCrashReports(versionId: string): string[] {
-  const dirs: string[] = []
-  try {
-    const isolated = versionId && readVersionJson(versionId)._gameDir === true
-    dirs.push(path.join(isolated ? versionDir(versionId) : gameDir(), 'crash-reports'))
-  } catch {
-    dirs.push(path.join(gameDir(), 'crash-reports'))
-  }
-  const out: Array<{ file: string; mtime: number }> = []
-  for (const d of dirs) {
-    try {
-      for (const f of fs.readdirSync(d)) {
-        if (!f.endsWith('.txt') && !f.endsWith('.log')) continue
-        const fp = path.join(d, f)
-        out.push({ file: fp, mtime: fs.statSync(fp).mtimeMs })
-      }
-    } catch {
-      /* 目录不存在 */
-    }
-  }
-  return out
-    .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, 2)
-    .map((x) => x.file)
-}
-
-/** 弹保存对话框并导出日志包；返回保存路径（取消 = null） */
+/** 弹原生保存对话框并异步生成 ZIP；取消保存返回 null。 */
 export async function exportLaunchLogs(
   win: BrowserWindow | null,
   versionId: string
 ): Promise<string | null> {
-  const vid = versionId || getLastLaunch()?.versionId || 'unknown'
-  const defName = `KAMUCL-错误日志-${vid}-${fmtStamp(new Date())}.zip`
+  // 扫描会同时建立“版本 -> 游戏文件夹”映射，避免活动目录切换后收错实例日志。
+  let installed: ReturnType<typeof listInstalled> = []
+  try {
+    installed = listInstalled()
+  } catch {
+    // 单个来源缺失不阻断导出。
+  }
+  const last = getLastLaunch()
+  const vid = versionId || last?.versionId || 'unknown'
+  const item = installed.find((value) => value.id === vid)
+  const folder = item?.folder || gameDir()
+  const versionRoot = path.join(folder, 'versions', vid)
+  let isolated = item?.isolated === true
+  try {
+    isolated = readVersionJson(vid)._gameDir === true
+  } catch {
+    // 使用列表扫描结果。
+  }
+  const effectiveGameDir =
+    last?.versionId === vid && last.effectiveGameDir
+      ? last.effectiveGameDir
+      : isolated
+        ? versionRoot
+        : folder
+  const now = new Date()
+  const defName = `KAMUCL-Diagnostic-${safeDiagnosticFilePart(item?.mcVersion || vid)}-${fmtStamp(now)}.zip`
   const opts = {
     title: '导出错误日志',
     defaultPath: defName,
-    filters: [{ name: '压缩包', extensions: ['zip'] }]
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
   }
-  const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
-  if (r.canceled || !r.filePath) return null
-  const dest = r.filePath
+  const result = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  if (result.canceled || !result.filePath) return null
 
-  const zip = new yazl.ZipFile()
-  // 1. 启动日志 latest.log（含完整启动命令与游戏输出）
-  const latestLog = path.join(gameDir(), 'kamucl-logs', 'latest.log')
-  if (fs.existsSync(latestLog)) zip.addFile(latestLog, 'latest.log')
-  // 2. 最近的 crash-report
-  for (const f of collectCrashReports(vid)) {
-    zip.addFile(f, `crash-reports/${path.basename(f)}`)
+  const account = selectedAccount()
+  const secrets = [account?.accessToken ?? '', account?.refreshToken ?? ''].filter(Boolean)
+  const currentLaunch = last?.versionId === vid ? last : null
+  const manifest: DiagnosticManifest = {
+    schemaVersion: 1,
+    exportedAt: now.toISOString(),
+    launcher: { name: 'KAMUCL', version: app.getVersion() },
+    instance: {
+      id: vid,
+      name: item?.modpackName || vid,
+      minecraftVersion: item?.mcVersion || '（未知）',
+      loader: item?.loader ?? null,
+      loaderVersion: item?.loaderVersion ?? null,
+      directory: redactDiagnosticPath(effectiveGameDir),
+      isolated
+    },
+    process: {
+      pid: currentLaunch?.pid ?? null,
+      startedAt: currentLaunch?.startedAt ?? null,
+      endedAt: currentLaunch?.endedAt ?? null,
+      exitCode: currentLaunch?.exitCode ?? null,
+      spawnError: currentLaunch?.spawnError
+        ? redactDiagnosticText(currentLaunch.spawnError, secrets)
+        : null,
+      command: currentLaunch?.commandSummary
+        ? redactDiagnosticText(currentLaunch.commandSummary, secrets)
+        : null
+    },
+    java: await javaSummary(currentLaunch?.javaPath ?? item?.javaPath ?? getSettings().javaPath),
+    operatingSystem: {
+      platform: `${os.type()} ${os.version()}`,
+      release: os.release(),
+      architecture: os.arch()
+    },
+    files: []
   }
-  // 3. 诊断摘要（启动器自身信息 + 版本与 Java 信息）
-  zip.addBuffer(Buffer.from(buildSummary(vid), 'utf-8'), '诊断摘要.txt')
 
-  await new Promise<void>((resolve, reject) => {
-    const ws = fs.createWriteStream(dest)
-    ws.on('close', resolve)
-    ws.on('error', reject)
-    zip.outputStream.pipe(ws)
-    zip.end()
-  })
-  return dest
+  const crash = await newestCrashReport(effectiveGameDir)
+  const launchLogDir = currentLaunch?.logDir || path.join(folder, 'kamucl-logs')
+  const sources: DiagnosticSource[] = [
+    {
+      archivePath: crash ? `crash-reports/${path.basename(crash)}` : 'crash-reports/latest.txt',
+      source: crash || path.join(effectiveGameDir, 'crash-reports'),
+      missingPlaceholder: !crash
+    },
+    {
+      archivePath: 'minecraft/latest.log',
+      source: path.join(effectiveGameDir, 'logs', 'latest.log'),
+      missingPlaceholder: true
+    },
+    {
+      archivePath: 'minecraft/debug.log',
+      source: path.join(effectiveGameDir, 'logs', 'debug.log'),
+      missingPlaceholder: true
+    },
+    {
+      archivePath: 'launcher/launcher-current.log',
+      source: launcherLogPath(),
+      missingPlaceholder: true
+    },
+    {
+      archivePath: 'launcher/launch-combined.log',
+      source: path.join(launchLogDir, 'latest.log'),
+      missingPlaceholder: true
+    },
+    {
+      archivePath: 'process/stdout.log',
+      source: path.join(launchLogDir, 'stdout.log'),
+      missingPlaceholder: true
+    },
+    {
+      archivePath: 'process/stderr.log',
+      source: path.join(launchLogDir, 'stderr.log'),
+      missingPlaceholder: true
+    }
+  ]
+  try {
+    await writeDiagnosticArchive(
+      result.filePath,
+      manifest,
+      sources,
+      summaryText(manifest),
+      secrets
+    )
+    return result.filePath
+  } catch (error) {
+    throw new Error(`写入诊断包失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }

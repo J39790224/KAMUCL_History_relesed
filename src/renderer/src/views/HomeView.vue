@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { errText, killGame, launchGame, listJava, openDir, removeVersion, selectAccount, selectFile } from '../api'
+import {
+  errText,
+  exportLaunchLogs,
+  killGame,
+  launchGame,
+  listJava,
+  openDir,
+  removeVersion,
+  selectAccount,
+  selectFile
+} from '../api'
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshAccounts, refreshInstalled, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -81,6 +91,25 @@ const capsuleLabel = computed(() =>
 // ---------------- 启动状态 ----------------
 const launching = computed(() => store.launchState?.status === 'launching')
 const running = computed(() => store.launchState?.status === 'running')
+const launchFailed = computed(
+  () =>
+    store.launchState?.status === 'error' ||
+    (store.launchState?.status === 'exited' && store.launchState.code !== 0)
+)
+const exportingLogs = ref(false)
+
+async function exportFailureLogs() {
+  if (exportingLogs.value) return
+  exportingLogs.value = true
+  try {
+    const saved = await exportLaunchLogs(store.launchingVersionId || selectedId.value)
+    if (saved) toast(`错误日志已导出：${saved}`, 'success')
+  } catch (error) {
+    toast(`导出失败：${errText(error)}`, 'error')
+  } finally {
+    exportingLogs.value = false
+  }
+}
 
 const percent = computed(() =>
   store.progress ? Math.round(progressMono(store.progress) * 100) : 0
@@ -437,6 +466,12 @@ async function onToggleAccountType() {
           </span>
         </div>
         <div v-show="logOpen" ref="logBodyEl" class="log-body">
+          <div v-if="launchFailed" class="log-failure-result">
+            <span>检测到本次游戏启动失败或异常退出。</span>
+            <button class="btn btn-gold btn-sm" :disabled="exportingLogs" @click="exportFailureLogs">
+              {{ exportingLogs ? '导出中…' : '导出错误日志' }}
+            </button>
+          </div>
           <div v-if="!store.logs.length" class="empty log-empty">暂无日志</div>
           <pre v-else class="log-lines"><div v-for="(line, i) in store.logs" :key="i" class="log-line">{{ line }}</div></pre>
         </div>
@@ -938,6 +973,17 @@ async function onToggleAccountType() {
 }
 
 /* ---------------- 日志抽屉 ---------------- */
+.log-failure-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, #e5484d 34%, var(--border));
+  background: color-mix(in srgb, #e5484d 10%, var(--card));
+  color: var(--text);
+  font-size: 12.5px;
+}
 .log-drawer {
   padding: 0;
   overflow: hidden;

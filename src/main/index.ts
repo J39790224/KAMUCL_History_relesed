@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
+import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 
 let win: BrowserWindow | null = null
 
@@ -37,6 +38,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  initializeLauncherLog()
+  launcherLog('Electron ready')
   registerIpc(() => win)
 
   ipcMain.on('window:minimize', () => win?.minimize())
@@ -44,6 +47,7 @@ app.whenReady().then(() => {
   ipcMain.on('window:close', () => win?.close())
 
   createWindow()
+  launcherLog('Main window created')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -51,5 +55,13 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  launcherLog('All windows closed')
   if (process.platform !== 'darwin') app.quit()
+})
+
+process.on('uncaughtExceptionMonitor', (error) => {
+  launcherLog(`Uncaught exception: ${error.name}: ${error.message}`)
+})
+process.on('unhandledRejection', (reason) => {
+  launcherLog(`Unhandled rejection: ${reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)}`)
 })

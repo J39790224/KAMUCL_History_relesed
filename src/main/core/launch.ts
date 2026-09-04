@@ -51,10 +51,26 @@ export interface LastLaunchInfo {
   versionId: string
   javaPath: string
   startedAt: string
+  effectiveGameDir?: string
+  logDir?: string
+  commandSummary?: string
+  pid?: number
+  exitCode?: number | null
+  endedAt?: string
+  spawnError?: string
 }
 let lastLaunch: LastLaunchInfo | null = null
 export function getLastLaunch(): LastLaunchInfo | null {
   return lastLaunch
+}
+
+/** 记录 Java 进程创建前的准备失败，仅供诊断导出，不改变启动流程。 */
+export function recordLaunchPreparationError(versionId: string, message: string): void {
+  if (!lastLaunch || lastLaunch.versionId !== versionId) {
+    lastLaunch = { versionId, javaPath: '', startedAt: new Date().toISOString() }
+  }
+  lastLaunch.spawnError = message
+  lastLaunch.endedAt = new Date().toISOString()
 }
 
 /** 终止当前游戏进程 */
@@ -143,10 +159,17 @@ export async function launch(
 
   // 日志落盘：gameDir/kamucl-logs/latest.log（每次启动覆盖）
   let logStream: fs.WriteStream | null = null
+  let stdoutStream: fs.WriteStream | null = null
+  let stderrStream: fs.WriteStream | null = null
+  const launchLogDir = path.join(gameDir(), 'kamucl-logs')
   try {
-    const logDir = path.join(gameDir(), 'kamucl-logs')
-    fs.mkdirSync(logDir, { recursive: true })
-    logStream = fs.createWriteStream(path.join(logDir, 'latest.log'), { flags: 'w' })
+    fs.mkdirSync(launchLogDir, { recursive: true })
+    logStream = fs.createWriteStream(path.join(launchLogDir, 'latest.log'), { flags: 'w' })
+    stdoutStream = fs.createWriteStream(path.join(launchLogDir, 'stdout.log'), { flags: 'w' })
+    stderrStream = fs.createWriteStream(path.join(launchLogDir, 'stderr.log'), { flags: 'w' })
+    logStream.on('error', () => undefined)
+    stdoutStream.on('error', () => undefined)
+    stderrStream.on('error', () => undefined)
   } catch {
     logStream = null
   }
@@ -389,28 +412,56 @@ export async function launch(
   const args = [...jvmArgs, '-cp', classpath, merged.mainClass, ...gameArgs]
   // 日志中隐藏 accessToken
   const logArgs = args.map((a) => (a === validAccount.accessToken ? '***' : a))
-  log(`[KAMUCL] 启动命令: ${javaPath} ${logArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`)
+  const commandSummary = `${javaPath} ${logArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`
+  log(`[KAMUCL] 启动命令: ${commandSummary}`)
 
   emit({ stage: 'launch', progress: 1, text: '启动游戏进程' })
   const proc = spawn(javaPath, args, { cwd: effectiveGameDir })
   current = proc
   currentVersionId = versionId
-  lastLaunch = { versionId, javaPath, startedAt: new Date().toISOString() }
+  lastLaunch = {
+    versionId,
+    javaPath,
+    startedAt: new Date().toISOString(),
+    effectiveGameDir,
+    logDir: launchLogDir,
+    commandSummary,
+    pid: proc.pid
+  }
   onState({ status: 'running', text: '游戏进程已启动' })
 
-  const pushLine = makeLinePusher(log)
-  proc.stdout?.on('data', pushLine)
-  proc.stderr?.on('data', pushLine)
+  const pushStdout = makeLinePusher((line) => {
+    stdoutStream?.write(line + '\n')
+    log(line)
+  })
+  const pushStderr = makeLinePusher((line) => {
+    stderrStream?.write(line + '\n')
+    log(line)
+  })
+  proc.stdout?.on('data', pushStdout)
+  proc.stderr?.on('data', pushStderr)
   proc.on('error', (err) => {
     current = null
     currentVersionId = null
     logStream?.end()
+    stdoutStream?.end()
+    stderrStream?.end()
+    if (lastLaunch) {
+      lastLaunch.spawnError = err.message
+      lastLaunch.endedAt = new Date().toISOString()
+    }
     onState({ status: 'error', text: `进程启动失败: ${err.message}` })
   })
   proc.on('exit', (code) => {
     current = null
     currentVersionId = null
     logStream?.end()
+    stdoutStream?.end()
+    stderrStream?.end()
+    if (lastLaunch) {
+      lastLaunch.exitCode = code
+      lastLaunch.endedAt = new Date().toISOString()
+    }
     onState({ status: 'exited', code: code ?? 0, text: `游戏已退出 (code=${code ?? 0})` })
   })
 }
