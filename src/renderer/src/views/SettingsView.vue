@@ -12,7 +12,9 @@ import {
   saveSettings
 } from '../api'
 import { enterEditMode, store, toast } from '../store'
-import type { Settings } from '@shared/types'
+import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
+import type { Settings, ThemeName } from '@shared/types'
+import transparentWallpaper from '../assets/banner1.png'
 
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
@@ -39,37 +41,33 @@ function onToggleFeature(key: string, enabled: boolean) {
   void save({ disabledFeatures: next })
 }
 
-// ---------------- 预设主题 ----------------
-import { THEME_PRESETS, DEFAULT_CUSTOM_THEME } from '@shared/types'
-import type { CustomTheme } from '@shared/types'
-
-const presetThemes = Object.entries(THEME_PRESETS).map(([key, v]) => ({
-  key,
-  label: v.label,
-  colors: v.colors
-}))
-
-/** 当前生效的预设（颜色与某预设完全一致时高亮） */
-const activePreset = computed(() => {
-  const c = store.settings?.custom.colors
-  if (!c) return ''
-  const hit = presetThemes.find((p) =>
-    (Object.keys(p.colors) as Array<keyof CustomTheme['colors']>).every(
-      (k) => p.colors[k].toLowerCase() === c[k].toLowerCase()
-    )
-  )
-  return hit?.key ?? ''
+// ---------------- 主题 ----------------
+const themeOptions = computed(() => {
+  const customColors = store.settings?.custom.colors ?? DEFAULT_CUSTOM_THEME.colors
+  const named = (key: Exclude<ThemeName, 'custom'>) => ({ key, ...THEME_PRESETS[key] })
+  return [
+    named('blue-white'),
+    named('black-orange'),
+    named('white-pink'),
+    named('black-pink'),
+    {
+      key: 'custom' as const,
+      label: '个性化',
+      description: '保留你的颜色、布局与自定义图片',
+      colors: customColors
+    },
+    named('transparent')
+  ]
 })
 
-function applyPreset(key: string) {
-  const preset = THEME_PRESETS[key]
-  if (!preset) return
-  const custom: CustomTheme = {
-    colors: { ...preset.colors },
-    layout: { ...(store.settings?.custom.layout ?? DEFAULT_CUSTOM_THEME.layout) }
-  }
-  void save({ theme: 'custom', custom })
-  toast(`已套用「${preset.label}」主题`, 'success')
+function chooseTheme(theme: ThemeName, label: string) {
+  void save({ theme })
+  toast(`已切换到「${label}」主题`, 'success')
+}
+
+function themePreviewBackground(theme: ThemeName, fallback: string): string {
+  if (theme !== 'transparent') return fallback
+  return `linear-gradient(rgba(10, 20, 18, .2), rgba(10, 20, 18, .42)), url("${transparentWallpaper}") center / cover`
 }
 
 // ---------------- Java 列表 ----------------
@@ -225,94 +223,60 @@ function saveResolution() {
         <h3 class="group-title">主题</h3>
         <div class="theme-options">
           <button
+            v-for="theme in themeOptions"
+            :key="theme.key"
             class="theme-option"
-            :class="{ active: store.settings.theme === 'light' }"
-            @click="save({ theme: 'light' })"
+            :class="{ active: store.settings.theme === theme.key }"
+            :title="theme.description"
+            @click="chooseTheme(theme.key, theme.label)"
           >
-            <span class="theme-preview preview-light">
-              <span class="tp-side"><span class="tp-dot"></span></span>
+            <span
+              class="theme-preview"
+              :class="{ 'preview-custom': theme.key === 'custom', 'preview-transparent': theme.key === 'transparent' }"
+              :style="{ background: themePreviewBackground(theme.key, theme.colors.bg) }"
+            >
+              <span
+                class="tp-side"
+                :style="{
+                  background: theme.key === 'transparent' ? 'rgba(12, 23, 25, .68)' : theme.colors.sidebarBg,
+                  borderRight: '1px solid ' + theme.colors.border
+                }"
+              >
+                <span class="tp-dot" :style="{ background: theme.colors.accent }"></span>
+              </span>
               <span class="tp-main">
-                <span class="tp-top"></span>
+                <span
+                  class="tp-top"
+                  :style="{
+                    background: theme.key === 'transparent' ? 'rgba(20, 31, 33, .62)' : theme.colors.card,
+                    borderBottom: '1px solid ' + theme.colors.border
+                  }"
+                ></span>
                 <span class="tp-body">
-                  <span class="tp-block"></span>
-                  <span class="tp-btn"></span>
+                  <span
+                    class="tp-block"
+                    :style="{
+                      background: theme.key === 'transparent' ? 'rgba(27, 39, 40, .64)' : theme.colors.card,
+                      border: '1px solid ' + theme.colors.border
+                    }"
+                  ></span>
+                  <span class="tp-btn" :style="{ background: theme.colors.accent }"></span>
                 </span>
               </span>
-              <svg v-if="store.settings.theme === 'light'" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-            </span>
-            <span class="theme-label">亮色</span>
-          </button>
-          <button
-            class="theme-option"
-            :class="{ active: store.settings.theme === 'dark' }"
-            @click="save({ theme: 'dark' })"
-          >
-            <span class="theme-preview preview-dark">
-              <span class="tp-side"><span class="tp-dot"></span></span>
-              <span class="tp-main">
-                <span class="tp-top"></span>
-                <span class="tp-body">
-                  <span class="tp-block"></span>
-                  <span class="tp-btn"></span>
-                </span>
-              </span>
-              <svg v-if="store.settings.theme === 'dark'" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-            </span>
-            <span class="theme-label">暗色</span>
-          </button>
-          <button
-            class="theme-option"
-            :class="{ active: store.settings.theme === 'custom' }"
-            @click="save({ theme: 'custom' })"
-          >
-            <span class="theme-preview preview-custom">
-              <span class="tp-custom-grad"></span>
-              <svg class="tp-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <span v-if="theme.key === 'custom'" class="tp-custom-grad"></span>
+              <svg v-if="theme.key === 'custom'" class="tp-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 22C6.49 22 2 17.51 2 12S6.49 2 12 2s10 4.04 10 9c0 3.31-2.69 6-6 6h-1.77c-.28 0-.5.22-.5.5 0 .12.05.23.13.33.41.47.64 1.06.64 1.67A2.5 2.5 0 0 1 12 22Z" />
                 <circle cx="7.5" cy="11.5" r="1" fill="currentColor" stroke="none" />
                 <circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none" />
                 <circle cx="16.5" cy="11.5" r="1" fill="currentColor" stroke="none" />
               </svg>
-              <svg v-if="store.settings.theme === 'custom'" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+              <svg v-if="store.settings.theme === theme.key" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
             </span>
-            <span class="theme-label">自定义颜色</span>
-          </button>
-          <!-- 预设主题：与上方主题卡片同格式，套用自定义颜色快捷方案 -->
-          <button
-            v-for="p in presetThemes"
-            :key="p.key"
-            class="theme-option"
-            :class="{ active: store.settings.theme === 'custom' && activePreset === p.key }"
-            :title="`套用「${p.label}」主题`"
-            @click="applyPreset(p.key)"
-          >
-            <span class="theme-preview" :style="{ background: p.colors.bg }">
-              <span
-                class="tp-side"
-                :style="{ background: p.colors.sidebarBg, borderRight: '1px solid ' + p.colors.border }"
-              >
-                <span class="tp-dot" :style="{ background: p.colors.accent }"></span>
-              </span>
-              <span class="tp-main">
-                <span
-                  class="tp-top"
-                  :style="{ background: p.colors.card, borderBottom: '1px solid ' + p.colors.border }"
-                ></span>
-                <span class="tp-body">
-                  <span
-                    class="tp-block"
-                    :style="{ background: p.colors.card, border: '1px solid ' + p.colors.border }"
-                  ></span>
-                  <span class="tp-btn" :style="{ background: p.colors.accent }"></span>
-                </span>
-              </span>
-              <svg v-if="store.settings.theme === 'custom' && activePreset === p.key" class="tp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-            </span>
-            <span class="theme-label">{{ p.label }}</span>
+            <span class="theme-label">{{ theme.label }}</span>
           </button>
         </div>
 
-        <p class="muted group-hint">预设主题为自定义颜色的快捷方案，套用后仍可在「个性化」中微调。</p>
+        <p class="muted group-hint">六套主题使用相同的完整布局与磨砂玻璃组件；切换不会改变账户、版本或启动设置。</p>
         <button
           v-if="store.settings.theme === 'custom'"
           class="btn personalize-btn"

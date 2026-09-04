@@ -186,7 +186,15 @@ export interface JavaInfo {
 }
 
 // ---------------- 设置 ----------------
-export type ThemeName = 'light' | 'dark' | 'custom'
+export type ThemeName =
+  | 'blue-white'
+  | 'black-orange'
+  | 'white-pink'
+  | 'black-pink'
+  | 'custom'
+  | 'transparent'
+
+export type BuiltinThemeName = Exclude<ThemeName, 'custom'>
 
 export type GameWindowMode = 'windowed' | 'maximized' | 'fullscreen'
 
@@ -237,10 +245,44 @@ export const DEFAULT_CUSTOM_THEME: CustomTheme = {
   }
 }
 
-/** 预设主题色板（选择后 theme='custom' 并套用对应配色） */
-export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme['colors'] }> = {
-  'pink-white': {
-    label: '粉白',
+/** 正式主题色板。所有主题共用同一套布局和玻璃材质，只改变配色与背景策略。 */
+export const THEME_PRESETS: Record<
+  BuiltinThemeName,
+  { label: string; colors: CustomTheme['colors']; description: string }
+> = {
+  'blue-white': {
+    label: '蓝白',
+    description: '清爽明亮的蓝白玻璃界面',
+    colors: {
+      accent: '#2563eb',
+      bg: '#edf0f7',
+      card: '#ffffff',
+      text: '#1b2437',
+      textDim: '#68718a',
+      border: '#d8dfec',
+      sidebarBg: '#f5f7fb',
+      sidebarText: '#536078',
+      bannerText: '#ffffff'
+    }
+  },
+  'black-orange': {
+    label: '黑橙',
+    description: '深色底与克制的暖橙强调色',
+    colors: {
+      accent: '#f97316',
+      bg: '#0b0b0e',
+      card: '#18181f',
+      text: '#f4f2ee',
+      textDim: '#aaa69f',
+      border: '#35353f',
+      sidebarBg: '#111116',
+      sidebarText: '#aaa69f',
+      bannerText: '#ffffff'
+    }
+  },
+  'white-pink': {
+    label: '白粉',
+    description: '柔和浅色底与粉色强调色',
     colors: {
       accent: '#ec4899',
       bg: '#fdf2f8',
@@ -253,8 +295,9 @@ export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme[
       bannerText: '#ffffff'
     }
   },
-  'pink-black': {
-    label: '粉黑',
+  'black-pink': {
+    label: '黑粉',
+    description: '深色底与柔亮粉色强调色',
     colors: {
       accent: '#f472b6',
       bg: '#171019',
@@ -266,7 +309,46 @@ export const THEME_PRESETS: Record<string, { label: string; colors: CustomTheme[
       sidebarText: '#a68ba3',
       bannerText: '#ffffff'
     }
+  },
+  transparent: {
+    label: '透明',
+    description: 'Minecraft 风景背景上的深色磨砂玻璃',
+    colors: {
+      accent: '#55c96b',
+      bg: '#10191b',
+      card: '#172225',
+      text: '#f4f8f5',
+      textDim: '#abb8b0',
+      border: '#52615a',
+      sidebarBg: '#10191d',
+      sidebarText: '#c2ccc5',
+      bannerText: '#ffffff'
+    }
   }
+}
+
+/** 兼容 0.6.x 与早期预设 key，未知值安全回退到蓝白。 */
+export function normalizeThemeName(value: unknown): ThemeName {
+  const aliases: Record<string, ThemeName> = {
+    light: 'blue-white',
+    dark: 'black-orange',
+    'pink-white': 'white-pink',
+    'pink-black': 'black-pink',
+    personalized: 'custom'
+  }
+  const raw = typeof value === 'string' ? value : ''
+  if (raw in aliases) return aliases[raw]
+  if (
+    raw === 'blue-white' ||
+    raw === 'black-orange' ||
+    raw === 'white-pink' ||
+    raw === 'black-pink' ||
+    raw === 'custom' ||
+    raw === 'transparent'
+  ) {
+    return raw
+  }
+  return 'blue-white'
 }
 
 export interface Settings {

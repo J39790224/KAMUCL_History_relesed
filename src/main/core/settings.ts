@@ -9,7 +9,8 @@ import {
   DEFAULT_BACKGROUND,
   DEFAULT_CUSTOM_THEME,
   DEFAULT_HOME_LAYOUT,
-  DEFAULT_MS_CLIENT_ID
+  DEFAULT_MS_CLIENT_ID,
+  normalizeThemeName
 } from '../../shared/types'
 import {
   assertValidResolution,
@@ -39,7 +40,7 @@ function defaults(): Settings {
     mirror: 'bmclapi',
     defaultIsolation: true,
     msClientId: DEFAULT_MS_CLIENT_ID,
-    theme: 'light',
+    theme: 'blue-white',
     custom: structuredClone(DEFAULT_CUSTOM_THEME),
     disabledFeatures: [],
     favoriteVersions: [],
@@ -79,6 +80,7 @@ export function getSettings(): Settings {
         def.activeFolder
     }
     const c = cached
+    c.theme = normalizeThemeName(raw.theme)
     const migratedResolution = normalizeStoredResolution(c.resolution, def.resolution)
     c.resolution = resolutionValidationError(migratedResolution)
       ? def.resolution

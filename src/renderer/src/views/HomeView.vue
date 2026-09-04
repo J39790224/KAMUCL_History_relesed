@@ -88,6 +88,21 @@ const capsuleLabel = computed(() =>
   currentVersion.value ? versionLabel(currentVersion.value) : '未安装版本'
 )
 
+const heroStatus = computed(() => {
+  const version = currentVersion.value
+  if (!version) return { text: '等待选择', tone: 'idle' }
+  if (running.value) return { text: '游戏运行中', tone: 'running' }
+  if (launching.value) return { text: '正在准备', tone: 'running' }
+  if (version.failed) return { text: '安装失败', tone: 'error' }
+  if (version.incomplete) return { text: '需要修复', tone: 'error' }
+  return { text: '就绪', tone: 'ready' }
+})
+
+function openVersionSettings() {
+  if (selectedId.value) localStorage.setItem(LS_KEY, selectedId.value)
+  store.currentView = 'game'
+}
+
 // ---------------- 启动状态 ----------------
 const launching = computed(() => store.launchState?.status === 'launching')
 const running = computed(() => store.launchState?.status === 'running')
@@ -343,6 +358,13 @@ const memoryPct = computed(() =>
 
 const accountName = computed(() => store.selectedAccount?.username ?? '冒险家')
 const isOffline = computed(() => store.selectedAccount?.type === 'offline')
+const accountTypeLabel = computed(() => {
+  const account = store.selectedAccount
+  if (!account) return '尚未选择账号'
+  if (account.type === 'microsoft') return 'Microsoft 正版 · 在线'
+  if (account.type === 'yggdrasil') return `${account.providerName ?? '外置 Yggdrasil'} · 在线`
+  return '离线账号'
+})
 
 /** 离线模式开关：在离线/微软账号间快速切换；无目标类型账号时引导去账号页 */
 async function onToggleAccountType() {
@@ -392,11 +414,36 @@ async function onToggleAccountType() {
         <div class="banner-shade"></div>
 
         <div class="banner-content" :class="{ center: store.bannerAlign === 'center' }" data-edit="bannerText">
-          <p class="banner-hi">欢迎回来！</p>
-          <h1 class="banner-name">{{ accountName }}</h1>
-          <p class="banner-sub">准备好开启新的冒险了吗？</p>
+          <div class="hero-eyebrow">
+            <span class="banner-hi">当前实例</span>
+            <button ref="verBtnEl" class="ver-capsule" @click="toggleVerMenu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 8 12 3 3 8v8l9 5 9-5Z" />
+                <path d="m3 8 9 5 9-5" />
+                <path d="M12 13v8" />
+              </svg>
+              <span class="ver-capsule-label">{{ capsuleLabel }}</span>
+              <svg class="ver-chevron" :class="{ open: verOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+          </div>
+          <h1 class="banner-name">{{ currentVersion ? versionLabel(currentVersion) : '选择游戏版本' }}</h1>
+          <p class="banner-sub">
+            <template v-if="currentVersion">
+              Minecraft {{ currentVersion.mcVersion }} · {{ loaderText(currentVersion) }}
+            </template>
+            <template v-else>安装或选择一个实例后即可开始冒险</template>
+          </p>
 
           <div class="banner-actions">
+            <button class="hero-settings-btn" :disabled="!currentVersion" @click="openVersionSettings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.08V21h-4v-.08A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.08-.4H3v-4h.08A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.08V3h4v.08A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.34.72.6 1 .3.28.68.42 1.08.4H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
+              </svg>
+              版本设置
+            </button>
             <!-- 启动按钮 -->
             <button
               class="launch-btn"
@@ -412,19 +459,21 @@ async function onToggleAccountType() {
                 <span class="launch-text">{{ launchText }}</span>
               </span>
             </button>
+          </div>
 
-            <!-- 版本选择胶囊 -->
-            <button ref="verBtnEl" class="ver-capsule" @click="toggleVerMenu">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 8 12 3 3 8v8l9 5 9-5Z" />
-                <path d="m3 8 9 5 9-5" />
-                <path d="M12 13v8" />
-              </svg>
-              <span class="ver-capsule-label">{{ capsuleLabel }}</span>
-              <svg class="ver-chevron" :class="{ open: verOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </button>
+          <div class="hero-runtime">
+            <span class="hero-runtime-item">
+              <small>运行环境</small>
+              <strong>{{ javaText }}</strong>
+            </span>
+            <span class="hero-runtime-item">
+              <small>内存分配</small>
+              <strong>{{ memoryGB }}</strong>
+            </span>
+            <span class="hero-runtime-item hero-state" :class="heroStatus.tone">
+              <small>运行状态</small>
+              <strong><i></i>{{ heroStatus.text }}</strong>
+            </span>
           </div>
         </div>
 
@@ -556,7 +605,7 @@ async function onToggleAccountType() {
             <Avatar :size="48" />
             <div class="acc-meta" data-edit="text">
               <div class="acc-name">{{ store.selectedAccount.username }}</div>
-              <div class="acc-type">{{ store.selectedAccount.type === 'microsoft' ? '微软正版' : '离线模式' }}</div>
+              <div class="acc-type">{{ accountTypeLabel }}</div>
             </div>
             <button class="icon-btn" title="编辑账户" @click="store.currentView = 'accounts'">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -786,7 +835,7 @@ async function onToggleAccountType() {
   align-items: flex-start;
   gap: 6px;
   height: 100%;
-  padding: 34px 36px;
+  padding: 24px 28px;
 }
 /* Banner 文字位置：居中（默认靠左下） */
 .banner-content.center {
@@ -795,26 +844,44 @@ async function onToggleAccountType() {
   text-align: center;
 }
 .banner-content.center .banner-actions {
-  margin-top: 18px;
+  margin-top: auto;
+}
+.banner-content.center .hero-eyebrow,
+.banner-content.center .hero-runtime {
+  align-self: stretch;
+}
+.hero-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 .banner-hi {
-  font-size: 14px;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 7px;
+  background: rgba(7, 14, 16, 0.34);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  font-weight: 700;
   color: var(--bn-text);
-  opacity: 0.9;
+  opacity: 0.96;
 }
 .banner-name {
   font-weight: 800;
   color: var(--bn-text);
   letter-spacing: 0.5px;
   line-height: 1.15;
-  max-width: 70%;
-  /* 超长用户名完整显示：允许断行（最多两行），字号随长度自适应收缩，不丢失信息 */
+  max-width: 78%;
+  /* 超长实例名允许断行（最多两行），不侵入操作区。 */
   word-break: break-all;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: clamp(24px, 5vw, 34px);
+  font-size: clamp(30px, 5vw, 46px);
+  text-shadow: 0 3px 18px rgba(0, 0, 0, 0.34);
 }
 .banner-sub {
   font-size: 13px;
@@ -824,21 +891,56 @@ async function onToggleAccountType() {
 .banner-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-top: auto;
+}
+
+.hero-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 50px;
+  flex-shrink: 0;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 11px;
+  background: rgba(8, 15, 17, 0.48);
+  color: var(--bn-text);
+  font: 600 13px inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+.hero-settings-btn:hover:not(:disabled) {
+  background: rgba(8, 15, 17, 0.65);
+  border-color: var(--accent-2);
+}
+.hero-settings-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.hero-settings-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.hero-settings-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* 启动按钮 */
 .launch-btn {
   position: relative;
   overflow: hidden;
-  width: 170px;
-  height: 44px;
+  width: 196px;
+  min-width: 164px;
+  height: 50px;
   border: none;
   border-radius: 10px;
   background: var(--accent-grad);
   color: var(--on-accent);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -900,15 +1002,16 @@ async function onToggleAccountType() {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 44px;
-  padding: 0 16px;
+  height: 36px;
+  min-width: 0;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(10, 10, 13, 0.45);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   color: var(--bn-text);
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -925,7 +1028,7 @@ async function onToggleAccountType() {
   flex-shrink: 0;
 }
 .ver-capsule-label {
-  max-width: 180px;
+  max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -946,12 +1049,67 @@ async function onToggleAccountType() {
   flex-shrink: 0;
 }
 
+.hero-runtime {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr 0.9fr;
+  width: min(100%, 560px);
+  min-height: 48px;
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 11px;
+  background: rgba(7, 14, 16, 0.43);
+  color: var(--bn-text);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+.hero-runtime-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 13px;
+}
+.hero-runtime-item + .hero-runtime-item {
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.hero-runtime-item small {
+  font-size: 10px;
+  opacity: 0.68;
+}
+.hero-runtime-item strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hero-state strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hero-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aab2b0;
+}
+.hero-state.ready i,
+.hero-state.running i {
+  background: #55d66d;
+  box-shadow: 0 0 0 3px rgba(85, 214, 109, 0.16);
+}
+.hero-state.error i {
+  background: #ff6b6b;
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.14);
+}
+
 /* 轮播圆点 */
 .banner-dots {
   position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
+  top: 18px;
+  right: 20px;
   display: flex;
   gap: 7px;
   z-index: 1;

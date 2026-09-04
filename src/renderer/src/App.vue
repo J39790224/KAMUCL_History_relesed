@@ -28,6 +28,8 @@ import type {
   WorldImportInfo,
   YggdrasilProviderInput
 } from '@shared/types'
+import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
+import transparentWallpaper from './assets/banner1.png'
 import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import SplashScreen from './components/SplashScreen.vue'
@@ -548,10 +550,18 @@ function fmtNoticeTime(ts: number): string {
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
-/** 自定义背景层样式（mode=none 时无背景层） */
+/** 自定义背景层；透明主题在未指定图片时使用启动器内置风景资源。 */
 const bgStyle = computed(() => {
   const bg = store.settings?.background
-  if (!bg || bg.mode === 'none') return null
+  if (!bg || bg.mode === 'none') {
+    if (store.settings?.theme !== 'transparent') return null
+    return {
+      backgroundImage: `url("${transparentWallpaper}")`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      opacity: '1'
+    }
+  }
   if (bg.mode === 'color') {
     return {
       background: bg.color,
@@ -589,6 +599,21 @@ const CUSTOM_VARS = [
   '--border',
   '--sidebar-text',
   '--bn-text',
+  '--border-strong',
+  '--scroll',
+  '--hover',
+  '--mask',
+  '--danger',
+  '--danger-soft',
+  '--danger-border',
+  '--ok',
+  '--ok-soft',
+  '--cyan',
+  '--cyan-soft',
+  '--shadow',
+  '--shadow-lg',
+  '--shell-surface',
+  '--glass-blur',
   '--sidebar-w',
   '--banner-h',
   '--radius'
@@ -611,10 +636,15 @@ function clearCustomVars() {
 }
 
 /** 把 settings.custom 映射为 documentElement 上的 inline CSS 变量覆盖 */
-function applyCustomVars(custom: CustomTheme) {
+function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   const st = document.documentElement.style
   const { colors, layout } = custom
   const accent = colors.accent
+  const dark = hexLuminance(colors.bg) < 0.46
+  const transparent = theme === 'transparent'
+  const cardOpacity = transparent ? 66 : dark ? 82 : 91
+  const raisedOpacity = transparent ? 55 : dark ? 72 : 82
+  const sideOpacity = transparent ? 62 : dark ? 86 : 88
   const accent2 = `color-mix(in srgb, ${accent} 72%, white)`
   const accentDeep = `color-mix(in srgb, ${accent} 78%, black)`
   st.setProperty('--accent', accent)
@@ -627,32 +657,54 @@ function applyCustomVars(custom: CustomTheme) {
   st.setProperty('--accent-soft', `color-mix(in srgb, ${accent} 14%, transparent)`)
   st.setProperty('--on-accent', hexLuminance(accent) > 0.6 ? '#1a1208' : '#ffffff')
   st.setProperty('--bg', colors.bg)
-  st.setProperty('--card', colors.card)
-  st.setProperty('--card-2', `color-mix(in srgb, ${colors.card} 95%, ${colors.bg})`)
+  st.setProperty('--card', `color-mix(in srgb, ${colors.card} ${cardOpacity}%, transparent)`)
+  st.setProperty('--card-2', `color-mix(in srgb, ${colors.card} ${raisedOpacity}%, transparent)`)
   st.setProperty('--text', colors.text)
   st.setProperty('--text-dim', colors.textDim)
   st.setProperty('--border', colors.border)
-  st.setProperty('--bg-2', colors.sidebarBg)
+  st.setProperty('--bg-2', `color-mix(in srgb, ${colors.sidebarBg} ${sideOpacity}%, transparent)`)
   st.setProperty('--sidebar-text', colors.sidebarText)
   st.setProperty('--bn-text', colors.bannerText)
+  st.setProperty('--border-strong', `color-mix(in srgb, ${colors.border} 65%, ${colors.text})`)
+  st.setProperty('--scroll', `color-mix(in srgb, ${colors.textDim} 32%, transparent)`)
+  st.setProperty('--hover', `color-mix(in srgb, ${colors.text} ${dark ? 7 : 5}%, transparent)`)
+  st.setProperty('--mask', dark ? 'rgba(2, 5, 6, 0.72)' : 'rgba(27, 36, 55, 0.42)')
+  st.setProperty('--danger', dark ? '#ff6b73' : '#dc2626')
+  st.setProperty('--danger-soft', dark ? 'rgba(255, 107, 115, 0.13)' : 'rgba(220, 38, 38, 0.08)')
+  st.setProperty('--danger-border', dark ? 'rgba(255, 107, 115, 0.34)' : 'rgba(220, 38, 38, 0.3)')
+  st.setProperty('--ok', dark ? '#68dc88' : '#168a42')
+  st.setProperty('--ok-soft', dark ? 'rgba(104, 220, 136, 0.13)' : 'rgba(22, 138, 66, 0.1)')
+  st.setProperty('--cyan', dark ? '#9ed7e9' : '#0e7490')
+  st.setProperty('--cyan-soft', dark ? 'rgba(158, 215, 233, 0.13)' : 'rgba(14, 116, 144, 0.1)')
+  st.setProperty('--shadow', dark ? '0 8px 24px rgba(0, 0, 0, 0.22)' : '0 8px 24px rgba(31, 50, 85, 0.09)')
+  st.setProperty('--shadow-lg', dark ? '0 20px 55px rgba(0, 0, 0, 0.42)' : '0 20px 55px rgba(31, 50, 85, 0.18)')
+  st.setProperty(
+    '--shell-surface',
+    `color-mix(in srgb, ${colors.bg} ${transparent ? 55 : dark ? 88 : 90}%, transparent)`
+  )
+  st.setProperty('--glass-blur', transparent ? '22px' : '14px')
   st.setProperty('--sidebar-w', `${layout.sidebarWidth}px`)
   st.setProperty('--banner-h', `${layout.bannerHeight}px`)
   st.setProperty('--radius', `${layout.radius}px`)
 }
 
 /**
- * 应用主题：custom = 回到 :root 亮色基底（删除 data-theme）+ inline 变量覆盖；
- * light/dark = 清除 inline 覆盖后按原逻辑写 data-theme
+ * 所有正式主题共用玻璃变量与布局；个性化只替换用户色板。
  */
 function applyTheme(theme?: ThemeName, custom?: CustomTheme) {
   const root = document.documentElement
-  if (theme === 'custom' && custom) {
-    delete root.dataset.theme
-    applyCustomVars(custom)
-  } else {
-    clearCustomVars()
-    root.dataset.theme = theme === 'dark' ? 'dark' : 'light'
+  const selected = theme ?? 'blue-white'
+  clearCustomVars()
+  root.dataset.theme = selected
+  if (selected === 'custom') {
+    applyCustomVars(custom ?? DEFAULT_CUSTOM_THEME, selected)
+    return
   }
+  const preset = THEME_PRESETS[selected] ?? THEME_PRESETS['blue-white']
+  applyCustomVars(
+    { colors: preset.colors, layout: DEFAULT_CUSTOM_THEME.layout },
+    selected
+  )
 }
 
 // settings 未加载时按亮色应用；加载完成 / 修改后 watch 触发立即生效
@@ -1230,6 +1282,8 @@ onUnmounted(() => {
   background: var(--bg);
   position: relative;
   z-index: 1;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 /* 自定义背景层：垫底铺满，不拦截交互 */
 .app-bg {
@@ -1240,7 +1294,21 @@ onUnmounted(() => {
 }
 /* 激活自定义背景时界面底色透出背景层 */
 .shell.has-bg {
-  background: transparent;
+  background: var(--shell-surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+}
+:global(html[data-theme='transparent']) .shell {
+  width: calc(100% - 28px);
+  height: calc(100% - 28px);
+  margin: 14px;
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .shell.has-bg {
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+  }
 }
 
 /* ---------------- 左侧边栏 ---------------- */
