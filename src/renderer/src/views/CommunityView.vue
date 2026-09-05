@@ -14,6 +14,31 @@ import type {
   LoaderName
 } from '@shared/types'
 import type { InstalledVersion } from '@shared/types'
+
+// ---------------- 资源外链（源页面 + MC 百科介绍） ----------------
+/** CurseForge 的 URL 分类段（按当前搜索分类推断） */
+const CF_KIND_SEGMENT: Record<CommunityKind, string> = {
+  mod: 'mc-mods',
+  modpack: 'modpacks',
+  resourcepack: 'texture-packs',
+  shader: 'shaders',
+  datapack: 'data-packs'
+}
+
+/** 资源的源站网页链接（Modrinth/CurseForge） */
+function sourceUrl(r: CommunityResult): string {
+  if (r.source === 'modrinth') return `https://modrinth.com/project/${r.slug || r.projectId}`
+  return `https://www.curseforge.com/minecraft/${CF_KIND_SEGMENT[query.kind] ?? 'mc-mods'}/${r.slug || r.projectId}`
+}
+
+/** MC 百科搜索介绍页（按资源名检索） */
+function mcmodUrl(title: string): string {
+  return `https://search.mcmod.cn/s?key=${encodeURIComponent(title)}`
+}
+
+function openExternal(url: string) {
+  window.open(url, '_blank')
+}
 const currentInstance = computed(() => store.installed.find(v => v.id === localStorage.getItem('kamucl.lastVersion')) ?? store.installed[0])
 const allTargets = ref<InstalledVersion[]>([])
 const modRequest = ref<{ target: InstalledVersion; input: { file: CommunityFile } } | null>(null)
@@ -455,6 +480,22 @@ async function confirmDownload() {
                 <span>更新于 {{ fmtDate(r.updatedAt) }}</span>
               </div>
             </div>
+            <div class="result-links">
+              <button
+                class="icon-btn"
+                :title="`打开 ${r.source === 'modrinth' ? 'Modrinth' : 'CurseForge'} 源页面（查看完整介绍）`"
+                @click="openExternal(sourceUrl(r))"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+              </button>
+              <button
+                class="icon-btn"
+                title="在 MC 百科查看介绍与教程"
+                @click="openExternal(mcmodUrl(r.title))"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+              </button>
+            </div>
             <button class="btn btn-gold btn-sm result-dl" @click="openDownload(r)">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 3v11" />
@@ -480,6 +521,14 @@ async function confirmDownload() {
       <div v-if="modal.open" class="modal-mask" @pointerdown.self="!modal.downloading && (modal.open = false)">
         <div class="modal" style="width: min(740px, calc(100vw - 40px)); max-height: 88vh; overflow-y: auto">
           <h3 class="modal-title"><MarqueeText :text="'下载 ' + modal.item?.title"/></h3>
+          <div v-if="modal.item" class="modal-links">
+            <button class="btn btn-ghost btn-sm" @click="openExternal(sourceUrl(modal.item))">
+              {{ modal.item.source === 'modrinth' ? 'Modrinth 源页面' : 'CurseForge 源页面' }}
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="openExternal(mcmodUrl(modal.item.title))">
+              MC 百科介绍
+            </button>
+          </div>
           <div class="filter-row">
             <label style="flex: 1; min-width: 0">Minecraft 版本<input v-model="modal.mcVersion" class="input" list="mod-minecraft-versions" placeholder="全部版本" @change="loadFiles"/></label>
             <label style="flex: 1; min-width: 0">Loader<select v-model="modal.loader" class="select" @change="loadFiles"><option v-for="l in loaderOptions" :key="l.value" :value="l.value">{{ l.label }}</option></select></label>
@@ -711,6 +760,18 @@ async function confirmDownload() {
 }
 .meta-dot {
   opacity: 0.6;
+}
+.result-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.modal-links {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 .result-dl {
   flex-shrink: 0;
