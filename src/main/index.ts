@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, net, protocol } from 'electron'
+import { app, BrowserWindow, crashReporter, shell, ipcMain, net, protocol } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createStartupSplash } from './startupSplash'
@@ -8,6 +8,21 @@ import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
 import { windowAppearance } from './windowAppearance'
 import { applyNativeAppearance } from './nativeAppearance'
 import { stopDirectHost } from './core/directConnect'
+
+// 启动日志尽 earliest 初始化：闪退发生在 app.whenReady 之前时也有据可查
+try {
+  initializeLauncherLog()
+  launcherLog('Main process module loaded')
+} catch {
+  /* 日志不可影响启动 */
+}
+
+// 崩溃取证：minidump 落到 userData/Crashpad（不上传），配合 launcher-current.log 定位闪退
+try {
+  crashReporter.start({ uploadToServer: false, compress: false })
+} catch {
+  /* crashReporter 初始化失败不阻断 */
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -48,8 +63,23 @@ function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
   }
 
   if (startup) startup.attach(win)
-  else win.on('ready-to-show', () => win?.show())
+  else   win.on('ready-to-show', () => win?.show())
   applyNativeAppearance(win, getSettings())
+  // 渲染进程崩溃/无响应取证（25h2 GPU 崩溃常见前兆），现有 splash 处理只覆盖初始化期
+  win.webContents.on('render-process-gone', (_event, details) => {
+    try {
+      launcherLog(`[CRASH] Renderer gone: reason=${details.reason} exitCode=${details.exitCode}`)
+    } catch {
+      /* 忽略 */
+    }
+  })
+  win.webContents.on('unresponsive', () => {
+    try {
+      launcherLog('[CRASH] Renderer unresponsive')
+    } catch {
+      /* 忽略 */
+    }
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -109,9 +139,34 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-process.on('uncaughtExceptionMonitor', (error) => {
-  launcherLog(`Uncaught exception: ${error.name}: ${error.message}`)
+// ---------------- 崩溃取证（win11 25h2 概率闪退排查） ----------------
+// 主进程未捕获异常：记录完整堆栈并保持进程存活（活着 > 闪退；日志可回溯）
+process.on('uncaughtException', (error) => {
+  try {
+    launcherLog(`[CRASH] Uncaught exception: ${error.stack ?? error.message}`)
+  } catch {
+    /* 日志失败不追加崩溃 */
+  }
 })
 process.on('unhandledRejection', (reason) => {
-  launcherLog(`Unhandled rejection: ${reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)}`)
+  try {
+    launcherLog(`[CRASH] Unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`)
+  } catch {
+    /* 同上 */
+  }
+})
+// 子进程（GPU/渲染/网络等）异常退出记录：25h2 上 GPU 进程崩溃是常见闪退前兆
+app.on('child-process-gone', (_event, details) => {
+  try {
+    launcherLog(`[CRASH] Child process gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
+  } catch {
+    /* 同上 */
+  }
+})
+app.on('quit', () => {
+  try {
+    launcherLog('App quit')
+  } catch {
+    /* 忽略 */
+  }
 })
