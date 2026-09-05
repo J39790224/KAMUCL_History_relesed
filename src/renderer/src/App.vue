@@ -36,6 +36,7 @@ import Toasts from './components/Toasts.vue'
 import EditPanel from './components/EditPanel.vue'
 import { waitForBootTasks, sealBootTasks } from './bootTasks'
 import { acceptsImportDrag, showsImportOverlay } from '@shared/dropIntent'
+import { updateNotes, latestUpdateNote } from '@shared/updateNotes'
 import HomeView from './views/HomeView.vue'
 import GameView from './views/GameView.vue'
 import ModsView from './views/ModsView.vue'
@@ -531,11 +532,13 @@ async function onExportLogs() {
 
 // ---------------- 下载中心 ----------------
 const dlOpen = ref(false)
+const notesOpen = ref(false)
 
 /** 顶栏空白处点击关闭已展开的下拉面板（顶栏是 -webkit-app-region:drag 拖拽区，点击不会落到下拉遮罩上） */
 function closeTopDropdowns() {
   noticeOpen.value = false
   dlOpen.value = false
+  notesOpen.value = false
 }
 const activeTaskCount = computed(
   () =>
@@ -1093,6 +1096,13 @@ onUnmounted(() => {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></svg>
             <span class="dl-badge compact">{{ activeTaskCount }}</span>
           </button>
+          <button v-if="store.currentView === 'home'" class="top-icon-btn dl-toggle" title="更新日志" @click="notesOpen = !notesOpen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 9-9" />
+              <path d="M3 4v5h5" />
+              <path d="M12 7v5l3.5 2" />
+            </svg>
+          </button>
           <button class="top-icon-btn" title="通知" @click="toggleNotices">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -1137,6 +1147,28 @@ onUnmounted(() => {
                   <span class="notice-time">{{ fmtNoticeTime(n.time) }}</span>
                 </div>
               </div>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 更新日志下拉（首页标题栏秒表入口）：内置各版本改动，无网络依赖 -->
+        <Teleport to="body">
+          <div v-if="notesOpen" class="notice-mask" @click="notesOpen = false"></div>
+          <div v-if="notesOpen" class="notice-panel notes-panel">
+            <div class="notice-head">
+              <span class="notice-title">更新日志</span>
+              <span class="muted">{{ latestUpdateNote()?.version }} · {{ latestUpdateNote()?.date }}</span>
+            </div>
+            <div class="notes-list">
+              <section v-for="note in updateNotes" :key="note.version" class="note-version">
+                <h4 class="note-head">
+                  <span class="note-ver">{{ note.version }}</span>
+                  <span class="muted">{{ note.date }}</span>
+                </h4>
+                <ul class="note-changes">
+                  <li v-for="(c, i) in note.changes" :key="i">{{ c }}</li>
+                </ul>
+              </section>
             </div>
           </div>
         </Teleport>
@@ -1777,6 +1809,36 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: 9000;
+}
+.notes-panel {
+  width: 380px;
+  max-height: 480px;
+}
+.notes-list {
+  overflow-y: auto;
+  padding: 2px 14px 14px;
+}
+.note-version + .note-version {
+  margin-top: 12px;
+  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.12));
+  padding-top: 12px;
+}
+.note-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 6px;
+}
+.note-ver {
+  font-weight: 700;
+  font-size: 13px;
+}
+.note-changes {
+  margin: 0;
+  padding-left: 16px;
+  line-height: 1.7;
+  font-size: 12.5px;
+  color: var(--text, #dfe5ec);
 }
 .notice-panel {
   position: fixed;
