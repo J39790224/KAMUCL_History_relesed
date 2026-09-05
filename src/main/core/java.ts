@@ -13,6 +13,8 @@ import { runtimesDir } from './paths'
 import { downloadFile } from './download'
 import type { VersionJson } from './versions'
 import { waitIfTaskPaused } from './tasks'
+import { JavaProbeCache } from './javaProbeCache'
+const probeCache = new JavaProbeCache(() => path.join(app.getPath('userData'), 'java-probe-cache.json'))
 import {
   parseJavaProbeOutput,
   javaHomeExecutable,
@@ -98,6 +100,8 @@ function addCandidate(
 
 /** 运行 Java 并解析版本、架构和发行版；失败返回 null。 */
 function probeJava(exe: string): JavaInfo | null {
+  const cached = probeCache.get(exe)
+  if (cached) return cached
   try {
     const r = spawnSync(exe, ['-XshowSettings:properties', '-version'], {
       encoding: 'utf-8',
@@ -108,7 +112,7 @@ function probeJava(exe: string): JavaInfo | null {
     if (r.error) return null
     const out = `${r.stderr ?? ''}\n${r.stdout ?? ''}`
     const parsed = parseJavaProbeOutput(out)
-    return parsed ? { path: exe, ...parsed } : null
+    return parsed ? probeCache.put(exe, { path: exe, ...parsed }) : null
   } catch {
     return null
   }
@@ -151,6 +155,8 @@ function runTextProcess(
 }
 
 async function probeJavaAsync(exe: string, signal?: AbortSignal): Promise<JavaInfo | null> {
+  const cached = probeCache.get(exe)
+  if (cached) return cached
   try {
     const output = await runTextProcess(
       exe,
@@ -159,7 +165,7 @@ async function probeJavaAsync(exe: string, signal?: AbortSignal): Promise<JavaIn
       10000
     )
     const parsed = parseJavaProbeOutput(output)
-    return parsed ? { path: exe, ...parsed } : null
+    return parsed ? probeCache.put(exe, { path: exe, ...parsed }) : null
   } catch (error) {
     throwIfScanCancelled(signal)
     return null
@@ -177,12 +183,13 @@ export async function resolveJavaExecutable(exe: string): Promise<string> {
 }
 
 /** 启动流程使用的轻量候选，不遍历磁盘。 */
-function quickCandidates(): JavaCandidate[] {
+function quickCandidates(runWhere = true): JavaCandidate[] {
   const candidates = new Map<string, JavaCandidate>()
   const settings = getSettings()
 
   // 1. 用户指定
   addCandidate(candidates, settings.javaPath, '当前配置')
+  for (const exe of settings.javaCustom ?? []) addCandidate(candidates, exe, '手动添加')
 
   // 2. JAVA_HOME
   addCandidate(candidates, process.env.JAVA_HOME, 'JAVA_HOME')
@@ -191,7 +198,7 @@ function quickCandidates(): JavaCandidate[] {
   for (const item of (process.env.Path ?? process.env.PATH ?? '').split(path.delimiter)) {
     if (item.trim()) addCandidate(candidates, item.trim(), 'PATH')
   }
-  try {
+  if (runWhere) try {
     const cmd = IS_WIN ? 'where java' : 'which java'
     const out = execSync(cmd, { encoding: 'utf-8', timeout: 10000, windowsHide: true })
     for (const line of out.split(/\r?\n/)) addCandidate(candidates, line.trim(), 'PATH')
@@ -366,6 +373,33 @@ export function scanJava(refresh = false): JavaInfo[] {
   }
   scanCache = { time: Date.now(), list: sortJava(out), complete: false }
   return mergeCustom(scanCache.list)
+}
+
+let summaryPending: Promise<JavaInfo[]> | undefined
+/** UI summary never runs spawnSync/where on Electron's event loop. */
+export function listJavaSummary(): Promise<JavaInfo[]> {
+  if (summaryPending) return summaryPending
+  summaryPending = (async () => {
+    const started = Date.now(), settings = getSettings()
+    const candidates = quickCandidates(false)
+    for (const info of readPersistentCache()?.list ?? []) candidates.push({ executable: info.path, sourceDetail: info.sourceDetail ?? '已缓存' })
+    const unique = new Map<string, JavaCandidate>()
+    for (const c of candidates) { const real = realExecutable(c.executable); if (real && !unique.has(pathKey(real))) unique.set(pathKey(real), { ...c, executable: real }) }
+    const pending = [...unique.values()], found: JavaInfo[] = []
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < pending.length) {
+        const c = pending[cursor++], info = await probeJavaAsync(c.executable)
+        if (info) found.push({ ...info, source: c.sourceDetail === '手动添加' ? 'manual' : 'auto', sourceDetail: c.sourceDetail })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker))
+    const hidden = new Set((settings.javaHidden ?? []).map(pathKey))
+    const list = sortJava(found.filter(j => !hidden.has(pathKey(j.path))))
+    console.info(`[KAMUCL] Java summary: ${list.length} runtimes, ${Date.now() - started} ms (persistent probe cache enabled)`)
+    return list
+  })().finally(() => { summaryPending = undefined })
+  return summaryPending
 }
 
 async function fixedWindowsDrives(signal?: AbortSignal): Promise<string[]> {

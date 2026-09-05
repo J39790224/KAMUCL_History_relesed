@@ -65,6 +65,7 @@ export function matchesVersionRange(range: string, version: string): boolean {
   if (!version || version === '未知') return false
   if (!r || r === '*') return true
   if (r.includes('||')) return r.split('||').some(part => !!part.trim() && matchesVersionRange(part, version))
+  if (r.includes(' && ')) return r.split(' && ').every(part => !!part.trim() && matchesVersionRange(part, version))
   if (/^[[(]/.test(r)) {
     const intervals = r.match(/[[(][^()[\]]*[)\]]/g)
     if (!intervals || intervals.join(',').replace(/\s/g, '') !== r.replace(/\s/g, '')) return false
@@ -84,18 +85,63 @@ export function matchesVersionRange(range: string, version: string): boolean {
 }
 
 /** Metadata arrays express OR, not comma-delimited Maven intervals. */
-export function dependencyRange(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map(dependencyRange).join(' || ')
+export function dependencyRange(value: unknown, dialect: 'fabric' | 'quilt' = 'fabric'): string {
+  // Normalize nested any/all to bounded disjunctive normal form. Flattening with
+  // join alone changes (A OR B) AND C into A OR (B AND C).
+  const terms = (v: unknown, depth = 0): string[][] => {
+    if (depth > 16) throw new Error('range too deep')
+    if (typeof v === 'string') {
+      const range = v.trim()
+      const normalized = dialect === 'quilt' && /^\d+(?:\.\d+)*(?:-[\w.-]+)?(?:\+[\w.-]+)?$/.test(range) ? '^' + range : range
+      return normalized.split('||').map(part => part.trim().split(' && '))
+    }
+    if (v == null) return [['*']]
+    const obj = v as { any?: unknown[]; all?: unknown[] }
+    const any = Array.isArray(v) ? v : obj.any
+    if (Array.isArray(any)) {
+      if (!any.length || any.length > 128) throw new Error('invalid alternatives')
+      const result = any.flatMap(part => terms(part, depth + 1))
+      if (result.length > 128) throw new Error('range too large')
+      return result
+    }
+    if (Array.isArray(obj.all) && obj.all.length && obj.all.length <= 128) {
+      let result: string[][] = [[]]
+      for (const part of obj.all) {
+        const next = terms(part, depth + 1)
+        if (result.length * next.length > 128) throw new Error('range too large')
+        result = result.flatMap(a => next.map(b => [...a, ...b]))
+      }
+      return result
+    }
+    throw new Error('unsupported range')
+  }
   if (value == null) return ''
-  return '!unsupported-range!'
+  try { return terms(value).map(term => term.join(' && ')).join(' || ') }
+  catch { return '!unsupported-range!' }
 }
 
-export function modMatchesInstance(mod: Pick<ModInfo, 'loader' | 'mcRange' | 'loaderRange' | 'error'>, instance: InstalledVersion): boolean {
+export function modMatchesInstance(mod: Pick<ModInfo, 'loader' | 'mcRange' | 'loaderRange' | 'error' | 'variants'>, instance: InstalledVersion): boolean {
   const loader = normalizeLoader(instance.loader)
-  if (mod.error || instance.failed || instance.incomplete || !loader || loader !== normalizeLoader(mod.loader)) return false
-  return matchesVersionRange(mod.mcRange, instance.mcVersion) && (!mod.loaderRange || matchesVersionRange(mod.loaderRange, normalizeLoaderVersion(instance.loaderVersion ?? '', loader, instance.mcVersion)))
+  if (mod.error || instance.failed || instance.incomplete || !loader) return false
+  const specs = (mod.variants?.length ? mod.variants : [mod]).filter(spec => loader === normalizeLoader(spec.loader))
+  return specs.length > 0 && specs.every(spec =>
+    matchesVersionRange(spec.mcRange, instance.mcVersion) &&
+    (!spec.loaderRange || matchesVersionRange(spec.loaderRange, normalizeLoaderVersion(instance.loaderVersion ?? '', loader, instance.mcVersion))))
 }
 
 /** A version ID is only unique INSIDE one registered game folder. */
 export const instanceKey = (instance: Pick<InstalledVersion, 'id' | 'folder'>): string => JSON.stringify([instance.folder ?? '', instance.id])
+
+/** Explain the same semantic checks used for installation; never guess from labels. */
+export function modMismatchReasons(mod: ModInfo, instance: InstalledVersion): string[] {
+  if (mod.error) return [mod.error]
+  if (instance.failed || instance.incomplete) return ['实例安装不完整或元数据无法读取']
+  const loader = normalizeLoader(instance.loader)
+  const specs = (mod.variants?.length ? mod.variants : [mod]).filter(s => loader && loader === normalizeLoader(s.loader))
+  if (!specs.length) return [`需要 ${mod.loader ?? '已声明的加载器'}，实例为 ${loader ?? '纯净版/未知'}`]
+  const reasons = specs.flatMap(s => [
+    ...(!matchesVersionRange(s.mcRange, instance.mcVersion) ? [`Minecraft ${instance.mcVersion} 不满足 ${s.mcRange}（方括号含边界，圆括号不含边界）`] : []),
+    ...(s.loaderRange && !matchesVersionRange(s.loaderRange, normalizeLoaderVersion(instance.loaderVersion ?? '', loader, instance.mcVersion)) ? [`${loader} ${instance.loaderVersion || '版本未知'} 不满足 ${s.loaderRange}`] : [])
+  ])
+  return [...new Set(reasons)]
+}

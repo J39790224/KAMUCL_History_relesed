@@ -31,9 +31,10 @@ export class SkinProfileCache {
   }
   async get(key: string, load: () => Promise<ProfileSkins>, refresh = false): Promise<ProfileSkins> {
     const cached = this.read(key)
-    if (cached && !refresh) return structuredClone(cached)
+    if (cached && !refresh) { console.info('[KAMUCL] Skin profile: cache hit, no network'); return structuredClone(cached) }
     if (this.pending.has(key)) return this.pending.get(key)!
     const work = (async () => {
+      const started = Date.now()
       try {
         const fresh = await load()
         const publicProfile = cacheableProfile(fresh)
@@ -49,7 +50,7 @@ export class SkinProfileCache {
         }
         return publicProfile ?? cached ?? fresh
       } catch (error) { if (cached) return cached; throw error }
-      finally { this.pending.delete(key) }
+      finally { this.pending.delete(key); console.info(`[KAMUCL] Skin profile: ${refresh ? 'refresh' : 'cache miss'}, ${Date.now() - started} ms`) }
     })()
     this.pending.set(key, work)
     return work

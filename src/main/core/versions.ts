@@ -283,9 +283,12 @@ interface LibEntry {
 function collectLibraries(vj: VersionJson): LibEntry[] {
   const out: LibEntry[] = []
   const seen = new Set<string>()
-  const push = (art: LibraryArtifact | undefined, isNative: boolean): void => {
-    if (!art?.url || !art.path) return
+  const push = (art: (Pick<LibraryArtifact, 'path'> & Partial<LibraryArtifact>) | undefined, isNative: boolean): void => {
+    if (!art?.path) return
     const dest = libraryPath(art.path)
+    // Installer-generated libraries have no download URL; keep a verified local
+    // path on the classpath, but never create an impossible network task for it.
+    if (!art.url && !fs.existsSync(dest)) return
     if (seen.has(dest)) return
     seen.add(dest)
     out.push({ path: dest, url: art.url, sha1: art.sha1, size: art.size, isNative })
@@ -298,6 +301,12 @@ function collectLibraries(vj: VersionJson): LibEntry[] {
     const file = `${a}-${v}${classifier ? `-${classifier}` : ''}.jar`
     return `${g.replace(/\./g, '/')}/${a}/${v}/${file}`
   }
+  /** 仅声明 maven 坐标（无 downloads/url，典型为安装器注入的 forge 语言提供器）时按组织推断下载源 */
+  const mavenRepoBase = (name: string): string | null => {
+    if (name.startsWith('net.minecraftforge:')) return 'https://maven.minecraftforge.net/'
+    if (name.startsWith('net.neoforged:')) return 'https://maven.neoforged.net/releases/'
+    return null
+  }
   for (const lib of vj.libraries ?? []) {
     if (!rulesAllow(lib.rules)) continue
     if (lib.downloads?.artifact) {
@@ -308,6 +317,16 @@ function collectLibraries(vj: VersionJson): LibEntry[] {
       if (rel) {
         const base = lib.url.endsWith('/') ? lib.url : lib.url + '/'
         push({ path: rel, url: base + rel }, false)
+      }
+    } else if (lib.name) {
+      // forge 安装器注入库（fmlcore/javafmllanguage/mclanguage/lowcodelanguage 等）：
+      // json 仅给 maven 坐标，本地有则直接收编，缺失按组织推断 maven 源下载
+      const rel = mavenPath(lib.name)
+      if (rel && fs.existsSync(libraryPath(rel))) {
+        push({ path: rel }, false)
+      } else if (rel) {
+        const base = mavenRepoBase(lib.name)
+        if (base) push({ path: rel, url: base + rel }, false)
       }
     }
     const nativesKey = lib.natives?.[OS_NAME]?.replace(

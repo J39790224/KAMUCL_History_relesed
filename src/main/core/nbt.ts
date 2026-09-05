@@ -181,6 +181,9 @@ class Writer {
     b.writeInt32BE(v)
     this.parts.push(b)
   }
+  long(v: bigint): void {
+    const b = Buffer.alloc(8); b.writeBigInt64BE(v); this.parts.push(b)
+  }
   string(v: string): void {
     const b = Buffer.from(v, 'utf-8')
     this.short(b.length)
@@ -199,6 +202,15 @@ function writePayload(w: Writer, type: number, value: unknown): void {
     case 3:
       w.int(value as number)
       break
+    case 4:
+      w.long(value as bigint)
+      break
+    case 9: {
+      const list = value as NbtList
+      w.byte(list.itemType); w.int(list.values.length)
+      for (const item of list.values) writePayload(w, list.itemType, item)
+      break
+    }
     case 8:
       w.string(value as string)
       break
@@ -218,10 +230,16 @@ function writePayload(w: Writer, type: number, value: unknown): void {
 }
 
 function tagTypeOf(v: unknown): number {
+  if (v instanceof NbtList) return 9
+  if (typeof v === 'bigint') return 4
   if (typeof v === 'string') return 8
   if (typeof v === 'number') return Number.isInteger(v) && Math.abs(v) < 128 ? 1 : 3
   if (typeof v === 'object' && v !== null) return 10
   throw new Error('无法推断 NBT 类型')
+}
+
+export class NbtList {
+  constructor(public itemType: number, public values: unknown[]) {}
 }
 
 /** 序列化根 Compound 为 NBT 二进制 */

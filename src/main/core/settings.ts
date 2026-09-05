@@ -5,7 +5,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Settings } from '../../shared/types'
-import { carouselImages } from '../../shared/appearancePolicy'
+import { carouselImages, carouselTiming } from '../../shared/appearancePolicy'
 import { DEFAULT_DOWNLOAD_LIMITS, downloadLimiter, validateDownloadLimits } from './downloadLimits'
 import {
   DEFAULT_BACKGROUND,
@@ -105,6 +105,7 @@ export function getSettings(): Settings {
     c.background.image = ensureGlobalImage(storedBackground, 'background', true)
     c.launchThumbnail.images = carouselImages(c.launchThumbnail).map(image => ensureGlobalImage(image, 'launch-thumbnail', true)).filter(Boolean)
     c.launchThumbnail.image = c.launchThumbnail.images[0] ?? ''
+    Object.assign(c.launchThumbnail, carouselTiming(c.launchThumbnail))
     if (c.background.mode === 'image' && !c.background.image) c.background.mode = 'none'
     const migratedResolution = normalizeStoredResolution(c.resolution, def.resolution)
     c.resolution = resolutionValidationError(migratedResolution)
@@ -184,6 +185,7 @@ export function saveSettings(patch: Partial<Settings>): Settings {
     const requested = patch.launchThumbnail.images !== undefined ? patch.launchThumbnail :
       patch.launchThumbnail.image !== undefined ? { image: patch.launchThumbnail.image } : merged.launchThumbnail
     merged.launchThumbnail.images = carouselImages(requested).map(image => ensureGlobalImage(image, 'launch-thumbnail')).filter(Boolean)
+    Object.assign(merged.launchThumbnail, carouselTiming(merged.launchThumbnail))
     merged.launchThumbnail.image = merged.launchThumbnail.images[0] ?? ''
   }
   // activeFolder 与 gameDir 语义一致：改其一跟随另一个

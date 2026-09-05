@@ -18,7 +18,7 @@ const head = ref('')
 let generation = 0
 onUnmounted(() => { generation++ })
 
-function load() { return trackBootTask(loadImpl) }
+function load() { return trackBootTask(loadImpl, 800) }
 async function loadImpl() {
   const request = ++generation
   head.value = ''

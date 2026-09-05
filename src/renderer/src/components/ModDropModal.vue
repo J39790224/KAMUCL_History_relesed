@@ -4,9 +4,11 @@
  * 流程：静默解析 → 匹配本地版本 → 有匹配（选版本装入）/ 无匹配（自动或自定义下载后装入）
  */
 import { computed, reactive, ref, watch } from 'vue'
-import { errText, installMods, installVersion, onInstallDone, parseMods, getModTargets } from '../api'
+import ModInstallDialog from './ModInstallDialog.vue'
+import MarqueeText from './MarqueeText.vue'
+import { errText, installVersion, onInstallDone, parseMods, getModTargets } from '../api'
 import { displayVersionName, refreshInstalled, store, toast } from '../store'
-import { matchesVersionRange as matchRange, modMatchesInstance as modMatchesVersion, instanceKey } from '@shared/modCompatibility'
+import { matchesVersionRange as matchRange, modMatchesInstance as modMatchesVersion, instanceKey, modMismatchReasons } from '@shared/modCompatibility'
 import type { InstalledVersion, LoaderName, ModInfo } from '@shared/types'
 
 const props = defineProps<{
@@ -23,11 +25,13 @@ let scanGeneration = 0
 const mods = ref<ModInfo[]>([])
 const selectedVersion = ref('')
 const installing = ref(false)
+const modRequest = ref<{ target: InstalledVersion; input: { paths: string[] } } | null>(null)
 
 /** 解析成功的有效 MOD */
 const validMods = computed(() => mods.value.filter((m) => !m.error))
 /** 解析失败（非 MOD/损坏） */
 const failedMods = computed(() => mods.value.filter((m) => !!m.error))
+const mismatchDetails = computed(() => allTargets.value.map(v => ({ v, reasons: validMods.value.flatMap(m => modMismatchReasons(m, v).map(reason => `${m.name || m.id}：${reason}`)) })))
 
 /** 每个 MOD 匹配到的版本 id 集合 */
 const matchMap = computed(() => {
@@ -115,24 +119,7 @@ async function onInstallSelected() {
     toast('所选版本与全部 MOD 均不兼容', 'error')
     return
   }
-  installing.value = true
-  try {
-    const results = await installMods(targets.map((m) => m.filePath), vid, selected.folder)
-    const okCount = results.filter((r) => r.ok).length
-    const vname = selected
-    toast(
-      `已将 ${okCount} 个 MOD 装入 ${vname ? displayVersionName(vname) : vid}`,
-      okCount ? 'success' : 'error'
-    )
-    const failures = results.filter(r => !r.ok)
-    if (failures.length) toast(failures.map(r => `${r.fileName}：${r.message}`).join('\n'), 'error')
-    store.fsRefreshTick++
-    if (!failures.length) emit('close')
-  } catch (e) {
-    toast('装入失败：' + errText(e), 'error')
-  } finally {
-    installing.value = false
-  }
+  modRequest.value = { target: selected, input: { paths: targets.map(m => m.filePath) } }
 }
 
 /** 「下载新版本」：跳游戏版本页，提示装完后再装入 */
@@ -227,18 +214,7 @@ async function autoInstallMods(
     const scanned = await getModTargets()
     const v = scanned.versions.find(v => v.id === installedId && v.folder === folder)
     if (!v) throw new Error('未找到本次安装的确切实例，请重新拖入 MOD')
-    const vid = v.id
-    const results = await installMods(filePaths, vid, folder)
-    const okCount = results.filter((r) => r.ok).length
-    if (okCount > 0) {
-      toast(
-        `已自动装入 ${okCount} 个 MOD 到 ${v ? displayVersionName(v) : vid}，可直接启动`,
-        'success'
-      )
-      store.fsRefreshTick++
-    } else {
-      toast('MOD 自动装入失败，请重新拖入 MOD', 'error')
-    }
+    modRequest.value = { target: v, input: { paths: filePaths } }
   } catch (e) {
     toast('MOD 自动装入失败，请重新拖入：' + errText(e), 'error')
   }
@@ -272,8 +248,8 @@ const modCompatOf = (m: ModInfo): string[] => matchMap.value[m.filePath] ?? []
               <span v-else class="mod-icon mod-icon-empty">{{ (m.name || m.fileName).charAt(0) }}</span>
               <div class="mod-meta">
                 <div class="mod-title-row">
-                  <span class="mod-name">{{ m.name || m.fileName }}</span>
-                  <span v-if="m.version" class="muted">v{{ m.version }}</span>
+                  <MarqueeText class="mod-name" :text="m.name || m.fileName"/>
+                  <MarqueeText v-if="m.version" class="muted" :text="'v' + m.version"/>
                   <span v-if="m.loader" class="tag">{{ LOADER_TAG[m.loader] }}</span>
                 </div>
                 <div class="mod-sub muted">
@@ -334,7 +310,14 @@ const modCompatOf = (m: ModInfo): string[] => matchMap.value[m.filePath] ?? []
           <!-- 分支：全无匹配 -->
           <template v-else-if="branch === 'none'">
             <div class="none-hint">
-              <p>当前没有可装入这些 MOD 的游戏版本（需要与 MOD 加载器一致且 MC 版本在支持范围内）。</p>
+              <p>{{ scanErrors.length ? '尚不能确认所有本地实例的兼容性，请先处理扫描错误。' : `已扫描全部注册目录中的 ${allTargets.length} 个实例，未找到满足 MOD 元数据要求的版本。` }}</p>
+              <details v-if="allTargets.length">
+                <summary>查看逐个实例的匹配原因</summary>
+                <div v-for="item in mismatchDetails" :key="instanceKey(item.v)" class="mismatch-item">
+                  <strong>{{ displayVersionName(item.v) }}</strong><small>{{ item.v.folder }}</small>
+                  <p v-for="reason in item.reasons" :key="reason">{{ reason }}</p>
+                </div>
+              </details>
             </div>
             <div class="modal-actions">
               <button class="btn btn-ghost" @click="emit('close')">取消</button>
@@ -353,9 +336,14 @@ const modCompatOf = (m: ModInfo): string[] => matchMap.value[m.filePath] ?? []
       </div>
     </div>
   </Teleport>
+  <ModInstallDialog v-if="modRequest" :target="modRequest.target" :input="modRequest.input" @close="modRequest = null" @installed="modRequest = null; emit('close')"/>
 </template>
 
 <style scoped>
+.mismatch-item { padding: 10px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.mismatch-item small { display: block; opacity: .75; }
+.mismatch-item p { margin: 4px 0; }
+summary { cursor: pointer; padding: 8px 0; }
 .moddrop-modal {
   width: 520px;
   max-height: 82vh;

@@ -6,11 +6,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { copyRuntimeProfile } from './packRuntime'
+import { fmlArgument, missingNeoRuntime, reuseExternalRuntimeLibraries } from './externalRuntime'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
 import { BMCL_MAVEN_ROOT, downloadAll, downloadFile, fetchSignal } from './download'
 import { isCancelError } from './tasks'
 import { getSettings } from './settings'
-import { gameDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
+import { gameDir, librariesDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { ensureJava, scanJava } from './java'
 import {
   installVanilla,
@@ -138,18 +139,18 @@ async function pickJavaForInstaller(mcVersion: string, emit: ProgressEmit): Prom
 }
 
 /** 运行 forge/neoforge 安装器：全量输出落盘 installer.log；失败带最后 30 行；--mirror= 等号形式，失败降级去 mirror 重试；signal 取消时杀掉安装器进程 */
-function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?: AbortSignal): Promise<void> {
+function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?: AbortSignal, target = gameDir()): Promise<void> {
   const useMirror = getSettings().mirror === 'bmclapi'
 
   const buildArgs = (withMirror: boolean): string[] => {
-    const args = ['-jar', jar, '--installClient', gameDir()]
+    const args = ['-jar', jar, '--installClient', target]
     if (withMirror) args.push(`--mirror=${BMCL_MAVEN_ROOT}`)
     return args
   }
 
   const runOnce = (args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
-      const proc = spawn(javaPath, args, { windowsHide: true })
+      const proc = spawn(javaPath, args, { windowsHide: true, cwd: target })
       let cancelled = false
       let spawnError: Error | null = null
       const onAbort = () => {
@@ -187,7 +188,7 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
         if (tail.trim()) allLines.push(tail)
         // 全量输出落盘，便于排查
         try {
-          const logDir = path.join(gameDir(), 'kamucl-logs')
+          const logDir = path.join(target, 'kamucl-logs')
           fs.mkdirSync(logDir, { recursive: true })
           fs.writeFileSync(
             path.join(logDir, 'installer.log'),
@@ -213,6 +214,37 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
     emit({ stage: 'loader', progress: 0.7, text: '镜像模式安装失败，改用官方源重试…' })
     return runOnce(buildArgs(false))
   })
+}
+
+/** Regenerate only missing production libraries in a private installer workspace.
+ * The installer cannot rewrite a player's version JSON, options, mods or saves. */
+export async function repairNeoRuntime(json: VersionJson, clientJar: string, baseJson: VersionJson, emit: ProgressEmit): Promise<void> {
+  if (!missingNeoRuntime(json, librariesDir()).length) return
+  const neo = fmlArgument(json, '--fml.neoForgeVersion'), mc = fmlArgument(json, '--fml.mcVersion')
+  if (!neo || !mc) throw new Error('NeoForge 本体库缺失，且启动元数据不完整；请修复该实例的加载器配置')
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'kamucl-runtime-repair-'))
+  // Keep failed repair logs for diagnosis; successful workspaces contain no player data.
+  const jar = path.join(staging, 'installer.jar')
+  emit({ stage: 'repair', progress: 0, text: `修复 NeoForge ${neo} 本体库（不修改实例内容）…` })
+  const vanilla = path.join(staging, 'versions', mc)
+  fs.mkdirSync(vanilla, { recursive: true })
+  fs.copyFileSync(clientJar, path.join(vanilla, mc + '.jar'))
+  fs.writeFileSync(path.join(vanilla, mc + '.json'), JSON.stringify({ ...baseJson, id: mc }))
+  fs.writeFileSync(path.join(staging, 'launcher_profiles.json'), JSON.stringify({ profiles: {}, settings: {}, version: 3 }))
+  const tasks = libraryTasks(json)
+  // Seed declared and generated libraries with copies, not directory junctions.
+  reuseExternalRuntimeLibraries(json, [path.dirname(librariesDir()), ...getSettings().folders.map(f => f.path)], path.join(staging, 'libraries'), tasks.map(t => path.join(staging, 'libraries', path.relative(librariesDir(), t.dest))))
+  try {
+    await downloadFile(`https://maven.neoforged.net/releases/net/neoforged/neoforge/${neo}/neoforge-${neo}-installer.jar`, jar)
+    const java = await ensureJava(baseJson, emit)
+    await runInstaller(java, jar, emit, undefined, staging)
+    reuseExternalRuntimeLibraries(json, [staging], librariesDir(), tasks.map(t => t.dest))
+    const missing = missingNeoRuntime(json, librariesDir())
+    if (missing.length) throw new Error(`安装器未生成必要本体库：${missing.join('、')}`)
+    fs.rmSync(staging, { recursive: true, force: true })
+  } catch (error) {
+    throw new Error(`NeoForge 本体修复失败（未改动存档），诊断目录：${staging}\n${error instanceof Error ? error.message : error}`)
+  }
 }
 
 /** 安装完成后扫描 versions/ 找安装器生成的版本目录名 */
@@ -375,6 +407,7 @@ export async function installLoader(
     emit({ stage: 'loader', progress: 0.92, text: '校验依赖库完整性…' })
     const profileJson = readVersionJson(id)
     const libTasks = libraryTasks(profileJson)
+    reuseExternalRuntimeLibraries(profileJson, [gameDir(), ...getSettings().folders.map(f => f.path)], librariesDir(), libTasks.map(t => t.dest))
     const missing = libTasks.filter((t) => !fs.existsSync(t.dest))
     if (missing.length) {
       emit({ stage: 'loader', progress: 0.94, text: `补全 ${missing.length} 个缺失依赖库…` })

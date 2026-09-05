@@ -27,15 +27,17 @@ export function resolveInstanceMetadata(json: VersionJson, readParent: (id: stri
   }
   const libraries = chain.flatMap(j => (j.libraries ?? []).map(l => (l.name ?? '').split(':')))
   const lib = (group: string, artifact: string) => libraries.find(l => l[0] === group && l[1] === artifact)?.[2]
-  const detected = lib('net.neoforged', 'neoforge') ? 'neoforge' : lib('net.minecraftforge', 'forge') ? 'forge'
+  // Modern third-party profiles often contain only fmlloader / FML arguments,
+  // not the forge:forge artifact. BootstrapLauncher itself is loader-neutral.
+  const detected = arg('--fml.neoForgeVersion') || lib('net.neoforged', 'neoforge') || lib('net.neoforged.fancymodloader', 'loader') ? 'neoforge' : arg('--fml.forgeVersion') || lib('net.minecraftforge', 'forge') || lib('net.minecraftforge', 'fmlloader') ? 'forge'
     : lib('net.fabricmc', 'fabric-loader') ? 'fabric' : lib('org.quiltmc', 'quilt-loader') ? 'quilt' : undefined
   const main = chain.map(j => j.mainClass ?? '').join(' ').toLowerCase()
-  const loader = normalizeLoader(chain.find(j => j._loader)?._loader) ?? detected ?? (main.includes('neoforged') ? 'neoforge' : main.includes('minecraftforge') ? 'forge' : main.includes('fabricmc') ? 'fabric' : main.includes('quiltmc') ? 'quilt' : undefined)
-  const forge = lib('net.minecraftforge', 'forge')
+  const loader = detected ?? normalizeLoader(chain.find(j => j._loader)?._loader) ?? (main.includes('neoforged') ? 'neoforge' : main.includes('minecraftforge') ? 'forge' : main.includes('fabricmc') ? 'fabric' : main.includes('quiltmc') ? 'quilt' : undefined)
+  const forge = lib('net.minecraftforge', 'forge') ?? lib('net.minecraftforge', 'fmlloader')
   const base = chain.at(-1)!
   // Mojang's id in a vanilla profile is metadata; an opaque flattened modpack id is not an MC version.
   const vanillaId = !base.inheritsFrom && (!loader || chain.length > 1) ? base.id : undefined
-  const mcVersion = chain.find(j => j._mcVersion)?._mcVersion ?? arg('--fml.mcVersion') ?? chain.find(j => j.clientVersion)?.clientVersion ?? lib('net.fabricmc', 'intermediary') ?? lib('org.quiltmc', 'hashed') ?? forge?.split('-')[0] ?? vanillaId ?? '未知'
-  const rawLoader = chain.find(j => j._loaderVersion)?._loaderVersion ?? (loader === 'neoforge' ? lib('net.neoforged', 'neoforge') ?? arg('--fml.neoForgeVersion') : loader === 'forge' ? forge ?? arg('--fml.forgeVersion') : loader === 'fabric' ? lib('net.fabricmc', 'fabric-loader') : loader === 'quilt' ? lib('org.quiltmc', 'quilt-loader') : undefined)
+  const mcVersion = arg('--fml.mcVersion') ?? chain.find(j => j.clientVersion)?.clientVersion ?? lib('net.fabricmc', 'intermediary') ?? lib('org.quiltmc', 'hashed') ?? forge?.split('-')[0] ?? chain.find(j => j._mcVersion)?._mcVersion ?? vanillaId ?? '未知'
+  const rawLoader = (loader === 'neoforge' ? arg('--fml.neoForgeVersion') ?? lib('net.neoforged', 'neoforge') : loader === 'forge' ? arg('--fml.forgeVersion') ?? forge : loader === 'fabric' ? lib('net.fabricmc', 'fabric-loader') : loader === 'quilt' ? lib('org.quiltmc', 'quilt-loader') : undefined) ?? chain.find(j => j._loaderVersion)?._loaderVersion
   return { mcVersion, loader, loaderVersion: rawLoader ? normalizeLoaderVersion(rawLoader, loader, mcVersion) : undefined, broken }
 }

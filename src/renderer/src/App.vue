@@ -206,6 +206,7 @@ function onDragEnter(e: DragEvent) {
   e.preventDefault()
   dragDepth++
   dragActive.value = showsImportOverlay(Array.from(e.dataTransfer?.types ?? []), internalDrag)
+  if (dragActive.value) { dlOpen.value = false; noticeOpen.value = false }
 }
 
 function onDragOver(e: DragEvent) {
@@ -226,6 +227,7 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   dragDepth = 0
   dragActive.value = false
+  dlOpen.value = false; noticeOpen.value = false
   const dropped = Array.from(e.dataTransfer?.files ?? [])
   if (!dropped.length) {
     const text =
@@ -640,6 +642,7 @@ const CUSTOM_VARS = [
   '--bg',
   '--bg-2',
   '--card',
+  '--card-solid',
   '--card-2',
   '--text',
   '--text-dim',
@@ -705,6 +708,7 @@ function applyCustomVars(custom: CustomTheme, theme: ThemeName) {
   st.setProperty('--on-accent', hexLuminance(accent) > 0.6 ? '#1a1208' : '#ffffff')
   st.setProperty('--bg', colors.bg)
   st.setProperty('--card', `color-mix(in srgb, ${colors.card} ${cardOpacity}%, transparent)`)
+  st.setProperty('--card-solid', colors.card)
   st.setProperty('--card-2', `color-mix(in srgb, ${colors.card} ${raisedOpacity}%, transparent)`)
   st.setProperty('--text', colors.text)
   st.setProperty('--text-dim', colors.textDim)
@@ -805,6 +809,14 @@ const offs: Array<() => void> = []
 onMounted(async () => {
   applyTheme(store.settings?.theme, store.settings?.custom)
   window.addEventListener('keydown', onEditKeydown)
+  // Teleports are outside .shell; capture above their masks without accepting
+  // internal text/image drags or invoking the import handler twice.
+  const dragStart = () => { internalDrag = true }
+  const dragEvents = { dragenter: onDragEnter, dragover: onDragOver, dragleave: onDragLeave, drop: onDrop, dragstart: dragStart, dragend: endDrag }
+  for (const [type, listener] of Object.entries(dragEvents)) {
+    window.addEventListener(type, listener as EventListener, true)
+    offs.push(() => window.removeEventListener(type, listener as EventListener, true))
+  }
   // 注册全局整合包导入入口（供首页快速操作等任意页面触发）
   store.importHandler = (filePath: string) => void openModpackImport(filePath)
   offs.push(
@@ -861,7 +873,7 @@ onMounted(async () => {
         launchFail.title = '游戏启动失败'
         launchFail.text = s.text
       } else if (s.status === 'exited') {
-        if (s.code) {
+        if (s.code && !s.intentionalRestart && !s.intentionalStop) {
           // 非 0 退出码 = 崩溃，同样提供日志导出
           launchFail.open = true
           launchFail.title = `游戏异常退出（代码 ${s.code}）`
@@ -929,12 +941,6 @@ onUnmounted(() => {
     class="shell"
     :class="{ 'edit-mode': store.editMode, 'has-bg': !!bgStyle }"
     @click.capture="onEditClick"
-    @dragenter="onDragEnter"
-    @dragstart.capture="internalDrag = true"
-    @dragend.capture="endDrag"
-    @dragover="onDragOver"
-    @dragleave="onDragLeave"
-    @drop="onDrop"
   >
     <!-- ============ 左侧边栏（宽度 --sidebar-w） ============ -->
     <aside class="sidebar" data-edit="sidebar">
@@ -1011,7 +1017,7 @@ onUnmounted(() => {
       <!-- 顶部栏（可拖拽） -->
       <header class="topbar" data-edit="topbar">
         <button
-          v-if="store.currentView === 'home'"
+          v-if="canGoBack && store.currentView !== 'home'"
           class="top-back"
           :disabled="!canGoBack"
           title="返回上一个页面"
@@ -1019,7 +1025,7 @@ onUnmounted(() => {
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
         </button>
-        <div v-else class="search-box">
+        <div class="search-box">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7" />
             <path d="m21 21-4.3-4.3" />
@@ -1028,6 +1034,7 @@ onUnmounted(() => {
             v-model="store.searchKeyword"
             class="search-input"
             placeholder="搜索游戏版本、模组、资源包…"
+            @keydown.enter="store.currentView = /^\d+(?:\.\d+)+$/.test(store.searchKeyword.trim()) ? 'game' : 'community'"
           />
         </div>
 
@@ -1158,7 +1165,9 @@ onUnmounted(() => {
       <!-- 内容区 -->
       <main class="content">
         <Transition name="fade" mode="out-in">
-          <component :is="currentComponent" :key="store.currentView" />
+          <div :key="store.currentView" class="route-view">
+            <component :is="currentComponent" />
+          </div>
         </Transition>
       </main>
     </div>
@@ -1750,11 +1759,17 @@ onUnmounted(() => {
   z-index: 9001;
   display: flex;
   flex-direction: column;
-  background: var(--card);
+  background: var(--card-solid, #202830);
+  background: color-mix(in srgb, var(--card-solid, #202830) 94%, transparent);
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  -webkit-app-region: no-drag;
+  isolation: isolate;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  max-width: calc(100vw - 32px);
 }
 .notice-head {
   display: flex;

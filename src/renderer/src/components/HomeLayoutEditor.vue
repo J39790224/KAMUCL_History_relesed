@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 图一固定布局下的个性化背景与启动卡图片管理。 */
 import { computed, ref } from 'vue'
-import { carouselImages, MAX_CAROUSEL_IMAGES } from '@shared/appearancePolicy'
+import { carouselImages, carouselDuration, MAX_CAROUSEL_IMAGES } from '@shared/appearancePolicy'
 import { updateSettings } from '../settingsUpdates'
 import {
   errText,
@@ -47,6 +47,12 @@ function moveImage(index: number, direction: number) {
   if (target < 0 || target >= next.length) return
   ;[next[index], next[target]] = [next[target], next[index]]
   changeImages(next)
+}
+function setDuration(value: string, image?: string) {
+  if (!store.settings) return
+  const current = store.settings.launchThumbnail
+  const seconds = carouselDuration(Number(value))
+  save({ launchThumbnail: image ? { ...current, durations: { ...current.durations, [image]: seconds } } : { ...current, intervalSeconds: seconds } })
 }
 
 function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
@@ -266,11 +272,13 @@ function setLaunchFit(fit: ImageFit) {
       <li v-for="(image, index) in images" :key="image">
         <img :src="managedImageUrl(image)" :alt="`第 ${index + 1} 张`" />
         <span>{{ index + 1 }}</span>
+        <label class="slide-duration">停留 <input type="number" min="1" max="120" step="0.5" :aria-label="`第 ${index + 1} 张停留秒数`" :value="carouselDuration(store.settings?.launchThumbnail.durations?.[image] ?? store.settings?.launchThumbnail.intervalSeconds)" @change="setDuration(($event.target as HTMLInputElement).value, image)" /> 秒</label>
         <button class="btn btn-ghost btn-sm" :disabled="index === 0" title="向前移动" @click="moveImage(index, -1)">↑</button>
         <button class="btn btn-ghost btn-sm" :disabled="index === images.length - 1" title="向后移动" @click="moveImage(index, 1)">↓</button>
         <button class="btn btn-ghost btn-sm" @click="changeImages(images.filter((_, i) => i !== index))">移除</button>
       </li>
     </ol>
+    <div class="bg-row"><label for="carousel-default-duration">默认停留时间</label><input id="carousel-default-duration" type="number" min="1" max="120" step="0.5" style="width: 90px" :value="carouselDuration(store.settings?.launchThumbnail.intervalSeconds)" @change="setDuration(($event.target as HTMLInputElement).value)" /><span class="muted">秒 · 用于内置轮播及未单独设置的图片</span></div>
   </div>
 </template>
 
@@ -291,6 +299,9 @@ function setLaunchFit(fit: ImageFit) {
 .capsule.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
 .carousel-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: 10px; }
 .carousel-list li { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.carousel-list li { flex-wrap: wrap; }
+.slide-duration { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.slide-duration input { width: 65px; min-height: 32px; }
 .carousel-list img { width: 64px; height: 40px; object-fit: cover; border-radius: 5px; }
 .carousel-list span { flex: 1; }
 .carousel-list button { min-width: 36px; min-height: 36px; }

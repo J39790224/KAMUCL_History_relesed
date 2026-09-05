@@ -3,6 +3,12 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { createCommandWorld } from './commandWorld'
+import { requestGameWindowClose } from './gracefulClose'
+import { reuseExternalRuntimeLibraries } from './externalRuntime'
+import { repairNeoRuntime } from './loaders'
+import { pathIdentity } from './folderPaths'
 import { spawn } from 'node:child_process'
 import { GameSession } from './gameSession'
 import { app, screen } from 'electron'
@@ -22,6 +28,7 @@ import {
   versionJsonPath,
   virtualLegacyDir
 } from './paths'
+import { withGameFolder } from './paths'
 import {
   clientJarPath,
   installVanilla,
@@ -44,7 +51,46 @@ export type SendLog = (line: string) => void
 export type OnState = (s: LaunchState) => void
 
 const gameSession = new GameSession()
-export const isBusy = () => gameSession.busy
+export const isBusy = () => gameSession.busy || !!restartPending
+interface LaunchOptions { createCommandWorld?: boolean; singleplayerWorld?: string }
+interface Invocation { versionId: string; folder: string; emit: ProgressEmit; sendLog: SendLog; onState: OnState; serverAddress?: string; options: LaunchOptions }
+let invocation: Invocation | undefined
+let restartPending: { invocation: Invocation; sessionToken?: symbol; forceToken?: string; waiting: boolean } | undefined
+
+export function cancelRestart(): void {
+  if (restartPending?.waiting) throw new Error('仍在等待游戏正常退出，请稍后取消')
+  restartPending = undefined
+}
+
+/** Holds ownership across close -> relaunch so another click cannot race into the gap. */
+export async function restartGame(versionId: string, folder: string, forceToken?: string): Promise<{ requiresForce: boolean; forceToken?: string }> {
+  if (forceToken) {
+    if (!restartPending || restartPending.waiting || restartPending.forceToken !== forceToken || restartPending.invocation.versionId !== versionId || pathIdentity(restartPending.invocation.folder) !== pathIdentity(folder)) throw new Error('重启确认已失效，请重新请求')
+    if (gameSession.busy && gameSession.token !== restartPending.sessionToken) throw new Error('正在运行的会话已变化，未结束任何进程')
+    restartPending.waiting = true
+    try { if (gameSession.busy) await gameSession.stop() }
+    catch (error) { restartPending = undefined; throw error }
+  } else {
+    if (restartPending) throw new Error('已有重启请求正在处理')
+    if (!invocation || !gameSession.busy || invocation.versionId !== versionId || pathIdentity(invocation.folder) !== pathIdentity(folder)) throw new Error('此实例当前未运行；请选择启动实例')
+    restartPending = { invocation, sessionToken: gameSession.token, waiting: true }
+    try { await gameSession.stopGracefully(requestGameWindowClose) }
+    catch {
+      restartPending.waiting = false
+      restartPending.forceToken = crypto.randomUUID()
+      return { requiresForce: true, forceToken: restartPending.forceToken }
+    }
+  }
+  const previous = restartPending.invocation
+  try {
+    previous.onState({ status: 'launching', text: '游戏已确认退出，正在重新启动同一实例…' })
+    const token = gameSession.reserve(previous.versionId)
+    try {
+      await withGameFolder(previous.folder, () => launchOwned(previous.versionId, previous.emit, previous.sendLog, previous.onState, previous.serverAddress, token, { ...previous.options, createCommandWorld: false }))
+    } catch (error) { gameSession.release(token); previous.onState({ status: 'error', text: error instanceof Error ? error.message : String(error) }); throw error }
+    return { requiresForce: false }
+  } finally { restartPending = undefined }
+}
 
 /** 当前正在运行的游戏版本 id（无则 null），供重命名等写操作前校验 */
 export function getRunningVersionId(): string | null {
@@ -82,7 +128,10 @@ export function recordLaunchPreparationError(versionId: string, message: string)
 }
 
 /** 终止当前游戏进程 */
-export const killGame = (): Promise<void> => gameSession.stop()
+export const killGame = (forceToken?: string) => {
+  if (restartPending) throw new Error('正在处理重启，请先完成或取消重启请求')
+  return gameSession.requestStop(requestGameWindowClose, forceToken)
+}
 
 /**
  * 沿 inheritsFrom 读取版本链并合并：
@@ -154,16 +203,19 @@ export async function launch(
   emit: ProgressEmit,
   sendLog: SendLog,
   onState: OnState,
-  serverAddress?: string
+  serverAddress?: string,
+  options: LaunchOptions = {}
 ): Promise<void> {
+  if (restartPending) throw new Error('正在重启游戏，请稍后再启动')
   const token = gameSession.reserve(versionId)
-  try { await launchOwned(versionId, emit, sendLog, onState, serverAddress, token) }
+  invocation = { versionId, folder: gameDir(), emit, sendLog, onState, serverAddress, options: { ...options } }
+  try { await launchOwned(versionId, emit, sendLog, onState, serverAddress, token, invocation.options) }
   catch (error) { gameSession.release(token); throw error }
 }
 
 async function launchOwned(
   versionId: string, emit: ProgressEmit, sendLog: SendLog, onState: OnState,
-  serverAddress: string | undefined, token: symbol
+  serverAddress: string | undefined, token: symbol, options: LaunchOptions = {}
 ): Promise<void> {
   const settings = getSettings()
 
@@ -260,6 +312,9 @@ async function launchOwned(
 
   // a1) 依赖库完整性：缺失则自动补下（含 fabric/quilt 的 maven 坐标库）
   const libTasks = libraryTasks(merged)
+  const reused = reuseExternalRuntimeLibraries(merged, settings.folders.map(f => f.path), librariesDir(), libTasks.map(t => t.dest))
+  if (reused) log(`[KAMUCL] 已复用注册目录中 ${reused} 个运行库文件`)
+  await repairNeoRuntime(merged, clientJar, readVersionJson(baseId), emit)
   const missingLibs = libTasks.filter((t) => !fs.existsSync(t.dest))
   if (missingLibs.length) {
     emit({
@@ -404,6 +459,15 @@ async function launchOwned(
 
   // e) JVM 参数
   const mem = Math.max(512, settings.memoryMB || 4096)
+  // forge ignoreList 需精确匹配 -cp 上的原版客户端 jar 文件名：实例自定义命名时
+  // ${version_name}.jar 与实际 clientJar 不一致，原版 jar 会被模块系统当作自动模块
+  // 与 fml 合成的 minecraft 模块重复导出包（ResolutionException 闪退），补写真实文件名
+  const clientJarName = path.basename(clientJar)
+  const jsonJvmArgs = expandEntries(merged.arguments?.jvm).map((a) =>
+    a.startsWith('-DignoreList=') && !a.split(',').some((x) => x.trim() === clientJarName)
+      ? `${a},${clientJarName}`
+      : a
+  )
   const jvmArgs: string[] = [
     `-Xmx${mem}M`,
     `-Xms${Math.min(mem, 1024)}M`,
@@ -418,7 +482,7 @@ async function launchOwned(
     // 外置登录 javaagent 与预取元数据必须位于主类之前。
     ...externalAuthArgs,
     // 版本 json 自带的 JVM 参数（forge 的 -p ${classpath} 等依赖它）
-    ...expandEntries(merged.arguments?.jvm),
+    ...jsonJvmArgs,
     ...splitArgs(settings.jvmArgs)
   ]
 
@@ -437,7 +501,15 @@ async function launchOwned(
 
   // e3) 官方 Quick Play 自 Java 1.20 起支持；旧版只启动正确实例，不注入未知参数。
   const minecraftVersion = instanceConfig._mcVersion ?? baseId
-  if (serverAddress && supportsQuickPlayMultiplayer(minecraftVersion)) {
+  if (options.createCommandWorld) {
+    const world = createCommandWorld(effectiveGameDir, clientJar)
+    options.singleplayerWorld = world.id
+    log(`[KAMUCL] 已新建允许命令的创造测试世界：${world.path}`)
+  }
+  if (options.singleplayerWorld) {
+    if (!fs.existsSync(path.join(effectiveGameDir, 'saves', options.singleplayerWorld, 'level.dat'))) throw new Error('待进入的测试世界不存在，未创建重复世界')
+    gameArgs.push('--quickPlaySingleplayer', options.singleplayerWorld)
+  } else if (serverAddress && supportsQuickPlayMultiplayer(minecraftVersion)) {
     gameArgs.push('--quickPlayMultiplayer', serverAddress)
   } else if (serverAddress) {
     log(`[KAMUCL] Minecraft ${minecraftVersion} 不支持 Quick Play，已仅启动实例`)
@@ -523,7 +595,7 @@ async function launchOwned(
       lastLaunch.exitCode = code
       lastLaunch.endedAt = new Date().toISOString()
     }
-    onState({ status: 'exited', code: code ?? 0, text: `游戏已退出 (code=${code ?? 0})` })
+    onState({ status: 'exited', code: code ?? 0, intentionalRestart: restartPending?.sessionToken === token, intentionalStop: gameSession.stopIntentToken === token, text: `游戏已退出 (code=${code ?? 0})` })
   })
   } finally {
     if (!spawned) { logStream?.end(); stdoutStream?.end(); stderrStream?.end() }

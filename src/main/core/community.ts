@@ -19,6 +19,7 @@ import { downloadFile } from './download'
 import { readVersionJson } from './versions'
 import { instanceDirectoryState } from './instances'
 import { MOD_ZH, ZH_TO_SLUGS } from './community-zh'
+import { matchesCommunityFilter } from '../../shared/communityPolicy'
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
@@ -121,6 +122,8 @@ interface MrVersionFile {
 }
 
 interface MrVersion {
+  project_id?: string
+  dependencies?: Array<{ project_id?: string; version_id?: string; dependency_type: string }>
   id?: string
   version_number?: string
   version_type?: string
@@ -130,8 +133,15 @@ interface MrVersion {
   files?: MrVersionFile[]
 }
 
-async function mrFiles(projectId: string): Promise<CommunityFile[]> {
-  const arr = (await mrFetch(`/project/${encodeURIComponent(projectId)}/version`)) as MrVersion[]
+async function mrFiles(projectId: string, filter?: { mcVersion?: string; loader?: LoaderName | '' }): Promise<CommunityFile[]> {
+  const query = new URLSearchParams()
+  if (filter?.mcVersion) query.set('game_versions', JSON.stringify([filter.mcVersion]))
+  if (filter?.loader) query.set('loaders', JSON.stringify([filter.loader]))
+  const arr = (await mrFetch(`/project/${encodeURIComponent(projectId)}/version?${query}`)) as MrVersion[]
+  return mapMrVersions(arr, projectId)
+}
+
+function mapMrVersions(arr: MrVersion[], projectId?: string): CommunityFile[] {
   const out: CommunityFile[] = []
   for (const v of arr ?? []) {
     const files = v.files ?? []
@@ -139,7 +149,10 @@ async function mrFiles(projectId: string): Promise<CommunityFile[]> {
     if (!f?.url || !f.filename) continue
     const sha1 = f.hashes?.sha1
     out.push({
-      fileId: sha1 ? sha1.slice(0, 8) : String(v.id ?? f.filename),
+      source: 'modrinth',
+      projectId: v.project_id ?? projectId,
+      dependencies: v.dependencies?.map(d => ({ projectId: d.project_id ?? undefined, fileId: d.version_id ?? undefined, required: d.dependency_type === 'required' })),
+      fileId: String(v.id ?? f.filename),
       fileName: f.filename,
       version: v.version_number ?? f.filename,
       url: f.url,
@@ -223,6 +236,8 @@ async function cfSearch(q: CommunityQuery): Promise<CommunityResult[]> {
 }
 
 interface CfFile {
+  modId?: number
+  dependencies?: Array<{ modId: number; relationType: number }>
   id?: number
   fileName?: string
   displayName?: string
@@ -241,10 +256,20 @@ async function cfFiles(
   const params = new URLSearchParams({ pageSize: '50' })
   if (filter?.mcVersion) params.set('gameVersion', filter.mcVersion)
   if (filter?.loader) params.set('modLoaderType', String(CF_LOADER_TYPE[filter.loader]))
-  const data = (await cfFetch(
-    `/mods/${encodeURIComponent(projectId)}/files?${params.toString()}`
-  )) as { data?: CfFile[] }
-  return (data.data ?? []).map((f) => {
+  const all: CfFile[] = []
+  for (let index = 0; ; index += 50) {
+    params.set('index', String(index))
+    const data = await cfFetch(`/mods/${encodeURIComponent(projectId)}/files?${params}`) as { data?: CfFile[]; pagination?: { totalCount: number } }
+    const page = data.data ?? []
+    all.push(...page)
+    if (page.length < 50 || all.length >= (data.pagination?.totalCount ?? Infinity)) break
+    if (index >= 9950) throw new Error('项目版本过多，请先选择 Minecraft 版本 / Loader 后重试')
+  }
+  return mapCfFiles(all, projectId)
+}
+
+function mapCfFiles(files: CfFile[], projectId: string): CommunityFile[] {
+  return files.map((f) => {
     const id = String(f.id ?? '')
     const numId = Number(f.id ?? 0)
     const gameVersions = f.gameVersions ?? []
@@ -254,6 +279,9 @@ async function cfFiles(
         ? `https://edge.forgecdn.net/files/${Math.floor(numId / 1000)}/${numId % 1000}/${encodeURIComponent(f.fileName)}`
         : undefined
     return {
+      source: 'curseforge' as const,
+      projectId: String(f.modId ?? projectId),
+      dependencies: f.dependencies?.map(d => ({ projectId: String(d.modId), required: d.relationType === 3 })),
       fileId: id,
       fileName: f.fileName ?? id,
       version: f.displayName ?? f.fileName ?? id,
@@ -389,8 +417,17 @@ export async function communityFiles(
   filter?: { mcVersion?: string; loader?: LoaderName | '' }
 ): Promise<CommunityFile[]> {
   const id = String(projectId ?? '')
-  if (source === 'modrinth') return mrFiles(id)
-  return cfFiles(id, filter)
+  const files = source === 'modrinth' ? await mrFiles(id, filter) : await cfFiles(id, filter)
+  return files.filter(f => matchesCommunityFilter(f, filter ?? {})).sort((a, b) => b.date.localeCompare(a.date))
+}
+
+/** Exact repository identities are retained throughout dependency resolution. */
+export async function communityExactFile(source: CommunitySource, projectId: string | undefined, fileId: string): Promise<CommunityFile> {
+  const files = source === 'modrinth'
+    ? mapMrVersions([await mrFetch(`/version/${encodeURIComponent(fileId)}`) as MrVersion], projectId)
+    : mapCfFiles([(await cfFetch(`/mods/${encodeURIComponent(projectId ?? '')}/files/${encodeURIComponent(fileId)}`) as { data: CfFile }).data], projectId ?? '')
+  if (!files[0]) throw new Error('依赖版本没有可下载文件')
+  return files[0]
 }
 
 // ---------------- 对外：下载 ----------------

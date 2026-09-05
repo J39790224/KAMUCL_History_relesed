@@ -25,6 +25,7 @@ import type {
   ModCrossDuplicate,
   ModDuplicateGroup,
   ModInfo,
+  ModInstallPlan,
   ModInstallResult,
   ModpackInfo,
   ModpackInstallRequest,
@@ -235,9 +236,11 @@ export const resolveDirectInvitation = (text: string) => invoke<import('@shared/
 export const prepareDirectJoin = (text: string, versionId: string, folder: string) => invoke<{versionId:string; folder:string; address:string; directJoin:boolean}>(IPC.directPrepareJoin, text, versionId, folder)
 
 // ---------------- 游戏 ----------------
-export const launchGame = (id: string, serverAddress?: string, folder?: string) =>
-  invoke<void>(IPC.gameLaunch, id, serverAddress, folder)
-export const killGame = () => invoke<void>(IPC.gameKill)
+export const launchGame = (id: string, serverAddress?: string, folder?: string, createCommandWorld = false) =>
+  invoke<void>(IPC.gameLaunch, id, serverAddress, folder, createCommandWorld)
+export const restartGame = (id: string, folder: string, forceToken?: string) => invoke<{ requiresForce: boolean; forceToken?: string }>(IPC.gameRestart, id, folder, forceToken)
+export const cancelGameRestart = () => invoke<void>(IPC.gameRestartCancel)
+export const killGame = (forceToken?: string) => invoke<{ requiresForce: boolean; forceToken?: string }>(IPC.gameKill, forceToken)
 
 // ---------------- 服务器 ----------------
 export const listServers = () => invoke<ServerEntry[]>(IPC.serversList)
@@ -255,6 +258,9 @@ export const prepareServerLaunch = (id: string, versionId?: string, folder?: str
 
 // ---------------- MOD 拖入即装 ----------------
 export const getModTargets = () => invoke<{ versions: InstalledVersion[]; errors: string[] }>(IPC.modsTargets)
+export const prepareModInstall = (target: { id: string; folder: string }, input: { paths?: string[]; file?: CommunityFile }) => invoke<ModInstallPlan>(IPC.modsPrepare, target, input)
+export const commitModInstall = (id: string, includeDependencies: boolean) => invoke<string>(IPC.modsCommit, id, includeDependencies)
+export const discardModInstall = (id: string) => invoke<void>(IPC.modsDiscard, id)
 export const parseMods = (paths: string[]) => invoke<ModInfo[]>(IPC.modsParse, paths)
 export const installMods = (files: string[], targetVersionId: string, folder?: string) =>
   invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId, folder)

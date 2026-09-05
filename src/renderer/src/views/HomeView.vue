@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { carouselImages } from '@shared/appearancePolicy'
+import { carouselImages, carouselDuration } from '@shared/appearancePolicy'
+import { CarouselPlayback } from '@shared/carouselPlayback'
 import {
   errText,
   exportLaunchLogs,
@@ -8,6 +9,8 @@ import {
   getSettings,
   killGame,
   launchGame,
+  restartGame,
+  cancelGameRestart,
   listJava,
   openDir,
   removeVersion,
@@ -112,25 +115,36 @@ const banners = computed(() => {
 })
 const bannerIndex = ref(0)
 let bannerTimer: ReturnType<typeof setInterval> | null = null
+let playback: CarouselPlayback | null = null
+let playbackKey = ''
+const bannerScope = computed(() => currentVersion.value?.thumbnail ? `instance:${currentVersion.value.folder}:${currentVersion.value.id}` : customBanners.value.length ? 'global' : 'builtin')
 
 function stopBannerTimer() {
+  if (playback && playbackKey) {
+    try { localStorage.setItem(playbackKey, JSON.stringify(playback.bookmark(Date.now()))) } catch { /* read-only storage */ }
+  }
   if (bannerTimer) clearInterval(bannerTimer)
   bannerTimer = null
 }
 
 function startBannerTimer() {
   stopBannerTimer()
+  playbackKey = 'kamucl.carousel.' + bannerScope.value
+  let saved
+  try { saved = JSON.parse(localStorage.getItem(playbackKey) ?? 'null') } catch { /* invalid bookmark */ }
+  const settings = store.settings?.launchThumbnail
+  playback = new CarouselPlayback(banners.value.map(item => ({ path: item.path, durationMs: 1000 * carouselDuration(settings?.durations?.[item.path] ?? settings?.intervalSeconds) })), Date.now(), saved)
+  bannerIndex.value = playback.index
   if (banners.value.length < 2) return
   bannerTimer = setInterval(() => {
-    bannerIndex.value = (bannerIndex.value + 1) % banners.value.length
-  }, 6500)
+    if (!document.hidden) bannerIndex.value = playback!.tick(Date.now())
+  }, 100)
 }
 
 watch(
-  () => customBanners.value.map(item => item.path).join('\n'),
+  () => JSON.stringify([bannerScope.value, customBanners.value.map(item => item.path), store.settings?.launchThumbnail.intervalSeconds, store.settings?.launchThumbnail.durations]),
   () => {
     failedBanners.value = new Set()
-    bannerIndex.value = 0
     startBannerTimer()
   }
 )
@@ -146,6 +160,7 @@ function onBannerError(item: { custom: boolean; path: string }) {
 // ---------------- 启动、设置与日志 ----------------
 const launching = computed(() => store.launchState?.status === 'launching')
 const stopping = ref(false)
+const stopConfirm = ref<string | null>(null)
 const running = computed(() => store.launchState?.status === 'running')
 const launchFailed = computed(
   () =>
@@ -172,7 +187,7 @@ const heroStatus = computed(() => {
   return { text: '就绪', tone: 'ready' }
 })
 
-async function startVersion(id: string) {
+async function startVersion(id: string, createCommandWorld = false) {
   if (!id) return
   selectedId.value = id
   if (launching.value || running.value) {
@@ -188,22 +203,41 @@ async function startVersion(id: string) {
   store.launchingFolder = store.settings?.activeFolder ?? store.settings?.gameDir ?? ''
   store.launchState = { status: 'launching', text: '正在准备启动…' }
   try {
-    await launchGame(id, undefined, currentVersion.value?.folder)
+    await launchGame(id, undefined, currentVersion.value?.folder, createCommandWorld)
   } catch (error) {
     store.launchState = { status: 'error', text: errText(error) }
     toast('启动失败：' + errText(error), 'error')
   }
 }
 
+const restartBusy = ref(false)
+const restartConfirm = ref<{ id: string; folder: string; token: string } | null>(null)
+async function quickRestart(version: InstalledVersion, token?: string) {
+  if (restartBusy.value) return
+  restartBusy.value = true; cardMenu.id = ''
+  try {
+    const folder = version.folder ?? store.settings?.activeFolder ?? ''
+    const result = await restartGame(version.id, folder, token)
+    restartConfirm.value = result.requiresForce ? { id: version.id, folder, token: result.forceToken! } : null
+    if (!result.requiresForce) toast('已确认退出并重新启动同一实例', 'success')
+  } catch (e) { toast('重启失败：' + errText(e), 'error'); restartConfirm.value = null }
+  finally { restartBusy.value = false }
+}
+async function cancelRestartPrompt() { await cancelGameRestart(); restartConfirm.value = null }
+
+async function stopCurrentGame(forceToken?: string) {
+  if (stopping.value || restartBusy.value) return
+  stopping.value = true
+  try {
+    const result = await killGame(forceToken)
+    stopConfirm.value = result.requiresForce ? result.forceToken! : null
+  } catch (error) { toast('结束游戏失败：' + errText(error), 'error'); stopConfirm.value = null }
+  finally { stopping.value = false }
+}
+watch(running, value => { if (!value) stopConfirm.value = null })
 async function onLaunchClick() {
   if (running.value) {
-    if (stopping.value) return
-    stopping.value = true
-    try {
-      await killGame()
-    } catch (error) {
-      toast('结束游戏失败：' + errText(error), 'error')
-    } finally { stopping.value = false }
+    await stopCurrentGame()
     return
   }
   if (!launching.value) await startVersion(selectedId.value)
@@ -263,7 +297,7 @@ const memoryText = computed(() => {
   return mb % 1024 === 0 ? `${mb / 1024} GB` : `${(mb / 1024).toFixed(1)} GB`
 })
 
-function loadJavaSummary() { return trackBootTask(loadJavaSummaryImpl) }
+function loadJavaSummary() { return trackBootTask(loadJavaSummaryImpl, 800) }
 async function loadJavaSummaryImpl() {
   try {
     javas.value = await listJava()
@@ -295,7 +329,7 @@ const skinVariant = computed<SkinVariant>(() =>
   currentSkin.value?.variant === 'slim' ? 'slim' : 'classic'
 )
 
-function reloadSkin(refresh = false) { return trackBootTask(() => reloadSkinImpl(refresh)) }
+function reloadSkin(refresh = false) { return trackBootTask(() => reloadSkinImpl(refresh), 800) }
 async function reloadSkinImpl(refresh = false) {
   const request = ++skinRequestToken
   skinError.value = ''
@@ -364,8 +398,8 @@ const cardMenuVersion = computed(() =>
 function openCardMenu(event: MouseEvent, id: string) {
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   cardMenu.id = cardMenu.id === id ? '' : id
-  cardMenu.top = Math.min(window.innerHeight - 150, bounds.bottom + 6)
-  cardMenu.left = Math.max(8, Math.min(window.innerWidth - 166, bounds.right - 154))
+  cardMenu.top = Math.max(8, Math.min(window.innerHeight - 272, bounds.bottom + 6))
+  cardMenu.left = Math.max(8, Math.min(window.innerWidth - 244, bounds.right - 232))
 }
 
 async function openVersionFolder(id: string) {
@@ -639,6 +673,8 @@ onUnmounted(() => {
         :style="{ top: cardMenu.top + 'px', left: cardMenu.left + 'px' }"
       >
         <button class="menu-item" @click="startVersion(cardMenuVersion.id); cardMenu.id = ''">启动实例</button>
+        <button class="menu-item" title="新建允许命令的创造模式测试世界并自动进入（Minecraft 1.20+）" :disabled="running || launching || restartBusy" @click="startVersion(cardMenuVersion.id, true); cardMenu.id = ''">启动并创建命令世界</button>
+        <button class="menu-item" :disabled="!running || restartBusy" @click="quickRestart(cardMenuVersion)">快速重启游戏</button>
         <button class="menu-item" @click="toggleFavorite(cardMenuVersion.id); cardMenu.id = ''">
           {{ isFavorite(cardMenuVersion.id) ? '取消收藏' : '收藏实例' }}
         </button>
@@ -676,6 +712,14 @@ onUnmounted(() => {
       @confirm="confirmRemove"
     />
   </div>
+  <Teleport to="body"><div v-if="stopConfirm" class="modal-mask" style="z-index: 10030"><section class="modal" role="dialog" aria-modal="true" aria-label="游戏正常退出超时">
+    <h3>游戏尚未确认退出</h3><p>已请求正常关闭，游戏可能仍在保存。建议继续等待或在游戏内退出；强制结束可能丢失未保存的进度。</p>
+    <div style="display: flex; gap: 12px; justify-content: flex-end"><button class="btn btn-ghost" :disabled="stopping" @click="stopConfirm = null">继续等待，不强制结束</button><button class="btn btn-danger" :disabled="stopping" @click="stopCurrentGame(stopConfirm!)">确认强制结束</button></div>
+  </section></div></Teleport>
+  <Teleport to="body"><div v-if="restartConfirm" class="modal-mask" style="z-index: 10030"><section class="modal" role="dialog" aria-modal="true" aria-label="正常退出超时">
+    <h3>正常退出等待超时</h3><p>Minecraft 可能仍在保存世界。建议在游戏内保存退出，然后重试。</p><p style="color: var(--danger)">强制结束可能丢失进度或损坏存档；只有你确认后才会执行。</p>
+    <div style="display: flex; gap: 12px; justify-content: flex-end"><button class="btn btn-ghost" :disabled="restartBusy" @click="cancelRestartPrompt">取消重启，继续等待</button><button class="btn btn-danger" :disabled="restartBusy" @click="quickRestart({ id: restartConfirm.id, folder: restartConfirm.folder } as InstalledVersion, restartConfirm.token)">确认强制结束并重启</button></div>
+  </section></div></Teleport>
 </template>
 
 <style scoped>
@@ -833,7 +877,9 @@ onUnmounted(() => {
 
 .menu-overlay { position: fixed; inset: 0; z-index: 8000; }
 .float-menu { position: fixed; z-index: 8001; max-height: 280px; overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--card) 94%, transparent); box-shadow: var(--shadow-lg); backdrop-filter: blur(24px); }
-.card-float-menu { width: 154px; }
+.card-float-menu { width: 232px; max-height: 340px; background: var(--card-solid, #192225); }
+.card-float-menu .menu-item { min-height: 40px; font-size: 13px; }
+.menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font-family: inherit; font-size: 12px; font-weight: 500; text-align: left; cursor: pointer; }
 .menu-item:hover, .menu-item.active { background: var(--accent-soft); color: var(--accent-2); }
 .menu-item.danger { color: var(--danger); }

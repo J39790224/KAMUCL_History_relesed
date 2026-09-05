@@ -6,7 +6,11 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const AdmZip = require('adm-zip')
-const qaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kamucl-regression-069-'))
+const qaVersion = require('../package.json').version
+const qaRoot = process.env.KAMUCL_QA_UI_ROOT || fs.mkdtempSync(path.join(os.tmpdir(), `kamucl-regression-${qaVersion}-`))
+if (path.dirname(path.resolve(qaRoot)).toLowerCase() !== path.resolve(os.tmpdir()).toLowerCase() || !path.basename(qaRoot).startsWith('kamucl-regression-')) throw new Error('QA root must be an owned temporary directory')
+const report = path.join(qaRoot, 'qa-ui.log')
+for (const name of ['log', 'error', 'info']) { const output = console[name].bind(console); console[name] = (...args) => { fs.appendFileSync(report, args.map(String).join(' ') + '\n'); output(...args) } }
 const previous = JSON.parse(fs.readFileSync(path.join(app.getPath('appData'), 'kamucl', 'settings.json'), 'utf8'))
 app.setPath('userData', qaRoot)
 const folder = path.join(qaRoot, 'games')
@@ -15,7 +19,7 @@ fs.mkdirSync(versionRoot, { recursive: true })
 const longId = 'Fabulously-Optimized-自定义整合包-长名称缩放验证-v13.4.0'
 for (const id of ['26.2', longId]) {
   const target = path.join(versionRoot, id)
-  fs.mkdirSync(target)
+  fs.mkdirSync(target, { recursive: true })
   const sourceRoot = previous.folders.map(item => path.join(item.path, 'versions', '26.2')).find(p => fs.existsSync(path.join(p, '26.2.json')) && fs.existsSync(path.join(p, '26.2.jar')))
   if (!sourceRoot) throw new Error('Need an already installed vanilla 26.2 for offline runtime smoke test')
   const profile = JSON.parse(fs.readFileSync(path.join(sourceRoot, '26.2.json'), 'utf8'))
@@ -23,7 +27,7 @@ for (const id of ['26.2', longId]) {
   fs.copyFileSync(path.join(sourceRoot, '26.2.jar'), path.join(target, `${id}.jar`))
 }
 const defaultFolder = previous.folders.find(item => item.isDefault)
-fs.writeFileSync(path.join(qaRoot, 'settings.json'), JSON.stringify({
+if (!fs.existsSync(path.join(qaRoot, 'settings.json'))) fs.writeFileSync(path.join(qaRoot, 'settings.json'), JSON.stringify({
   theme: 'transparent', folders: [defaultFolder, { path: folder, name: '隔离验收目录', isDefault: false }],
   gameDir: folder, activeFolder: folder, javaAuto: true, memoryMB: 4096, lastVersion: '26.2',
   resolution: { width: 854, height: 480, mode: 'windowed', fullscreen: false }, closeAfterLaunch: false
@@ -53,10 +57,11 @@ dialog.showOpenDialog = async (...args) => {
 }
 console.log('QA_ROOT=' + qaRoot)
 app.on('browser-window-created', (_event, window) => {
+  window.webContents.on('console-message', (_event, level, message, line, source) => console.log('QA_CONSOLE', level, message, line, source))
   if (window.getTitle().includes('正在启动')) return
   if (process.argv.includes('--qa-small')) window.setSize(960, 620)
   window.on('show', () => {
-    window.setTitle('KAMUCL 0.6.9 · 回归验收')
+    window.setTitle(`KAMUCL ${qaVersion} · 回归验收`)
     window.webContents.executeJavaScript(`JSON.stringify({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,overflow:document.documentElement.scrollWidth>innerWidth,hero:document.querySelector('.hero')?.getBoundingClientRect().toJSON(),instances:[...document.querySelectorAll('.instance-copy strong')].map(e=>({text:e.textContent,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}))})`).then(value=>console.log('QA_LAYOUT='+value))
   })
   window.webContents.on('before-input-event', (_event, input) => {

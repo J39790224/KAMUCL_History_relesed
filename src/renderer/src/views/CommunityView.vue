@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { communityDownload, communityFiles, communitySearch, errText, getManifest } from '../api'
+import { communityDownload, communityFiles, communitySearch, errText, getManifest, getModTargets } from '../api'
 import { store, toast } from '../store'
+import { instanceKey } from '@shared/modCompatibility'
+import { communityFileMatchesInstance } from '@shared/communityPolicy'
+import MarqueeText from '../components/MarqueeText.vue'
+import ModInstallDialog from '../components/ModInstallDialog.vue'
 import type {
   CommunityFile,
   CommunityKind,
@@ -9,6 +13,10 @@ import type {
   CommunitySource,
   LoaderName
 } from '@shared/types'
+import type { InstalledVersion } from '@shared/types'
+const currentInstance = computed(() => store.installed.find(v => v.id === localStorage.getItem('kamucl.lastVersion')) ?? store.installed[0])
+const allTargets = ref<InstalledVersion[]>([])
+const modRequest = ref<{ target: InstalledVersion; input: { file: CommunityFile } } | null>(null)
 
 // ---------------- 搜索条件 ----------------
 const PAGE_SIZE = 20
@@ -77,8 +85,8 @@ const query = reactive({
   keyword: '',
   kind: 'mod' as CommunityKind,
   source: 'all' as 'all' | CommunitySource,
-  mcVersion: '',
-  loader: '' as '' | LoaderName,
+  mcVersion: currentInstance.value?.mcVersion === '未知' ? '' : currentInstance.value?.mcVersion ?? '',
+  loader: currentInstance.value?.loader ?? '' as '' | LoaderName,
   sort: 'relevance' as 'relevance' | 'downloads' | 'newest'
 })
 
@@ -98,8 +106,10 @@ const loadError = ref('')
 const offset = ref(0)
 const hasMore = ref(false)
 
+let searchGeneration = 0
 async function doSearch(reset: boolean) {
-  if (loading.value || loadingMore.value) return
+  if (!reset && (loading.value || loadingMore.value)) return
+  const generation = ++searchGeneration
   if (reset) {
     offset.value = 0
     results.value = []
@@ -120,21 +130,32 @@ async function doSearch(reset: boolean) {
       offset: offset.value,
       limit: PAGE_SIZE
     })
+    if (generation !== searchGeneration) return
     if (first) results.value = list
     else results.value = [...results.value, ...list]
     hasMore.value = list.length >= PAGE_SIZE
     offset.value += list.length
   } catch (e) {
+    if (generation !== searchGeneration) return
     loadError.value = errText(e)
     if (!first) toast('加载失败：' + loadError.value, 'error')
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    if (generation === searchGeneration) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
 const onSearch = () => void doSearch(true)
 const onLoadMore = () => void doSearch(false)
+function useCurrentInstance() {
+  query.mcVersion = currentInstance.value?.mcVersion === '未知' ? '' : currentInstance.value?.mcVersion ?? ''
+  query.loader = currentInstance.value?.loader ?? ''
+  versionInput.value = query.mcVersion
+  onFilterChange()
+}
+versionInput.value = query.mcVersion
 
 /** 切换条件后自动重新搜索 */
 function onFilterChange() {
@@ -152,7 +173,7 @@ function onReset() {
   void doSearch(true)
 }
 
-onMounted(() => void doSearch(true))
+onMounted(() => { query.keyword = store.searchKeyword.trim(); void doSearch(true) })
 
 // ---------------- 顶栏搜索联动：顶栏输入防抖驱动社区搜索 ----------------
 let topSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -212,6 +233,8 @@ const modal = reactive({
   filesError: '',
   fileId: '',
   versionId: '',
+  mcVersion: '',
+  loader: '' as LoaderName | '',
   downloading: false
 })
 
@@ -219,6 +242,27 @@ const isModpack = computed(() => query.kind === 'modpack')
 const selectedFile = computed(
   () => modal.files.find((f) => f.fileId === modal.fileId) ?? null
 )
+const targetOptions = computed(() => query.kind === 'mod' ? allTargets.value.filter(v => selectedFile.value && communityFileMatchesInstance(selectedFile.value, v)) : store.installed)
+watch(targetOptions, options => {
+  if (!options.some(v => instanceKey(v) === modal.versionId)) {
+    const selected = options.find(v => v.id === currentInstance.value?.id && v.folder === currentInstance.value?.folder) ?? options[0]
+    modal.versionId = selected ? instanceKey(selected) : ''
+  }
+})
+let fileGeneration = 0
+async function loadFiles() {
+  if (!modal.item) return
+  const generation = ++fileGeneration, item = modal.item
+  modal.loadingFiles = true; modal.filesError = ''; modal.files = []; modal.fileId = ''
+  try {
+    const files = await communityFiles(item.source, item.projectId, { mcVersion: modal.mcVersion || undefined, loader: modal.loader || undefined })
+    if (generation !== fileGeneration || !modal.open) return
+    modal.files = files
+    modal.fileId = (files.find(f => f.releaseType === 'release') ?? files[0])?.fileId ?? ''
+    if (!files.length) modal.filesError = '当前 Minecraft / Loader 条件下没有文件，可手动调整筛选。'
+  } catch (e) { if (generation === fileGeneration) modal.filesError = '获取文件列表失败：' + errText(e) }
+  finally { if (generation === fileGeneration) modal.loadingFiles = false }
+}
 
 async function openDownload(item: CommunityResult) {
   modal.open = true
@@ -227,18 +271,15 @@ async function openDownload(item: CommunityResult) {
   modal.loadingFiles = true
   modal.filesError = ''
   modal.fileId = ''
-  modal.versionId = store.installed[0]?.id ?? ''
+  modal.versionId = currentInstance.value ? instanceKey(currentInstance.value) : ''
+  modal.mcVersion = query.mcVersion
+  modal.loader = query.loader
   modal.downloading = false
   try {
-    const files = await communityFiles(item.source, item.projectId, {
-      mcVersion: query.mcVersion || undefined,
-      loader: query.loader || undefined
-    })
-    modal.files = files
-    // 默认选中第一个 release 文件，无 release 则第一个
-    const def = files.find((f) => f.releaseType === 'release') ?? files[0]
-    modal.fileId = def?.fileId ?? ''
-    if (!files.length) modal.filesError = '该项目暂无可下载的文件'
+    const scanned = await getModTargets()
+    allTargets.value = scanned.versions
+    if (scanned.errors.length) toast('部分目录扫描失败：' + scanned.errors.join('；'), 'error')
+    await loadFiles()
   } catch (e) {
     modal.filesError = '获取文件列表失败：' + errText(e)
   } finally {
@@ -257,10 +298,16 @@ const canConfirm = computed(
 async function confirmDownload() {
   const file = selectedFile.value
   if (!file || !canConfirm.value) return
+  const target = targetOptions.value.find(v => instanceKey(v) === modal.versionId)
+  if (query.kind === 'mod') {
+    if (!target) return
+    modRequest.value = { target, input: { file } }
+    return
+  }
   modal.downloading = true
   try {
     const res = await communityDownload(file, {
-      versionId: modal.versionId,
+      versionId: target?.id ?? '',
       kind: query.kind
     })
     modal.open = false
@@ -287,6 +334,7 @@ async function confirmDownload() {
 
     <!-- 搜索卡片 -->
     <div class="card search-card">
+      <div class="filter-row"><span class="muted">兼容筛选：{{ query.mcVersion || '全部 Minecraft' }} / {{ query.loader || '全部 Loader' }}</span><button class="btn btn-ghost btn-sm" @click="useCurrentInstance">使用当前实例</button></div>
       <div class="search-row">
         <input
           v-model="query.keyword"
@@ -394,7 +442,7 @@ async function confirmDownload() {
             </div>
             <div class="result-info">
               <div class="result-head">
-                <span class="result-title">{{ r.title }}</span>
+                <MarqueeText class="result-title" :text="r.title"/>
                 <span class="tag" :class="r.source === 'modrinth' ? 'tag-success' : 'tag-cf'">
                   {{ r.source === 'modrinth' ? 'Modrinth' : 'CurseForge' }}
                 </span>
@@ -430,8 +478,13 @@ async function confirmDownload() {
     <!-- 下载模态框 -->
     <Teleport to="body">
       <div v-if="modal.open" class="modal-mask" @pointerdown.self="!modal.downloading && (modal.open = false)">
-        <div class="modal">
-          <h3 class="modal-title">下载 {{ modal.item?.title }}</h3>
+        <div class="modal" style="width: min(740px, calc(100vw - 40px)); max-height: 88vh; overflow-y: auto">
+          <h3 class="modal-title"><MarqueeText :text="'下载 ' + modal.item?.title"/></h3>
+          <div class="filter-row">
+            <label style="flex: 1; min-width: 0">Minecraft 版本<input v-model="modal.mcVersion" class="input" list="mod-minecraft-versions" placeholder="全部版本" @change="loadFiles"/></label>
+            <label style="flex: 1; min-width: 0">Loader<select v-model="modal.loader" class="select" @change="loadFiles"><option v-for="l in loaderOptions" :key="l.value" :value="l.value">{{ l.label }}</option></select></label>
+            <datalist id="mod-minecraft-versions"><option v-for="v in manifestVersions" :key="v" :value="v"/></datalist>
+          </div>
 
           <p class="modal-label">选择文件版本</p>
           <div v-if="modal.loadingFiles" class="files-loading">
@@ -447,7 +500,7 @@ async function confirmDownload() {
                 :class="{ active: modal.fileId === f.fileId }"
                 @click="modal.fileId = f.fileId"
               >
-                <span class="file-version">{{ f.version }}</span>
+                <span class="file-version"><MarqueeText :text="f.fileName"/><MarqueeText :text="'MOD ' + f.version"/><MarqueeText :text="'MC ' + f.gameVersions.join(' / ') + ' · Loader ' + f.loaders.join(' / ')"/></span>
                 <span class="tag" :class="releaseTagClass(f.releaseType)">{{ releaseText[f.releaseType] }}</span>
                 <span class="muted file-meta">{{ fmtDate(f.date) }} · {{ fmtSize(f.size) }}</span>
               </button>
@@ -458,12 +511,12 @@ async function confirmDownload() {
           <!-- 目标版本（整合包安装即新实例，无需选择） -->
           <template v-if="!isModpack">
             <p class="modal-label">下载到版本</p>
-            <select v-if="store.installed.length" v-model="modal.versionId" class="select">
-              <option v-for="v in store.installed" :key="v.id" :value="v.id">
-                {{ v.id }}{{ v.modpackName ? `（整合包 · ${v.modpackName}）` : '' }}
+            <select v-if="targetOptions.length" v-model="modal.versionId" class="select">
+              <option v-for="v in targetOptions" :key="instanceKey(v)" :value="instanceKey(v)">
+                {{ v.id }} · {{ v.mcVersion }} / {{ v.loader }} {{ v.loaderVersion }} · {{ v.folder }}
               </option>
             </select>
-            <p v-else class="files-error">暂无已安装版本，请先在「游戏版本」页安装一个版本</p>
+            <p v-else class="files-error">没有与所选文件兼容的已安装实例；可调整文件筛选，或在游戏版本页安装。</p>
           </template>
           <p v-else class="muted pack-tip">整合包将下载后自动创建独立实例并安装</p>
 
@@ -477,6 +530,7 @@ async function confirmDownload() {
         </div>
       </div>
     </Teleport>
+    <ModInstallDialog v-if="modRequest" :target="modRequest.target" :input="modRequest.input" @close="modRequest = null" @installed="modRequest = null; modal.open = false"/>
   </div>
 </template>
 
@@ -630,6 +684,7 @@ async function confirmDownload() {
   flex-wrap: wrap;
 }
 .result-title {
+  flex: 1 1 220px;
   font-weight: 700;
   font-size: 15px;
 }
@@ -703,7 +758,7 @@ async function confirmDownload() {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 12px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;

@@ -34,6 +34,7 @@ import * as java from './core/java'
 import * as launch from './core/launch'
 import * as servers from './core/servers'
 import { scanModTargets, selectModTarget, copyCompatibleMods } from './core/modTargets'
+import { prepareModInstall, executeModPlan, discardModPlan } from './core/modInstallPlan'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
 import { folderOfVersion, instanceIconsDir, withGameFolder } from './core/paths'
@@ -573,7 +574,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   )
 
   // ---------------- Java ----------------
-  ipcMain.handle(IPC.javaList, () => java.scanJava())
+  ipcMain.handle(IPC.javaList, () => java.listJavaSummary())
   ipcMain.handle(IPC.javaAddCustom, (_e, p: string) => java.addCustomJava(String(p ?? '')))
   // 文件选择器添加 Java：选完即真实执行 -version 校验，通过则入库并返回最新列表
   ipcMain.handle(IPC.javaPickAdd, async () => {
@@ -648,7 +649,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送
-  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string, requestedFolder?: string) => {
+  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string, requestedFolder?: string, createCommandWorld = false) => {
     if (launch.isBusy()) throw new Error('已有游戏正在启动或运行，请先结束当前游戏')
     if (typeof versionId !== 'string' || !versionId.trim()) throw new Error('请选择有效的游戏实例')
     const config = settings.getSettings()
@@ -672,7 +673,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
             setTimeout(() => getWin()?.close(), 1500)
           }
         },
-        serverAddress ? String(serverAddress) : undefined
+        serverAddress ? String(serverAddress) : undefined,
+        { createCommandWorld: createCommandWorld === true }
       )
       .catch((err) => {
         launch.recordLaunchPreparationError(String(versionId ?? ''), errText(err))
@@ -680,7 +682,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         sendState({ status: 'error', text: errText(err) })
       }))
   })
-  ipcMain.handle(IPC.gameKill, () => launch.killGame())
+  ipcMain.handle(IPC.gameKill, (_e, forceToken?: string) => launch.killGame(forceToken))
+  ipcMain.handle(IPC.gameRestart, (_e, versionId: string, folder: string, forceToken?: string) => launch.restartGame(versionId, folder, forceToken))
+  ipcMain.handle(IPC.gameRestartCancel, () => launch.cancelRestart())
   // 导出启动失败日志包（保存对话框在 main 弹出）
   ipcMain.handle(IPC.launchExportLogs, (_e, versionId: string) =>
     exportLaunchLogs(getWin(), String(versionId ?? ''))
@@ -753,6 +757,28 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   const modTargets = () => scanModTargets(settings.getSettings().folders.map(f => f.path), versions.scanInstalledFolder)
   ipcMain.handle(IPC.modsTargets, () => modTargets())
+  ipcMain.handle(IPC.modsPrepare, async (_e, ref: { id: string; folder: string }, input: { paths?: string[]; file?: CommunityFile }) => {
+    const target = selectModTarget(modTargets().versions, ref.id, ref.folder)
+    return prepareModInstall(target, input, emit)
+  })
+  ipcMain.handle(IPC.modsDiscard, (_e, id: string) => discardModPlan(String(id)))
+  ipcMain.handle(IPC.modsCommit, async (_e, id: string, includeDependencies: boolean) => {
+    if (launch.isBusy()) throw new Error('请先退出游戏，再安装 MOD')
+    const task = registerTask('安装 MOD 与前置依赖', 'download')
+    try {
+      const result = await executeModPlan(id, includeDependencies === true,
+        ref => {
+          if (launch.isBusy()) throw new Error('游戏已开始运行，未安装任何 MOD；请退出游戏后重试')
+          return selectModTarget(modTargets().versions, ref.id, ref.folder!)
+        },
+        e => emit({ ...e, taskId: task.id, taskTitle: task.title }), task.controller.signal)
+      send(IPC_EVENT.taskDone, { taskId: task.id, ok: true })
+      return result
+    } catch (error) {
+      send(IPC_EVENT.taskDone, { taskId: task.id, ok: false, error: errText(error), cancelled: isCancelError(error) })
+      throw error
+    } finally { finishTask(task.id) }
+  })
   ipcMain.handle(IPC.modsInstall, async (_e, files: string[], targetVersionId: string, folder?: string) => {
     const target = selectModTarget(modTargets().versions, String(targetVersionId ?? ''), folder ?? folderOfVersion(targetVersionId))
     return copyCompatibleMods(Array.isArray(files) ? files.map(String) : [], target, modinfo.parseModFile)

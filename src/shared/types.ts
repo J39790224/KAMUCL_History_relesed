@@ -456,6 +456,9 @@ export interface LaunchThumbnailSettings {
   image: string
   /** Ordered managed carousel images; absent means migrate legacy `image`. */
   images?: string[]
+  /** Default/per-image dwell time, in seconds (1..120). */
+  intervalSeconds?: number
+  durations?: Record<string, number>
   fit: ImageFit
 }
 
@@ -538,6 +541,8 @@ export interface LaunchState {
   status: 'launching' | 'running' | 'exited' | 'error'
   text: string
   code?: number
+  intentionalRestart?: boolean
+  intentionalStop?: boolean
 }
 
 // ---------------- IPC 通道（invoke: 前端 await 调用） ----------------
@@ -619,6 +624,8 @@ export const IPC = {
   gameLaunch: 'game:launch', // (versionId: string, serverAddress?: string) => void  带 serverAddress 时用 --quickPlayMultiplayer 直接进服
   launchExportLogs: 'launch:exportLogs', // (versionId: string) => string | null  弹保存对话框导出启动失败日志包（取消 = null）
   gameKill: 'game:kill', // () => void
+  gameRestart: 'game:restart',
+  gameRestartCancel: 'game:restartCancel',
 
   // 游戏目录迁移
   gameDirMigrate: 'gameDir:migrate', // (newDir: string, migrate: boolean) => void  异步：进度走 event:progress（stage=migrate），结束走 event:gameDirDone
@@ -635,6 +642,9 @@ export const IPC = {
   // MOD 拖入即装
   modsTargets: 'mods:targets', // Scan all registered folders; folder + id identify each target.
   modsParse: 'mods:parse', // (paths: string[]) => ModInfo[]  支持文件/文件夹路径，静默解析元数据
+  modsPrepare: 'mods:prepare',
+  modsCommit: 'mods:commit',
+  modsDiscard: 'mods:discard',
   modsInstall: 'mods:install', // (files: string[], targetVersionId: string) => ModInstallResult[]  装入目标版本 mods 目录（遵循版本隔离）
   modsDuplicates: 'mods:duplicates', // (versionId: string) => ModDuplicateGroup[]  单版本查重
   modsCrossDuplicates: 'mods:crossDuplicates', // (versionIds: string[]) => ModCrossDuplicate[]  跨版本查重
@@ -726,6 +736,9 @@ export interface CommunityResult {
 }
 
 export interface CommunityFile {
+  source?: CommunitySource
+  projectId?: string
+  dependencies?: CommunityDependency[]
   fileId: string
   fileName: string
   version: string
@@ -736,6 +749,22 @@ export interface CommunityFile {
   gameVersions: string[]
   loaders: string[]
   date: string
+}
+
+export interface CommunityDependency {
+  projectId?: string
+  fileId?: string
+  required: boolean
+}
+
+export interface ModRequirement { id: string; range: string }
+
+export interface ModInstallPlan {
+  id: string
+  target: InstalledVersion
+  files: Array<{ name: string; version: string; dependency: boolean; fileName: string }>
+  missing: string[]
+  warnings: string[]
 }
 
 /** 整合包探测信息（导入确认弹窗用） */
@@ -895,6 +924,10 @@ export interface ModInfo {
   loaderRange?: string
   /** 前置依赖 mod id 列表 */
   dependencies: string[]
+  requirements?: ModRequirement[]
+  /** Multi-loader jars may contain several independent metadata descriptors. */
+  variants?: Array<{ loader: LoaderName; mcRange: string; loaderRange?: string; requirements?: ModRequirement[] }>
+  provides?: Array<{ id: string; version: string }>
   /** 图标 dataURL（jar 内嵌图标） */
   iconDataUrl?: string
   /** 解析失败原因（非 MOD/损坏时存在） */
