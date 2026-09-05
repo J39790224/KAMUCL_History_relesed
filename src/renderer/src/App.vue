@@ -531,6 +531,12 @@ async function onExportLogs() {
 
 // ---------------- 下载中心 ----------------
 const dlOpen = ref(false)
+
+/** 顶栏空白处点击关闭已展开的下拉面板（顶栏是 -webkit-app-region:drag 拖拽区，点击不会落到下拉遮罩上） */
+function closeTopDropdowns() {
+  noticeOpen.value = false
+  dlOpen.value = false
+}
 const activeTaskCount = computed(
   () =>
     store.tasks.filter(
@@ -1037,7 +1043,7 @@ onUnmounted(() => {
     <!-- ============ 右侧（顶栏 + 内容） ============ -->
     <div class="main-area">
       <!-- 顶部栏（可拖拽） -->
-      <header class="topbar" data-edit="topbar">
+      <header class="topbar" data-edit="topbar" @click.self="closeTopDropdowns">
         <button
           v-if="canGoBack && store.currentView !== 'home'"
           class="top-back"
