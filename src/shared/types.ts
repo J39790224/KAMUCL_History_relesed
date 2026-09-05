@@ -454,6 +454,8 @@ export type ImageFit = 'fill' | 'fit' | 'crop'
 export interface LaunchThumbnailSettings {
   /** KAMUCL userData 受管资源路径；空字符串使用内置轮播。 */
   image: string
+  /** Ordered managed carousel images; absent means migrate legacy `image`. */
+  images?: string[]
   fit: ImageFit
 }
 

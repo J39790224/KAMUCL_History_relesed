@@ -57,6 +57,7 @@ import * as worlds from './core/worlds'
 import * as yggdrasil from './core/yggdrasil'
 import * as appearance from './core/appearanceAssets'
 import { applyNativeAppearance } from './nativeAppearance'
+import { carouselImages, MAX_CAROUSEL_IMAGES } from '../shared/appearancePolicy'
 import { pathIdentity } from './core/folderPaths'
 import * as direct from './core/directConnect'
 import type { DirectHostRequest } from '../shared/directConnect'
@@ -134,27 +135,30 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     return next
   })
   ipcMain.handle(IPC.appearanceImportLaunchThumbnail, async () => {
-    const source = await pickImage('导入首页启动卡缩略图')
-    if (!source) return null
-    const previous = settings.getSettings()
-    const imported = await appearance.importGlobalImage(source, 'launch-thumbnail')
+    const win = getWin()
+    const options = { title: '添加首页轮播图片（可多选）', properties: ['openFile' as const, 'multiSelections' as const],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }
+    const selection = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (selection.canceled || !selection.filePaths.length) return null
+    if (carouselImages(settings.getSettings().launchThumbnail).length + selection.filePaths.length > MAX_CAROUSEL_IMAGES) {
+      throw new Error(`首页轮播最多 ${MAX_CAROUSEL_IMAGES} 张图片，请先移除部分图片`)
+    }
+    const imported: string[] = []
     try {
-      const next = settings.saveSettings({
-        launchThumbnail: { ...previous.launchThumbnail, image: imported.path }
-      })
-      if (previous.launchThumbnail.image !== imported.path) {
-        appearance.removeGlobalImage(previous.launchThumbnail.image, 'launch-thumbnail')
-      }
-      return next
+      for (const source of selection.filePaths) imported.push((await appearance.importGlobalImage(source, 'launch-thumbnail')).path)
+      const current = settings.getSettings().launchThumbnail
+      const images = [...carouselImages(current), ...imported]
+      if (images.length > MAX_CAROUSEL_IMAGES) throw new Error(`首页轮播最多 ${MAX_CAROUSEL_IMAGES} 张图片`)
+      return settings.saveSettings({ launchThumbnail: { ...current, images, image: images[0] ?? '' } })
     } catch (error) {
-      appearance.removeGlobalImage(imported.path, 'launch-thumbnail')
+      for (const image of imported) appearance.removeGlobalImage(image, 'launch-thumbnail')
       throw error
     }
   })
   ipcMain.handle(IPC.appearanceResetLaunchThumbnail, () => {
-    const previous = settings.getSettings().launchThumbnail.image
+    const previous = carouselImages(settings.getSettings().launchThumbnail)
     const next = settings.saveSettings({ launchThumbnail: structuredClone(DEFAULT_LAUNCH_THUMBNAIL) })
-    appearance.removeGlobalImage(previous, 'launch-thumbnail')
+    for (const image of previous) appearance.removeGlobalImage(image, 'launch-thumbnail')
     return next
   })
   ipcMain.handle(IPC.appSelectDir, async () => {

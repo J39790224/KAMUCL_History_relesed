@@ -5,6 +5,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Settings } from '../../shared/types'
+import { carouselImages } from '../../shared/appearancePolicy'
 import { DEFAULT_DOWNLOAD_LIMITS, downloadLimiter, validateDownloadLimits } from './downloadLimits'
 import {
   DEFAULT_BACKGROUND,
@@ -102,7 +103,8 @@ export function getSettings(): Settings {
     const storedBackground = c.background.image
     const storedThumbnail = c.launchThumbnail.image
     c.background.image = ensureGlobalImage(storedBackground, 'background', true)
-    c.launchThumbnail.image = ensureGlobalImage(storedThumbnail, 'launch-thumbnail', true)
+    c.launchThumbnail.images = carouselImages(c.launchThumbnail).map(image => ensureGlobalImage(image, 'launch-thumbnail', true)).filter(Boolean)
+    c.launchThumbnail.image = c.launchThumbnail.images[0] ?? ''
     if (c.background.mode === 'image' && !c.background.image) c.background.mode = 'none'
     const migratedResolution = normalizeStoredResolution(c.resolution, def.resolution)
     c.resolution = resolutionValidationError(migratedResolution)
@@ -178,11 +180,11 @@ export function saveSettings(patch: Partial<Settings>): Settings {
   if (patch.background?.image !== undefined) {
     merged.background.image = ensureGlobalImage(patch.background.image, 'background')
   }
-  if (patch.launchThumbnail?.image !== undefined) {
-    merged.launchThumbnail.image = ensureGlobalImage(
-      patch.launchThumbnail.image,
-      'launch-thumbnail'
-    )
+  if (patch.launchThumbnail) {
+    const requested = patch.launchThumbnail.images !== undefined ? patch.launchThumbnail :
+      patch.launchThumbnail.image !== undefined ? { image: patch.launchThumbnail.image } : merged.launchThumbnail
+    merged.launchThumbnail.images = carouselImages(requested).map(image => ensureGlobalImage(image, 'launch-thumbnail')).filter(Boolean)
+    merged.launchThumbnail.image = merged.launchThumbnail.images[0] ?? ''
   }
   // activeFolder 与 gameDir 语义一致：改其一跟随另一个
   if (patch.activeFolder && merged.folders.some((f) => f.path === patch.activeFolder)) {
@@ -204,6 +206,12 @@ export function saveSettings(patch: Partial<Settings>): Settings {
   }
   cached = merged
   if (patch.downloadThreads !== undefined || patch.downloadSpeedKBps !== undefined) downloadLimiter.configure(merged)
+  if (patch.launchThumbnail) {
+    const retained = new Set(carouselImages(merged.launchThumbnail))
+    for (const image of carouselImages(cur.launchThumbnail)) {
+      if (!retained.has(image)) removeGlobalImage(image, 'launch-thumbnail')
+    }
+  }
   return merged
 }
 
@@ -226,16 +234,18 @@ export async function migrateLegacyAppearanceAssets(): Promise<void> {
       background.mode = 'none'
     }
   }
-  if (launchThumbnail.image && !ensureGlobalImage(launchThumbnail.image, 'launch-thumbnail')) {
+  const migrated: string[] = []
+  for (const source of carouselImages(launchThumbnail)) {
+    if (ensureGlobalImage(source, 'launch-thumbnail')) { migrated.push(source); continue }
     changed = true
     try {
-      const image = await importGlobalImage(launchThumbnail.image, 'launch-thumbnail')
-      launchThumbnail.image = image.path
+      const image = await importGlobalImage(source, 'launch-thumbnail')
+      migrated.push(image.path)
       imported.push({ path: image.path, purpose: 'launch-thumbnail' })
-    } catch {
-      launchThumbnail.image = ''
-    }
+    } catch { /* omit damaged legacy image, retain other slides */ }
   }
+  launchThumbnail.images = migrated
+  launchThumbnail.image = migrated[0] ?? ''
   if (!changed) return
 
   try {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { carouselImages } from '@shared/appearancePolicy'
 import {
   errText,
   exportLaunchLogs,
@@ -85,28 +86,23 @@ function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
   return fit === 'fill' ? 'fill' : fit === 'fit' ? 'contain' : 'cover'
 }
 
-const failedBanner = ref('')
-const customBanner = computed(() => {
+const failedBanners = ref(new Set<string>())
+const customBanners = computed(() => {
   const version = currentVersion.value
   if (version?.thumbnail) {
-    return {
+    return [{
       path: version.thumbnail,
       src: managedImageUrl(version.thumbnail),
       fit: version.thumbnailFit ?? ('crop' as ImageFit)
-    }
+    }]
   }
   const global = store.settings?.launchThumbnail
-  if (global?.image) {
-    return { path: global.image, src: managedImageUrl(global.image), fit: global.fit }
-  }
-  return null
+  return carouselImages(global).map(path => ({ path, src: managedImageUrl(path), fit: global?.fit ?? 'crop' as ImageFit }))
 })
 
 const banners = computed(() => {
-  const custom = customBanner.value
-  if (custom && failedBanner.value !== custom.path) {
-    return [{ src: custom.src, fit: fitCss(custom.fit), custom: true, path: custom.path }]
-  }
+  const custom = customBanners.value.filter(item => !failedBanners.value.has(item.path))
+  if (custom.length) return custom.map(item => ({ ...item, fit: fitCss(item.fit), custom: true }))
   return builtInBanners.map((src) => ({
     src,
     fit: 'cover' as const,
@@ -131,9 +127,9 @@ function startBannerTimer() {
 }
 
 watch(
-  () => customBanner.value?.path ?? '',
+  () => customBanners.value.map(item => item.path).join('\n'),
   () => {
-    failedBanner.value = ''
+    failedBanners.value = new Set()
     bannerIndex.value = 0
     startBannerTimer()
   }
@@ -141,10 +137,10 @@ watch(
 
 function onBannerError(item: { custom: boolean; path: string }) {
   if (!item.custom) return
-  failedBanner.value = item.path
+  failedBanners.value = new Set([...failedBanners.value, item.path])
   bannerIndex.value = 0
   startBannerTimer()
-  toast('启动卡缩略图不可用，已回退到内置图片', 'error')
+  toast('已跳过不可用的启动卡图片；全部不可用时使用内置轮播', 'error')
 }
 
 // ---------------- 启动、设置与日志 ----------------

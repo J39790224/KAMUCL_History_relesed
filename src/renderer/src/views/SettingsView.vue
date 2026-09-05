@@ -8,13 +8,13 @@ import {
   listJava,
   onProgress,
   pickAddJava,
-  refreshJava,
-  saveSettings
+  refreshJava
 } from '../api'
 import { enterEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
 import type { Settings, ThemeName } from '@shared/types'
 import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
+import { updateSettings } from '../settingsUpdates'
 
 const page = ref<HTMLElement | null>(null)
 async function revealSection() {
@@ -32,7 +32,7 @@ watch([() => store.settingsSection, () => !!store.settings], revealSection, { fl
 // ---------------- 保存 ----------------
 async function save(patch: Partial<Settings>) {
   try {
-    store.settings = await saveSettings(patch)
+    await updateSettings(patch)
   } catch (e) {
     toast('保存设置失败：' + errText(e), 'error')
   }

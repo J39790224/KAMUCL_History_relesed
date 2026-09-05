@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
+import { backgroundImageEffect } from '@shared/appearancePolicy'
 import {
   cancelTask,
   errText,
@@ -621,8 +622,7 @@ const bgStyle = computed(() => {
       backgroundSize: size,
       backgroundPosition: 'center',
       backgroundRepeat: 'no-repeat',
-      opacity: String(bg.opacity),
-      filter: bg.blur > 0 ? `blur(${bg.blur}px)` : 'none'
+      ...backgroundImageEffect(bg)
     }
   }
   return null
@@ -1373,8 +1373,6 @@ onUnmounted(() => {
 /* 激活自定义背景时界面底色透出背景层 */
 .shell.has-bg {
   background: var(--shell-surface);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .shell {

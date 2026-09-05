@@ -1,21 +1,21 @@
 <script setup lang="ts">
 /** 图一固定布局下的个性化背景与启动卡图片管理。 */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { carouselImages, MAX_CAROUSEL_IMAGES } from '@shared/appearancePolicy'
+import { updateSettings } from '../settingsUpdates'
 import {
   errText,
   importBackground,
   importLaunchThumbnail,
   resetBackground,
-  resetLaunchThumbnail,
-  saveSettings
+  resetLaunchThumbnail
 } from '../api'
 import { store, toast } from '../store'
 import { managedImageUrl } from '../managedAssets'
 import type { BackgroundSettings, ImageFit, Settings } from '@shared/types'
 
 function save(patch: Partial<Settings>) {
-  void saveSettings(patch)
-    .then((s) => (store.settings = s))
+  void updateSettings(patch)
     .catch((e) => toast('保存失败：' + errText(e), 'error')
   )
 }
@@ -35,6 +35,19 @@ const importingBackground = ref(false)
 const importingThumbnail = ref(false)
 const backgroundPreviewFailed = ref(false)
 const thumbnailPreviewFailed = ref(false)
+const images = computed(() => carouselImages(store.settings?.launchThumbnail))
+function changeImages(next: string[]) {
+  if (!store.settings) return
+  thumbnailPreviewFailed.value = false
+  save({ launchThumbnail: { ...store.settings.launchThumbnail, images: next, image: next[0] ?? '' } })
+}
+function moveImage(index: number, direction: number) {
+  const next = [...images.value]
+  const target = index + direction
+  if (target < 0 || target >= next.length) return
+  ;[next[index], next[target]] = [next[target], next[index]]
+  changeImages(next)
+}
 
 function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
   return fit === 'fill' ? 'fill' : fit === 'fit' ? 'contain' : 'cover'
@@ -177,20 +190,20 @@ function setLaunchFit(fit: ImageFit) {
         </div>
       </div>
       <div class="bg-row">
-        <span class="muted bg-label">透明度</span>
+        <span class="muted bg-label">图片透明度</span>
         <input
           type="range"
           class="slider"
-          min="0.05"
+          min="0"
           max="1"
           step="0.05"
-          :value="store.settings.background.opacity"
-          @input="setBg({ opacity: Number(($event.target as HTMLInputElement).value) })"
+          :value="1 - store.settings.background.opacity"
+          @input="setBg({ opacity: 1 - Number(($event.target as HTMLInputElement).value) })"
         />
-        <span class="muted bg-val">{{ Math.round(store.settings.background.opacity * 100) }}%</span>
+        <span class="muted bg-val">{{ Math.round((1 - store.settings.background.opacity) * 100) }}%</span>
       </div>
       <div class="bg-row">
-        <span class="muted bg-label">模糊度</span>
+        <span class="muted bg-label">图片模糊</span>
         <input
           type="range"
           class="slider"
@@ -202,6 +215,7 @@ function setLaunchFit(fit: ImageFit) {
         />
         <span class="muted bg-val">{{ store.settings.background.blur }}px</span>
       </div>
+      <p class="muted group-hint">透明度越高图片越透；图片模糊单独控制清晰度。系统桌面毛玻璃由 Windows 管理，不受这两个图片选项影响。</p>
     </template>
   </div>
 
@@ -228,10 +242,10 @@ function setLaunchFit(fit: ImageFit) {
     <div class="bg-row">
       <span class="muted bg-label">默认图片</span>
       <button class="btn btn-ghost btn-sm" :disabled="importingThumbnail" @click="pickLaunchThumbnail">
-        {{ importingThumbnail ? '处理中…' : '导入图片…' }}
+        {{ importingThumbnail ? '处理中…' : '添加图片（可多选）…' }}
       </button>
       <span class="muted bg-img-path">
-        {{ store.settings?.launchThumbnail.image ? '已由 KAMUCL 管理' : '内置轮播' }}
+        {{ images.length ? `${images.length} / ${MAX_CAROUSEL_IMAGES} 张 · 已由 KAMUCL 管理` : '内置轮播' }}
       </span>
     </div>
     <div class="bg-row">
@@ -248,6 +262,15 @@ function setLaunchFit(fit: ImageFit) {
         </button>
       </div>
     </div>
+    <ol v-if="images.length" class="carousel-list" aria-label="启动卡轮播顺序">
+      <li v-for="(image, index) in images" :key="image">
+        <img :src="managedImageUrl(image)" :alt="`第 ${index + 1} 张`" />
+        <span>{{ index + 1 }}</span>
+        <button class="btn btn-ghost btn-sm" :disabled="index === 0" title="向前移动" @click="moveImage(index, -1)">↑</button>
+        <button class="btn btn-ghost btn-sm" :disabled="index === images.length - 1" title="向后移动" @click="moveImage(index, 1)">↓</button>
+        <button class="btn btn-ghost btn-sm" @click="changeImages(images.filter((_, i) => i !== index))">移除</button>
+      </li>
+    </ol>
   </div>
 </template>
 
@@ -264,6 +287,13 @@ function setLaunchFit(fit: ImageFit) {
   gap: 6px;
   margin-bottom: 12px;
 }
+.capsule { min-height: 36px; padding: 7px 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--card-2); color: var(--text); cursor: pointer; font: inherit; }
+.capsule.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+.carousel-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: 10px; }
+.carousel-list li { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.carousel-list img { width: 64px; height: 40px; object-fit: cover; border-radius: 5px; }
+.carousel-list span { flex: 1; }
+.carousel-list button { min-width: 36px; min-height: 36px; }
 .fit-options {
   display: flex;
   flex-wrap: wrap;
@@ -304,7 +334,7 @@ function setLaunchFit(fit: ImageFit) {
   padding: 7px 0;
 }
 .bg-label {
-  flex: 0 0 60px;
+  flex: 0 0 82px;
   font-size: 13px;
 }
 .bg-val {
