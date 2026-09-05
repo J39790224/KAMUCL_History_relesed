@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { createCommandWorld } from './commandWorld'
-import { requestGameWindowClose } from './gracefulClose'
+import { requestGameWindowClose, focusGameWindow } from './gracefulClose'
 import { reuseExternalRuntimeLibraries } from './externalRuntime'
 import { repairNeoRuntime } from './loaders'
 import { pathIdentity } from './folderPaths'
@@ -550,6 +550,10 @@ async function launchOwned(
     pid: proc.pid
   }
   proc.once('spawn', () => onState({ status: 'running', text: '游戏进程已启动' }))
+  // QuickPlay 直达（创建命令世界/进服）：游戏窗口出现后拉到前台，避免鼠标被锁在未聚焦窗口里
+  if (options.singleplayerWorld || serverAddress) {
+    void focusGameWindow(proc).catch(() => undefined)
+  }
 
   const pushStdout = makeLinePusher((line) => {
     stdoutStream?.write(line + '\n')
