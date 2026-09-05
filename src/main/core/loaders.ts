@@ -19,6 +19,7 @@ import {
   migrateDependencyVanilla,
   readVersionJson,
   scanInstalledFolder,
+  flattenInstance,
   type VersionJson
 } from './versions'
 
@@ -333,6 +334,12 @@ export async function installLoader(
     )
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
     registerVersionFolder(id, gameDir()) // fabric/quilt 实例注册到当前活动文件夹
+    // 落地即拍平为自包含实例：原版内容合并进实例 json，client jar 复制进实例目录
+    try {
+      flattenInstance(id)
+    } catch {
+      /* flatten 失败保留旧式继承，不影响启动 */
+    }
     return id
   }
 
@@ -431,6 +438,12 @@ export async function installLoader(
     }
     emit({ stage: 'done', progress: 1, text: `${id} 安装完成` })
     registerVersionFolder(id, gameDir()) // forge/neoforge 实例注册到当前活动文件夹
+    // 落地即拍平为自包含实例（此时原版 json/jar 仍在 versions/ 可直接合并复制；finally 再迁移进依赖缓存区）
+    try {
+      flattenInstance(id)
+    } catch {
+      /* flatten 失败保留旧式继承，不影响启动 */
+    }
     return id
   } finally {
     fs.rmSync(jarPath, { force: true })

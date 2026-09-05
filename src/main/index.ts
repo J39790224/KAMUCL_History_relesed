@@ -120,6 +120,13 @@ app.whenReady().then(async () => {
   })
   registerIpc(() => win)
 
+  // 存量实例自包含迁移（老式 inheritsFrom 继承 → 合并进实例，幂等）：基础版本改名/删除不再波及已装实例
+  void import('./core/versions').then(({ migrateFlattenedInstances }) =>
+    migrateFlattenedInstances((m) => launcherLog(`[迁移] ${m}`)).then((n) => {
+      if (n > 0) launcherLog(`[迁移] 共 ${n} 个旧式继承实例已合并为自包含实例`)
+    })
+  )
+
   ipcMain.on('window:minimize', () => win?.minimize())
   ipcMain.on('window:maximize', () => (win?.isMaximized() ? win?.unmaximize() : win?.maximize()))
   ipcMain.on('window:close', () => win?.close())

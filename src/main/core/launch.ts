@@ -31,9 +31,11 @@ import {
 import { withGameFolder } from './paths'
 import {
   clientJarPath,
+  installClientJarOnly,
   installVanilla,
   libraryTasks,
   readVersionJson,
+  resolveVersionChain,
   resolvedLibraries,
   rulesAllow,
   type ArgumentEntry,
@@ -144,39 +146,10 @@ export const killGame = (forceToken?: string) => {
  * - arguments 合并（父在前，子的 game/jvm 追加在后，兼容 forge/fabric）
  * - mainClass/type/assets/assetIndex/javaVersion/minecraftArguments 子缺省继承父
  * 返回合并结果与链条最底层原版 id（client jar 用它的）。
+ * 实现复用 versions.resolveVersionChain（与 flatten 自包含语义一致）。
  */
 function resolveChain(id: string): { merged: VersionJson; baseId: string } {
-  const chain: VersionJson[] = []
-  let cur: VersionJson | null = readVersionJson(id)
-  while (cur) {
-    chain.push(cur)
-    cur = cur.inheritsFrom ? readVersionJson(cur.inheritsFrom) : null
-  }
-  const baseId = chain[chain.length - 1].id
-
-  const childFirst = <K extends keyof VersionJson>(key: K): VersionJson[K] | undefined => {
-    for (const c of chain) {
-      if (c[key] != null) return c[key]
-    }
-    return undefined
-  }
-  const parentFirst = [...chain].reverse()
-
-  const merged: VersionJson = {
-    id,
-    mainClass: childFirst('mainClass'),
-    type: childFirst('type'),
-    assets: childFirst('assets'),
-    assetIndex: childFirst('assetIndex'),
-    javaVersion: childFirst('javaVersion'),
-    minecraftArguments: childFirst('minecraftArguments'),
-    libraries: chain.flatMap((c) => c.libraries ?? []),
-    arguments: {
-      game: parentFirst.flatMap((c) => c.arguments?.game ?? []),
-      jvm: parentFirst.flatMap((c) => c.arguments?.jvm ?? [])
-    }
-  }
-  return { merged, baseId }
+  return resolveVersionChain(id)
 }
 
 /** 按空格拆分用户 JVM 参数，支持简单双引号 */
@@ -271,23 +244,36 @@ async function launchOwned(
   const baseInVersions = fs.existsSync(versionJsonPath(baseIdProbe))
   const jarProbe = baseInVersions ? versionJarPath(baseIdProbe) : baseVersionJarPath(baseIdProbe)
   if (chainBroken || !fs.existsSync(jarProbe)) {
-    emit({
-      stage: 'repair',
-      progress: 0,
-      text: `检测到游戏文件缺失，正在自动补全 ${baseIdProbe}…`
-    })
-    // installVanilla 内部：json 不在则下载，已存在文件校验跳过，只补缺失部分
-    // 自定义命名的原版实例：真实 MC 版本 id 从 _mcVersion 取
-    let realId = baseIdProbe
+    // 自包含实例（flatten 后）：json 不缺，仅补客户端 jar，绝不重写合并后的 json
+    let flattened = false
     try {
-      realId = readVersionJson(baseIdProbe)._mcVersion ?? baseIdProbe
+      flattened = readVersionJson(versionId)._flattenedAt !== undefined && !readVersionJson(versionId).inheritsFrom
     } catch {
-      /* json 缺失时用 probe（即真实 MC id） */
+      /* json 读取失败按旧链处理 */
     }
-    // 加载器实例的依赖原版补进 base 区；独立原版实例仍在 versions 区修复
-    const dest = baseIdProbe !== versionId && !baseInVersions ? 'base' : 'versions'
-    await installVanilla(realId, emit, dest, realId !== baseIdProbe ? baseIdProbe : undefined)
-    emit({ stage: 'repair', progress: 1, text: '文件补全完成' })
+    if (flattened && !chainBroken) {
+      emit({ stage: 'repair', progress: 0, text: `检测到游戏本体缺失，正在自动补全…` })
+      await installClientJarOnly(versionId, emit)
+      emit({ stage: 'repair', progress: 1, text: '文件补全完成' })
+    } else {
+      emit({
+        stage: 'repair',
+        progress: 0,
+        text: `检测到游戏文件缺失，正在自动补全 ${baseIdProbe}…`
+      })
+      // installVanilla 内部：json 不在则下载，已存在文件校验跳过，只补缺失部分
+      // 自定义命名的原版实例：真实 MC 版本 id 从 _mcVersion 取
+      let realId = baseIdProbe
+      try {
+        realId = readVersionJson(baseIdProbe)._mcVersion ?? baseIdProbe
+      } catch {
+        /* json 缺失时用 probe（即真实 MC id） */
+      }
+      // 加载器实例的依赖原版补进 base 区；独立原版实例仍在 versions 区修复
+      const dest = baseIdProbe !== versionId && !baseInVersions ? 'base' : 'versions'
+      await installVanilla(realId, emit, dest, realId !== baseIdProbe ? baseIdProbe : undefined)
+      emit({ stage: 'repair', progress: 1, text: '文件补全完成' })
+    }
   }
 
   // a0.1) 启动与管理页面共用同一个目录判定，避免配置路径、整合包和已存在

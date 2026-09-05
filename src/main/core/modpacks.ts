@@ -19,7 +19,7 @@ import { downloadAll, fetchSignal, type DownloadTask } from './download'
 import { getSettings } from './settings'
 import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { gameDir, withGameFolder } from './paths'
-import { installVersion, listAllInstalled, readVersionJson } from './versions'
+import { installVersion, listAllInstalled, readVersionJson, flattenInstance } from './versions'
 import { packRuntimeProfile } from './packRuntime'
 import { throwIfCancelled } from './tasks'
 import { listGameFolders, setActiveGameFolder } from './gameFolders'
@@ -621,6 +621,12 @@ async function installFullpack(
     }
     fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
     registerVersionFolder(id, gameDir())
+    // 自包含化：把包内/继承的运行时内容合并进实例（基础版本改名/删除不再影响本实例）
+    try {
+      flattenInstance(id)
+    } catch {
+      /* flatten 失败保留旧式继承，不影响启动 */
+    }
 
     emit({ stage: 'done', progress: 1, text: `${name} 安装完成` })
     return id
@@ -948,6 +954,12 @@ async function installModpackInFolder(filePath: string, emit: ProgressEmit, opts
     const instanceJson = packRuntimeProfile(readVersionJson(installedId), id, meta)
     fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
     registerVersionFolder(id, gameDir())
+    // 自包含化：实例不再依赖基础运行时实例
+    try {
+      flattenInstance(id)
+    } catch {
+      /* flatten 失败保留旧式继承，不影响启动 */
+    }
 
     // 6) 下载整合包文件
     let pending: PendingFile[]

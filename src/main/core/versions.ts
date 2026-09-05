@@ -125,6 +125,8 @@ export interface VersionJson {
   /** KAMUCL 自定义字段：首页启动卡专属缩略图（受管绝对路径）。 */
   _thumbnail?: string
   _thumbnailFit?: ImageFit
+  /** KAMUCL 自定义字段：已拍平为自包含实例（合并继承链完成时间），不再依赖基础原版 */
+  _flattenedAt?: string
 }
 
 // ---------------- rules 评估 ----------------
@@ -562,6 +564,130 @@ export async function installVersion(
 /** 链底客户端 jar 的实际位置（versions 区优先，缺省时取 .kamucl/base 依赖原版区） */
 export function clientJarPath(id: string): string {
   return fs.existsSync(versionJsonPath(id)) ? versionJarPath(id) : baseVersionJarPath(id)
+}
+
+// ---------------- 自包含实例（flatten 继承链） ----------------
+
+/**
+ * 沿 inheritsFrom 读取版本链并合并（启动与 flatten 共用同一语义）：
+ * - libraries 合并（子在前）
+ * - arguments 合并（父在前，子的 game/jvm 追加在后，兼容 forge/fabric）
+ * - mainClass/type/assets/assetIndex/javaVersion/minecraftArguments/downloads 子缺省继承父
+ */
+export function resolveVersionChain(id: string): { merged: VersionJson; baseId: string } {
+  const chain: VersionJson[] = []
+  let cur: VersionJson | null = readVersionJson(id)
+  while (cur) {
+    chain.push(cur)
+    cur = cur.inheritsFrom ? readVersionJson(cur.inheritsFrom) : null
+  }
+  const baseId = chain[chain.length - 1].id ?? id
+
+  const childFirst = <K extends keyof VersionJson>(key: K): VersionJson[K] | undefined => {
+    for (const c of chain) {
+      if (c[key] != null) return c[key]
+    }
+    return undefined
+  }
+  const parentFirst = [...chain].reverse()
+
+  const merged: VersionJson = {
+    id,
+    mainClass: childFirst('mainClass'),
+    type: childFirst('type'),
+    assets: childFirst('assets'),
+    assetIndex: childFirst('assetIndex'),
+    javaVersion: childFirst('javaVersion'),
+    minecraftArguments: childFirst('minecraftArguments'),
+    downloads: childFirst('downloads'),
+    libraries: chain.flatMap((c) => c.libraries ?? []),
+    arguments: {
+      game: parentFirst.flatMap((c) => c.arguments?.game ?? []),
+      jvm: parentFirst.flatMap((c) => c.arguments?.jvm ?? [])
+    }
+  }
+  return { merged, baseId }
+}
+
+/**
+ * 把带 inheritsFrom 的实例拍平为自包含实例：
+ * 合并链 json（含全部启动所需内容）写回实例 json，client jar 复制进实例目录；
+ * 之后基础原版改名/删除均不再影响该实例。原 json 备份为 <id>.json.kamucl-bak。
+ * 幂等：无 inheritsFrom 时直接返回 false。
+ */
+export function flattenInstance(id: string): boolean {
+  const jp = versionJsonPath(id)
+  if (!fs.existsSync(jp)) return false
+  const own = readVersionJson(id)
+  if (!own.inheritsFrom) return false
+
+  const { merged, baseId } = resolveVersionChain(id)
+  // 自定义字段（_loader/_gameDir/_modpackName…）以实例自身 json 为准保留
+  for (const [k, v] of Object.entries(own)) {
+    if (k.startsWith('_')) (merged as unknown as Record<string, unknown>)[k] = v
+  }
+  merged._mcVersion = own._mcVersion ?? (readVersionJson(baseId)._mcVersion ?? baseId)
+  merged._flattenedAt = new Date().toISOString()
+  delete merged.inheritsFrom
+
+  // client jar 落地实例目录（拷走即用；源可能在 base 依赖区或旧 versions 区）
+  const srcJar = clientJarPath(baseId)
+  const destJar = versionJarPath(id)
+  if (fs.existsSync(srcJar) && !fs.existsSync(destJar)) {
+    fs.copyFileSync(srcJar, destJar)
+  }
+
+  fs.copyFileSync(jp, jp + '.kamucl-bak')
+  fs.writeFileSync(jp, JSON.stringify(merged, null, 2), 'utf-8')
+  return true
+}
+
+/**
+ * 存量迁移：扫描全部游戏文件夹，把带 inheritsFrom 的实例逐个拍平为自包含实例。
+ * 返回拍平数量；单个失败不阻断其余（launcherLog 记录）。
+ */
+export async function migrateFlattenedInstances(
+  log: (msg: string) => void = () => undefined
+): Promise<number> {
+  let count = 0
+  for (const { dir } of allVersionsDirs()) {
+    if (!fs.existsSync(dir)) continue
+    for (const name of fs.readdirSync(dir)) {
+      const jp = path.join(dir, name, `${name}.json`)
+      if (!fs.existsSync(jp)) continue
+      try {
+        const j = JSON.parse(fs.readFileSync(jp, 'utf-8').replace(/^﻿/, '')) as VersionJson
+        if (!j.inheritsFrom) continue
+        if (flattenInstance(name)) {
+          count++
+          log(`实例「${name}」已合并为自包含实例（原依赖 ${j.inheritsFrom}）`)
+        }
+      } catch (e) {
+        log(`实例「${name}」合并失败（保留旧式继承，不影响启动）：${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  }
+  return count
+}
+
+/** flatten 实例自愈：json 自包含不缺，仅补客户端 jar（不重写 json） */
+export async function installClientJarOnly(id: string, emit: ProgressEmit): Promise<void> {
+  const j = readVersionJson(id)
+  const client = j.downloads?.client
+  if (!client?.url) throw new Error('实例 json 缺少客户端下载信息，无法自动补全')
+  const mirror = getSettings().mirror
+  await downloadFile(
+    client.url,
+    versionJarPath(id),
+    (d, t) =>
+      emit({
+        stage: 'client',
+        progress: t ? d / t : 0,
+        text: `下载游戏本体 ${(d / 1024 / 1024).toFixed(1)}MB${t ? '/' + (t / 1024 / 1024).toFixed(1) + 'MB' : ''}`
+      }),
+    client.sha1,
+    mirror
+  )
 }
 
 /**
