@@ -18,8 +18,9 @@ import type {
 import { downloadAll, fetchSignal, type DownloadTask } from './download'
 import { getSettings } from './settings'
 import { registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
-import { gameDir } from './paths'
-import { installVersion, listAllInstalled } from './versions'
+import { gameDir, withGameFolder } from './paths'
+import { installVersion, listAllInstalled, readVersionJson } from './versions'
+import { packRuntimeProfile } from './packRuntime'
 import { throwIfCancelled } from './tasks'
 import { listGameFolders, setActiveGameFolder } from './gameFolders'
 import { canonicalPath, samePath } from './folderPaths'
@@ -867,6 +868,11 @@ export async function installModpack(
   emit: ProgressEmit,
   opts?: ModpackInstallOpts
 ): Promise<string> {
+  const folder = requestedGameFolder(opts?.targetFolder)
+  return withGameFolder(folder, () => installModpackInFolder(filePath, emit, { ...opts, targetFolder: folder }))
+}
+
+async function installModpackInFolder(filePath: string, emit: ProgressEmit, opts?: ModpackInstallOpts): Promise<string> {
   const report: ProgressEmit = (event) =>
     emit({ ...event, overall: event.overall ?? event.progress })
   const targetFolder = requestedGameFolder(opts?.targetFolder)
@@ -919,14 +925,15 @@ export async function installModpack(
   } else {
     id = uniqueInstanceId(requestedName)
   }
+  registerVersionFolder(id, targetFolder)
   const instDir = versionDir(id)
 
   try {
     // 4) 安装游戏本体与加载器（已有的文件自动跳过）
     report({ stage: 'modpack', progress: 0.04, text: '安装游戏本体与加载器…' })
-    const baseVersionId = await installVersion(
+    const installedId = await installVersion(
       meta.mcVersion,
-      meta.loader ? { loader: meta.loader, loaderVersion: meta.loaderVersion } : {},
+      { instanceName: id, ...(meta.loader ? { loader: meta.loader, loaderVersion: meta.loaderVersion } : {}) },
       (event) =>
         report({
           ...event,
@@ -937,14 +944,8 @@ export async function installModpack(
 
     // 5) 创建实例版本
     fs.mkdirSync(instDir, { recursive: true })
-    const instanceJson = {
-      id,
-      inheritsFrom: baseVersionId,
-      ...(meta.loader ? { _loader: meta.loader, _loaderVersion: meta.loaderVersion } : {}),
-      _gameDir: true,
-      _modpackName: meta.name,
-      _modpackVersion: meta.packVersion
-    }
+    if (installedId !== id) throw new Error('整合包运行配置未安装到目标实例')
+    const instanceJson = packRuntimeProfile(readVersionJson(installedId), id, meta)
     fs.writeFileSync(versionJsonPath(id), JSON.stringify(instanceJson, null, 2), 'utf-8')
     registerVersionFolder(id, gameDir())
 

@@ -429,7 +429,7 @@ export async function communityDownload(
     await downloadFile(file.url, tmpPath, dlProgress, file.sha1, undefined, signal)
     // 动态 import 避免与 modpacks.ts 的循环依赖；后台异步安装，进度走 event:progress
     const { installModpack } = await import('./modpacks')
-    void installModpack(tmpPath, emit, { signal })
+    void installModpack(tmpPath, emit, { signal, nameSource: 'inner' })
       .then((id) => {
         fs.rmSync(tmpPath, { force: true })
         onDone?.({ versionId: id, ok: true })

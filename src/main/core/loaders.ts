@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { copyRuntimeProfile } from './packRuntime'
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
 import { BMCL_MAVEN_ROOT, downloadAll, downloadFile, fetchSignal } from './download'
 import { isCancelError } from './tasks'
@@ -325,6 +326,14 @@ export async function installLoader(
 
   const jarPath = path.join(os.tmpdir(), `kamucl-${loader}-installer-${Date.now()}.jar`)
   try {
+    // A user-owned matching loader instance must not be renamed into a new pack.
+    const reusable = instanceName?.trim() ? findInstalledDir(loader, mcVersion, loaderVersion) : null
+    let id: string
+    if (reusable && reusable !== instanceName!.trim() && !fs.existsSync(path.join(versionDir(reusable), '.installing'))) {
+      id = instanceName!.trim()
+      copyRuntimeProfile(versionsDir(), reusable, id)
+      registerVersionFolder(id, gameDir())
+    } else {
     emit({ stage: 'loader', progress: 0.2, text: `下载 ${loader} 安装器` })
     try {
       await downloadFile(officialUrl, jarPath, (d, t) =>
@@ -358,11 +367,12 @@ export async function installLoader(
     const id0 = findInstalledDir(loader, mcVersion, loaderVersion)
     if (!id0) throw new Error('安装器运行结束，但未找到生成的版本目录')
     // 自定义实例名：重命名安装器生成的目录与 json id
-    let id = id0
+    id = id0
     if (instanceName?.trim() && instanceName.trim() !== id0) {
       const { renameVersion } = await import('./versions')
       renameVersion(id0, instanceName.trim())
       id = instanceName.trim()
+    }
     }
     tagLoaderJson(id, loader, loaderVersion)
 
