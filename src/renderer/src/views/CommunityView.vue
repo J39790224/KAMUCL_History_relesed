@@ -182,6 +182,16 @@ function useCurrentInstance() {
 }
 versionInput.value = query.mcVersion
 
+/** 按具体实例筛选：选中实例即带入其 MC 版本与 Loader */
+function useInstance(id: string) {
+  const v = store.installed.find((x) => x.id === id)
+  if (!v) return
+  query.mcVersion = v.mcVersion === '未知' ? '' : v.mcVersion
+  query.loader = v.loader ?? ''
+  versionInput.value = query.mcVersion
+  onFilterChange()
+}
+
 /** 切换条件后自动重新搜索 */
 function onFilterChange() {
   void doSearch(true)
@@ -359,7 +369,22 @@ async function confirmDownload() {
 
     <!-- 搜索卡片 -->
     <div class="card search-card">
-      <div class="filter-row"><span class="muted">兼容筛选：{{ query.mcVersion || '全部 Minecraft' }} / {{ query.loader || '全部 Loader' }}</span><button class="btn btn-ghost btn-sm" @click="useCurrentInstance">使用当前实例</button></div>
+      <div class="filter-row">
+        <span class="muted">兼容筛选：{{ query.mcVersion || '全部 Minecraft' }} / {{ query.loader || '全部 Loader' }}</span>
+        <select
+          v-if="store.installed.length"
+          class="select filter-select instance-filter"
+          :value="''"
+          title="按已安装实例带入其 MC 版本与 Loader"
+          @change="useInstance(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''"
+        >
+          <option value="" disabled selected>选择实例…</option>
+          <option v-for="v in store.installed.filter((x) => !x.failed && !x.incomplete)" :key="v.id" :value="v.id">
+            {{ v.id }}（{{ v.mcVersion }}{{ v.loader ? ` · ${v.loader}` : '' }}）
+          </option>
+        </select>
+        <button class="btn btn-ghost btn-sm" @click="useCurrentInstance">使用当前实例</button>
+      </div>
       <div class="search-row">
         <input
           v-model="query.keyword"
