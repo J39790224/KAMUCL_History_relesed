@@ -1,6 +1,5 @@
 // Real business-layer integration against temporary instances; only shared runtime caches are reused.
-// Run: node_modules/.bin/electron scripts/runtime-regression.cjs
-require('tsx/cjs')
+// Bundle first (including dynamic imports) with esbuild, then run using Electron. See release validation report.
 const { app } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -68,6 +67,53 @@ app.whenReady().then(async () => {
     assert(fs.existsSync(path.join(folder, 'versions', id, 'config', 'qa-pack-marker.txt')))
     assert(fs.existsSync(path.join(target, '26.2.jar')))
     console.log('PASS_PACK_SINGLE_INSTANCE_USER_VERSION_PRESERVED')
+    const loaderId = 'Runtime-with-arbitrary-display-name'
+    const loaderSource = previous.folders.map(f => path.join(f.path, 'versions', '26.2-NeoForge_26.2.0.66', '26.2-NeoForge_26.2.0.66.json')).find(p => fs.existsSync(p))
+    if (!loaderSource) throw new Error('NeoForge integration fixture requires installed 26.2.0.66')
+    const loaderDir = path.join(folder, 'versions', loaderId)
+    fs.mkdirSync(path.join(loaderDir, 'saves'), { recursive: true })
+    const loaderJson = JSON.stringify({ ...JSON.parse(fs.readFileSync(loaderSource, 'utf8')), id: loaderId })
+    fs.writeFileSync(path.join(loaderDir, `${loaderId}.json`), loaderJson)
+    fs.writeFileSync(path.join(loaderDir, 'saves', 'keep.txt'), 'preserve existing instance')
+    const neoZip = new AdmZip()
+    neoZip.addFile('modrinth.index.json', Buffer.from(JSON.stringify({ formatVersion: 1, game: 'minecraft', name: 'QA NeoForge Pack', versionId: '1', dependencies: { minecraft: '26.2', neoforge: '26.2.0.66' }, files: [] })))
+    neoZip.addFile('overrides/config/qa.txt', Buffer.from('pack override'))
+    const neoPack = path.join(qaRoot, 'neoforge.mrpack')
+    neoZip.writeZip(neoPack)
+    const before = fs.readdirSync(path.join(folder, 'versions'))
+    const neoId = await packs.installModpack(neoPack, progress, { targetFolder: folder, nameSource: 'inner' })
+    const added = fs.readdirSync(path.join(folder, 'versions')).filter(name => !before.includes(name))
+    assert.deepEqual(added, [neoId])
+    const installed = versions.scanInstalledFolder(folder).versions.find(v => v.id === neoId)
+    assert.equal(installed.loader, 'neoforge')
+    assert.equal(installed.loaderVersion, '26.2.0.66')
+    assert.equal(installed.mcVersion, '26.2')
+    assert.equal(fs.readFileSync(path.join(loaderDir, `${loaderId}.json`), 'utf8'), loaderJson)
+    assert(!fs.existsSync(path.join(folder, 'versions', neoId, 'saves', 'keep.txt')))
+    console.log('PASS_NEOFORGE_PACK_SINGLE_INSTANCE_METADATA_REUSE')
+    const cancel = new AbortController()
+    await assert.rejects(packs.installModpack(neoPack, e => {
+      if (e.stage === 'modpack' && e.progress === .96) cancel.abort()
+    }, { targetFolder: folder, instanceName: 'QA Cancelled Pack', signal: cancel.signal }), /取消/)
+    assert(!fs.existsSync(path.join(folder, 'versions', 'QA Cancelled Pack')))
+    assert.equal(fs.readFileSync(path.join(loaderDir, `${loaderId}.json`), 'utf8'), loaderJson)
+    console.log('PASS_MODPACK_CANCEL_ROLLBACK')
+    const appearance = require('../src/main/core/appearanceAssets.ts')
+    const settings = require('../src/main/core/settings.ts')
+    const gallery = []
+    for (const name of ['banner1.png', 'banner2.png']) {
+      gallery.push((await appearance.importGlobalImage(path.resolve('src/renderer/src/assets', name), 'launch-thumbnail')).path)
+    }
+    settings.saveSettings({ launchThumbnail: { images: gallery, image: gallery[0], fit: 'crop' } })
+    const stored = JSON.parse(fs.readFileSync(path.join(qaRoot, 'settings.json'), 'utf8'))
+    assert.deepEqual(stored.launchThumbnail.images, gallery)
+    assert(gallery.every(image => image.startsWith(qaRoot) && fs.existsSync(image)))
+    settings.saveSettings({ launchThumbnail: { images: [...gallery].reverse(), image: gallery[1], fit: 'fit' } })
+    assert.deepEqual(settings.getSettings().launchThumbnail.images, [...gallery].reverse())
+    settings.saveSettings({ launchThumbnail: { images: [gallery[0]], image: gallery[0], fit: 'crop' } })
+    assert(!fs.existsSync(gallery[1]))
+    assert(fs.existsSync(path.resolve('src/renderer/src/assets/banner2.png')))
+    console.log('PASS_GALLERY_IMPORT_PERSIST_REORDER_REMOVE_ORIGINAL_PRESERVED')
   } catch (error) { console.error('QA_FAILED=' + (error.stack ?? error)); process.exitCode = 1 }
   finally {
     if (launch.isBusy()) await launch.killGame().catch(() => {})

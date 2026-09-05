@@ -14,7 +14,8 @@ export function copyRuntimeProfile(root: string, sourceId: string, targetId: str
   if (fs.existsSync(target)) throw new Error('目标实例已存在')
   const profile = JSON.parse(fs.readFileSync(path.join(source, `${sourceId}.json`), 'utf8'))
   fs.mkdirSync(target)
-  fs.writeFileSync(path.join(target, `${targetId}.json`), JSON.stringify({ ...profile, id: targetId }, null, 2))
+  const runtime = Object.fromEntries(Object.entries(profile).filter(([key]) => !key.startsWith('_')))
+  fs.writeFileSync(path.join(target, `${targetId}.json`), JSON.stringify({ ...runtime, id: targetId }, null, 2))
   const jar = path.join(source, `${sourceId}.jar`)
   if (fs.existsSync(jar)) fs.copyFileSync(jar, path.join(target, `${targetId}.jar`))
 }

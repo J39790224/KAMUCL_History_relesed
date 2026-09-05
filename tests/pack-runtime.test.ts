@@ -22,13 +22,14 @@ test('reusing an existing loader preserves its files and copies only runtime int
   try {
     const source = path.join(root, 'loader')
     fs.mkdirSync(path.join(source, 'saves'), { recursive: true })
-    fs.writeFileSync(path.join(source, 'loader.json'), JSON.stringify({ id: 'loader', inheritsFrom: '26.2' }))
+    fs.writeFileSync(path.join(source, 'loader.json'), JSON.stringify({ id: 'loader', inheritsFrom: '26.2', _thumbnail: 'user-image', _javaPath: 'user-specific-java' }))
     fs.writeFileSync(path.join(source, 'loader.jar'), 'runtime')
     fs.writeFileSync(path.join(source, 'saves', 'world'), 'user-world')
     copyRuntimeProfile(root, 'loader', 'Pack')
     assert.equal(fs.readFileSync(path.join(source, 'saves', 'world'), 'utf8'), 'user-world')
     assert.deepEqual(fs.readdirSync(path.join(root, 'Pack')).sort(), ['Pack.jar', 'Pack.json'])
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'Pack', 'Pack.json'), 'utf8')).id, 'Pack')
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'Pack', 'Pack.json'), 'utf8'))._thumbnail, undefined)
     assert.throws(() => copyRuntimeProfile(root, 'loader', '../escape'))
     assert.throws(() => copyRuntimeProfile(root, 'loader', 'Pack'))
   } finally { fs.rmSync(root, { recursive: true, force: true }) }

@@ -17,6 +17,7 @@ import {
   libraryTasks,
   migrateDependencyVanilla,
   readVersionJson,
+  scanInstalledFolder,
   type VersionJson
 } from './versions'
 
@@ -218,17 +219,10 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
 function findInstalledDir(loader: LoaderName, mcVersion: string, loaderVersion: string): string | null {
   const dir = versionsDir()
   if (!fs.existsSync(dir)) return null
-  // Forge 生成的目录名形如 `<mc>-forge-<ver>`；NeoForge 形如 `neoforge-<ver>`
-  const needle = loader === 'forge' ? `forge-${loaderVersion}` : loaderVersion
-  const candidates = fs
-    .readdirSync(dir)
-    .filter((name) => {
-      const lower = name.toLowerCase()
-      if (!lower.includes(loader)) return false
-      if (!name.includes(needle)) return false
-      return fs.existsSync(versionJsonPath(name))
-    })
-    .map((name) => ({ name, mtime: fs.statSync(versionDir(name)).mtimeMs }))
+  // Match resolved runtime metadata, never a display-name substring (e.g. .66 vs .660).
+  const candidates = scanInstalledFolder(gameDir()).versions
+    .filter(item => item.loader === loader && item.mcVersion === mcVersion && item.loaderVersion === loaderVersion)
+    .map(item => ({ name: item.id, mtime: fs.statSync(versionDir(item.id)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
   return candidates[0]?.name ?? null
 }
