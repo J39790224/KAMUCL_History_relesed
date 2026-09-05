@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /**
  * 账号方块头像：watch 当前选中账号 → getSkinAvatar()
- * - 微软：返回整皮肤 dataURL，renderSkinHead 裁头部渲染 MC 方块头像
- * - 离线：minotar 已是成品头盔头像，直接展示
+ * - 所有账号：共用整皮肤缓存，renderSkinHead 裁头部渲染 MC 方块头像
  * - null / 加载失败：首字母圆形头像兜底
  */
 import { computed, onUnmounted, ref, watch } from 'vue'
@@ -33,7 +32,7 @@ async function loadImpl() {
   }
   // 账号在加载期间被切换则丢弃过期结果
   if (!data || request !== generation) return
-  const rendered = acc.type !== 'offline' ? await renderSkinHead(data, Math.max(64, props.size * 2)) : data
+  const rendered = await renderSkinHead(data, Math.max(64, props.size * 2))
   if (request === generation) head.value = rendered
 }
 

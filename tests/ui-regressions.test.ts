@@ -23,6 +23,10 @@ test('favorites render once with full controls; list and switch targets cannot c
   assert.match(css, /\.switch input\s*\{[^}]*width: 100%/)
   assert.match(css, /\.switch-ui\s*\{[^}]*pointer-events: none/)
 })
+test('all account types crop cached full skin to avatar head', () => {
+  const avatar = fs.readFileSync('src/renderer/src/components/Avatar.vue', 'utf8')
+  assert.match(avatar, /const rendered = await renderSkinHead\(data/)
+})
 test('modpack text selection cannot dismiss on mouse release; conflict cards are full sized', () => {
   const app = fs.readFileSync('src/renderer/src/App.vue', 'utf8')
   assert.match(app, /@pointerdown.self="closeModpackImport"/)
