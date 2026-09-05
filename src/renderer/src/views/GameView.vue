@@ -513,8 +513,11 @@ function onRetry(versionId: string) {
 /** 安装中的版本（进度条显示在已安装页顶部） */
 const installingVersions = computed(() => [...store.installing])
 
-/** 文件夹路径简写（取末级目录名） */
+/** 文件夹显示名：优先用文件夹登记时的命名，未登记回退路径末级目录名 */
 const folderShortName = (p: string): string => {
+  const norm = (v: string) => v.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
+  const hit = store.settings?.folders.find((f) => norm(f.path) === norm(p))
+  if (hit?.name?.trim()) return hit.name.trim()
   const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
   return parts[parts.length - 1] || p
 }
