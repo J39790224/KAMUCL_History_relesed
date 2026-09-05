@@ -22,8 +22,16 @@ test('rejected termination leaves the game owned and clears temporary listeners'
   session.attach(token, child as unknown as ChildProcess)
   await assert.rejects(session.stop(), /未接受/)
   assert(session.busy)
-  assert.equal(child.listenerCount('exit'), 0)
+  assert.equal(child.listenerCount('close'), 0)
   assert.equal(child.listenerCount('error'), 0)
+})
+test('an exited forwarding process with inherited open streams cannot falsely confirm game termination', async () => {
+  const session = new GameSession()
+  const token = session.reserve('forwarder')
+  const child = Object.assign(new EventEmitter(), { exitCode: 0, signalCode: null, kill: () => { throw Error('must not kill reused PID') } })
+  session.attach(token, child as unknown as ChildProcess)
+  await assert.rejects(session.stop(20), /尚未确认退出/)
+  assert(session.busy)
 })
 test('stop waits for the owned real process to exit and never announces success for missing process', async () => {
   const session = new GameSession()

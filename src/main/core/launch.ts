@@ -10,7 +10,7 @@ import AdmZip from 'adm-zip'
 import type { LaunchState, ProgressEvent } from '../../shared/types'
 import { getSettings } from './settings'
 import { getValidAccount, selectedAccount } from './accounts'
-import { ensureJava, requiredMajor, scanJava } from './java'
+import { ensureJava, requiredMajor, scanJava, resolveJavaExecutable } from './java'
 import {
   assetIndexPath,
   assetsDir,
@@ -348,6 +348,9 @@ async function launchOwned(
   }
 
   // f) 变量替换表
+  const selectedJavaPath = javaPath
+  javaPath = await resolveJavaExecutable(javaPath)
+  if (selectedJavaPath !== javaPath) log(`[KAMUCL] Java 转发入口已解析到真实运行时: ${javaPath}`)
   const userProperties = serializeYggdrasilUserProperties(validAccount.userProperties)
   const vars: Record<string, string> = {
     auth_player_name: validAccount.username,

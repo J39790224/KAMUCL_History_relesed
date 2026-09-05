@@ -15,6 +15,7 @@ import type { VersionJson } from './versions'
 import { waitIfTaskPaused } from './tasks'
 import {
   parseJavaProbeOutput,
+  javaHomeExecutable,
   parseRegistryJavaHomes,
   shouldPruneJavaDirectory
 } from './javaScanUtils'
@@ -163,6 +164,16 @@ async function probeJavaAsync(exe: string, signal?: AbortSignal): Promise<JavaIn
     throwIfScanCancelled(signal)
     return null
   }
+}
+
+/** Resolve the JVM behind PATH shims before launching so the tracked PID owns the game. */
+export async function resolveJavaExecutable(exe: string): Promise<string> {
+  const probe = /javaw\.exe$/i.test(exe) ? path.join(path.dirname(exe), 'java.exe') : exe
+  const output = await runTextProcess(probe, ['-XshowSettings:properties', '-version'], undefined, 10000)
+  const runtime = javaHomeExecutable(output)
+  const resolved = runtime && realExecutable(runtime)
+  if (!resolved) throw new Error('无法解析真实 Java 运行时，请选择 JDK/JRE 的 bin/java 可执行文件')
+  return resolved
 }
 
 /** 启动流程使用的轻量候选，不遍历磁盘。 */

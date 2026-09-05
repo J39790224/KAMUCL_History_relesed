@@ -2,11 +2,20 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   expandWindowsEnvironment,
+  javaHomeExecutable,
   normalizeJavaArchitecture,
   parseJavaProbeOutput,
   parseRegistryJavaHomes,
   shouldPruneJavaDirectory
 } from '../src/main/core/javaScanUtils'
+
+test('Java forwarding path resolves to actual java.home runtime across versions and operating systems', () => {
+  assert.equal(javaHomeExecutable('    java.home = C:\\Program Files\\Java\\jdk-25.0.2\n', 'win32'), 'C:\\Program Files\\Java\\jdk-25.0.2\\bin\\java.exe')
+  assert.equal(javaHomeExecutable('java.home = D:\\运行环境\\jre8', 'win32'), 'D:\\运行环境\\jre8\\bin\\java.exe')
+  assert.equal(javaHomeExecutable('java.home = /opt/jdk-21', 'linux'), '/opt/jdk-21/bin/java')
+  assert.equal(javaHomeExecutable('java.home = relative', 'win32'), null)
+  assert.equal(javaHomeExecutable('java.version = 25', 'win32'), null)
+})
 
 test('Java 探测输出解析版本、架构和发行版', () => {
   const modern = parseJavaProbeOutput(`

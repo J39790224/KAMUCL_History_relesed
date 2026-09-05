@@ -45,6 +45,14 @@ function property(output: string, name: string): string | undefined {
   return new RegExp(`^\\s*${escaped}\\s*=\\s*(.+?)\\s*$`, 'im').exec(output)?.[1]
 }
 
+/** Oracle javapath and similar launchers can be forwarding executables, not the JVM process. */
+export function javaHomeExecutable(output: string, platform: NodeJS.Platform = process.platform): string | null {
+  const home = property(output, 'java.home')?.replace(/^"|"$/g, '')
+  const paths = platform === 'win32' ? path.win32 : path.posix
+  if (!home || !paths.isAbsolute(home)) return null
+  return paths.join(home, 'bin', platform === 'win32' ? 'java.exe' : 'java')
+}
+
 /** 解析 `java -XshowSettings:properties -version` 的 stdout/stderr。 */
 export function parseJavaProbeOutput(
   output: string,
