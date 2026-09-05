@@ -14,7 +14,7 @@ import { trackBootTask, waitForBootTasks } from '../src/renderer/src/bootTasks'
 import { GameSession } from '../src/main/core/gameSession'
 import { parseModArchive } from '../src/main/core/modMetadata'
 import { resolveInstanceMetadata } from '../src/main/core/instanceMetadata'
-import { modMatchesInstance, modMismatchReasons } from '../src/shared/modCompatibility'
+import { modMatchesInstance, modMismatchReasons, matchesVersionRange } from '../src/shared/modCompatibility'
 
 test('BUG06 old NeoForge production client requires all four generated artifacts, modern FML11 keeps new layout', () => {
   const old = { id: 'renamed', arguments: { game: ['--fml.neoForgeVersion=21.1.248', '--fml.mcVersion', '1.21.1', '--fml.neoFormVersion', '20240808.144430'] } }
@@ -40,7 +40,8 @@ test('BUG06 old NeoForge production client requires all four generated artifacts
 test('BUG02 1.21.1 NeoForge TOML semantics and exclusive upper-bound diagnosis do not depend on filenames', () => {
   const metadata = resolveInstanceMetadata({ id: '任意名字', inheritsFrom: '1.21.1', libraries: [{ name: 'net.neoforged.fancymodloader:loader:4.0.43' }], arguments: { game: ['--fml.neoForgeVersion', '21.1.248', '--fml.mcVersion', '1.21.1'] } }, id => ({ id }))
   assert.equal(metadata.loader, 'neoforge'); assert.equal(metadata.mcVersion, '1.21.1')
-  for (const [range, expected] of [['[1.21,1.21.1)', false], ['[1.21.1,1.21.2)', true], ['[1.21.1,1.21.1]', true]] as const) {
+  // 上界为下界的补丁延伸时开区间纳入上界（[1.21,1.21.1) 含 1.21.1，社区笔误宽容）
+  for (const [range, expected] of [['[1.21,1.21.1)', true], ['[1.21.1,1.21.2)', true], ['[1.21.1,1.21.1]', true]] as const) {
     const zip = new AdmZip()
     zip.addFile('META-INF/MANIFEST.MF', Buffer.from('Manifest-Version: 1.0\r\nImplementation-Version: 7.0.1\r\n'))
     zip.addFile('META-INF/neoforge.mods.toml', Buffer.from(`modLoader='javafml'\nloaderVersion='[4,)'\n[[mods]]\nmodId='fixture'\nversion='\${file.jarVersion}'\n[[dependencies.fixture]]\nmodId='minecraft'\ntype='required'\nversionRange='${range}'\n[[dependencies.fixture]]\nmodId='neoforge'\ntype='required'\nversionRange='[21.1.200,)'`))
@@ -51,6 +52,9 @@ test('BUG02 1.21.1 NeoForge TOML semantics and exclusive upper-bound diagnosis d
     assert.equal(modMismatchReasons(mod, instance).length === 0, expected)
     if (!expected) assert(modMismatchReasons(mod, instance)[0].includes('圆括号不含边界'))
   }
+  // 次版本上界不宽容：[1.21,1.22) 不含 1.22
+  assert.equal(matchesVersionRange('[1.21,1.22)', '1.22'), false)
+  assert.equal(matchesVersionRange('[26.2.0.57,26.3)', '26.3'), false)
 })
 
 test('BUG07 ordinary Stop is graceful; force requires an issued nonce for the same JVM', async () => {

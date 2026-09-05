@@ -78,7 +78,17 @@ export function matchesVersionRange(range: string, version: string): boolean {
       if (lo && hi && compareVersions(lo, hi) > 0) return false
       const low = lo ? compareVersions(version, lo) : 1
       const high = hi ? compareVersions(version, hi) : -1
-      return (low > 0 || low === 0 && interval[0] === '[') && (high < 0 || high === 0 && interval.endsWith(']'))
+      // 开区间上界「补丁延伸」宽容：上界是下界补一段补丁段的延伸（如 [1.21,1.21.1)
+      // 下界 1.21 是上界 1.21.1 的前缀截断）时纳入上界——社区 mods.toml 常见笔误，
+      // 作者意图为整个 1.21.x 系列。次版本截止（[26.2.0.57,26.3)）不受影响。
+      const extendsByPatch = (() => {
+        if (!lo || !hi) return false
+        const lp = lo.split('.')
+        const hp = hi.split('.')
+        return hp.length > lp.length && hp.slice(0, lp.length).join('.') === lp.join('.')
+      })()
+      return (low > 0 || low === 0 && interval[0] === '[') &&
+        (high < 0 || high === 0 && (interval.endsWith(']') || extendsByPatch))
     })
   }
   return r.replace(/(>=|<=|>|<|=|~|\^)\s+/g, '$1').split(/\s+/).every(part => predicate(part, version))
