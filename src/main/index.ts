@@ -7,6 +7,7 @@ import { initializeLauncherLog, launcherLog } from './core/launcherLog'
 import { getSettings, migrateLegacyAppearanceAssets } from './core/settings'
 import { windowAppearance } from './windowAppearance'
 import { applyNativeAppearance } from './nativeAppearance'
+import { loadWindowState, trackWindowState } from './windowState'
 import { stopDirectHost } from './core/directConnect'
 
 // 启动日志尽 earliest 初始化：闪退发生在 app.whenReady 之前时也有据可查
@@ -36,8 +37,12 @@ let win: BrowserWindow | null = null
 
 function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
   applyNativeAppearance(null, getSettings())
+  const windowState = loadWindowState()
   win = new BrowserWindow({
     ...windowAppearance(),
+    ...(windowState
+      ? { width: windowState.width, height: windowState.height, x: windowState.x, y: windowState.y }
+      : {}),
     icon: join(__dirname, '../../build/icon.png'),
     show: false,
     title: 'KAMUCL',
@@ -49,6 +54,7 @@ function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
       backgroundThrottling: false
     }
   })
+  if (windowState?.maximized) win.maximize()
 
   // Electron 33 会把 backgroundMaterial 交给 DWM；显式重设一次可覆盖部分
   // Windows 恢复窗口状态时丢失材质的情况。旧版 Windows 会安全忽略该调用。
@@ -65,6 +71,7 @@ function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
   if (startup) startup.attach(win)
   else   win.on('ready-to-show', () => win?.show())
   applyNativeAppearance(win, getSettings())
+  trackWindowState(win)
   // 渲染进程崩溃/无响应取证（25h2 GPU 崩溃常见前兆），现有 splash 处理只覆盖初始化期
   win.webContents.on('render-process-gone', (_event, details) => {
     try {
