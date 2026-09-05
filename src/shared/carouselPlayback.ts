@@ -16,6 +16,10 @@ export class CarouselPlayback {
     }
     return this.index
   }
+  /** 下一张的索引（不推进状态；用于切换前确认资源已就绪，防止闪现旧图） */
+  peekNext(now: number): number {
+    return this.slides.length > 1 && now >= this.due ? (this.index + 1) % this.slides.length : this.index
+  }
   bookmark(now: number): CarouselBookmark {
     this.tick(now)
     return { path: this.slides[this.index]?.path ?? '', remainingMs: Math.max(1, this.due - now) }

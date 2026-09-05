@@ -116,6 +116,15 @@ const bannerIndex = ref(0)
 let bannerTimer: ReturnType<typeof setInterval> | null = null
 let playback: CarouselPlayback | null = null
 let playbackKey = ''
+/** 已加载就绪的轮播图（src 级缓存）：切换只在下一张就绪后发生，杜绝「先闪第一张」 */
+const readyBanners = new Set<string>()
+
+function preloadBanner(src: string) {
+  if (readyBanners.has(src)) return
+  const im = new Image()
+  im.onload = () => readyBanners.add(src)
+  im.src = src
+}
 const bannerScope = computed(() => currentVersion.value?.thumbnail ? `instance:${currentVersion.value.folder}:${currentVersion.value.id}` : customBanners.value.length ? 'global' : 'builtin')
 
 function stopBannerTimer() {
@@ -134,9 +143,14 @@ function startBannerTimer() {
   const settings = store.settings?.launchThumbnail
   playback = new CarouselPlayback(banners.value.map(item => ({ path: item.path, durationMs: 1000 * carouselDuration(settings?.durations?.[item.path] ?? settings?.intervalSeconds) })), Date.now(), saved)
   bannerIndex.value = playback.index
+  // 预加载全部轮播图：避免切到下一张时因图片未加载而短暂露出第一张
+  for (const item of banners.value) preloadBanner(item.src)
   if (banners.value.length < 2) return
   bannerTimer = setInterval(() => {
-    if (!document.hidden) bannerIndex.value = playback!.tick(Date.now())
+    if (document.hidden || !playback) return
+    const nextIdx = playback.peekNext(Date.now())
+    if (nextIdx !== playback.index && !readyBanners.has(banners.value[nextIdx]?.src ?? '')) return // 下一张未就绪，下一拍再试
+    bannerIndex.value = playback.tick(Date.now())
   }, 100)
 }
 
