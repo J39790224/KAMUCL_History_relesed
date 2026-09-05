@@ -181,7 +181,26 @@ const dragActive = ref(false)
 /** 进入/离开子元素会成对触发 dragenter/dragleave，用计数器避免遮罩闪烁 */
 let dragDepth = 0
 let internalDrag = false
+/** 最近一次 dragover 时间戳：浏览器对拖出窗口/异常手势会停发事件，超时兜底防覆盖层残留 */
+let lastDragoverAt = 0
+let dragWatchdog: ReturnType<typeof setInterval> | null = null
 function endDrag() { internalDrag = false; dragDepth = 0; dragActive.value = false }
+
+/** 覆盖层激活期间启动看门狗：1.5s 没有任何拖拽事件即强制复位 */
+function startDragWatchdog() {
+  stopDragWatchdog()
+  lastDragoverAt = Date.now()
+  dragWatchdog = setInterval(() => {
+    if (dragActive.value && Date.now() - lastDragoverAt > 1500) endDrag()
+  }, 400)
+}
+function stopDragWatchdog() {
+  if (dragWatchdog) {
+    clearInterval(dragWatchdog)
+    dragWatchdog = null
+  }
+}
+watch(dragActive, (active) => (active ? startDragWatchdog() : stopDragWatchdog()))
 
 const dragHasFiles = (e: DragEvent) =>
   Array.from(e.dataTransfer?.types ?? []).includes('Files')
@@ -212,6 +231,7 @@ function onDragEnter(e: DragEvent) {
 function onDragOver(e: DragEvent) {
   if (!dragHasSupportedData(e)) return
   e.preventDefault() // 必须 preventDefault 才允许 drop
+  lastDragoverAt = Date.now()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
   dragActive.value = showsImportOverlay(Array.from(e.dataTransfer?.types ?? []), internalDrag)
 }
@@ -223,10 +243,11 @@ function onDragLeave(e: DragEvent) {
 }
 
 function onDrop(e: DragEvent) {
-  if (!dragHasSupportedData(e)) return
-  e.preventDefault()
+  // 覆盖层复位先于一切判定：任何 drop 发生都意味着拖拽手势已结束
   dragDepth = 0
   dragActive.value = false
+  if (!dragHasSupportedData(e)) return
+  e.preventDefault()
   dlOpen.value = false; noticeOpen.value = false
   const dropped = Array.from(e.dataTransfer?.files ?? [])
   if (!dropped.length) {
@@ -929,6 +950,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopDragWatchdog()
   window.removeEventListener('keydown', onEditKeydown)
   offs.forEach((off) => off())
 })
