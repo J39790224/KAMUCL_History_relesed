@@ -36,7 +36,7 @@ import * as servers from './core/servers'
 import { scanModTargets, selectModTarget, copyCompatibleMods } from './core/modTargets'
 import * as modinfo from './core/modinfo'
 import * as gamedir from './core/gamedir'
-import { folderOfVersion, instanceIconsDir } from './core/paths'
+import { folderOfVersion, instanceIconsDir, withGameFolder } from './core/paths'
 import * as modpacks from './core/modpacks'
 import * as skins from './core/skins'
 import * as community from './core/community'
@@ -644,10 +644,16 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送
-  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string) => {
+  ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string, requestedFolder?: string) => {
+    if (launch.isBusy()) throw new Error('已有游戏正在启动或运行，请先结束当前游戏')
+    if (typeof versionId !== 'string' || !versionId.trim()) throw new Error('请选择有效的游戏实例')
+    const config = settings.getSettings()
+    const folder = requestedFolder || config.activeFolder || config.gameDir
+    if (!config.folders.some(f => pathIdentity(f.path) === pathIdentity(folder))) throw new Error('目标游戏文件夹未注册')
+    if (!versions.scanInstalledFolder(folder).versions.some(v => v.id === versionId && !v.failed && !v.incomplete)) throw new Error('目标实例不存在或不完整，请刷新版本列表')
     launcherLog(`Launch requested: version=${String(versionId ?? '')}`)
     sendState({ status: 'launching', text: '正在准备启动…' })
-    void launch
+    void withGameFolder(folder, () => launch
       .launch(
         versionId,
         emit,
@@ -668,7 +674,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         launch.recordLaunchPreparationError(String(versionId ?? ''), errText(err))
         launcherLog(`Launch preparation failed: ${errText(err)}`)
         sendState({ status: 'error', text: errText(err) })
-      })
+      }))
   })
   ipcMain.handle(IPC.gameKill, () => launch.killGame())
   // 导出启动失败日志包（保存对话框在 main 弹出）

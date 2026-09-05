@@ -5,11 +5,15 @@
  * - libraries / assets / runtimes 共享，统一放在「默认文件夹」下
  */
 import path from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { getSettings } from './settings'
+const launchFolder = new AsyncLocalStorage<string>()
+/** Freeze an accepted launch's directory across async authentication/downloads and UI folder changes. */
+export function withGameFolder<T>(folder: string, action: () => T): T { return launchFolder.run(folder, action) }
 
 /** 当前活动游戏文件夹（新安装版本与常规寻址目标） */
 export function gameDir(): string {
-  return getSettings().activeFolder || getSettings().gameDir
+  return launchFolder.getStore() ?? (getSettings().activeFolder || getSettings().gameDir)
 }
 
 /** 默认文件夹（libraries/assets/runtimes 的共享位置） */
@@ -36,7 +40,7 @@ export function registerVersionFolder(id: string, folder: string): void {
 
 /** 版本所属文件夹（未注册时回退为当前活动文件夹） */
 export function folderOfVersion(id: string): string {
-  return versionFolderMap.get(id) ?? gameDir()
+  return launchFolder.getStore() ?? versionFolderMap.get(id) ?? gameDir()
 }
 
 // ---------------- versions ----------------

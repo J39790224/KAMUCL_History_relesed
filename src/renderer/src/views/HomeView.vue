@@ -149,6 +149,7 @@ function onBannerError(item: { custom: boolean; path: string }) {
 
 // ---------------- 启动、设置与日志 ----------------
 const launching = computed(() => store.launchState?.status === 'launching')
+const stopping = ref(false)
 const running = computed(() => store.launchState?.status === 'running')
 const launchFailed = computed(
   () =>
@@ -159,6 +160,7 @@ const percent = computed(() =>
   store.progress ? Math.round(progressMono(store.progress) * 100) : 0
 )
 const launchText = computed(() => {
+  if (stopping.value) return '正在结束…'
   if (running.value) return '结束游戏'
   if (launching.value) return store.progress?.text || '正在启动…'
   return '开始游戏'
@@ -188,20 +190,24 @@ async function startVersion(id: string) {
   }
   store.launchingVersionId = id
   store.launchingFolder = store.settings?.activeFolder ?? store.settings?.gameDir ?? ''
+  store.launchState = { status: 'launching', text: '正在准备启动…' }
   try {
-    await launchGame(id)
+    await launchGame(id, undefined, currentVersion.value?.folder)
   } catch (error) {
+    store.launchState = { status: 'error', text: errText(error) }
     toast('启动失败：' + errText(error), 'error')
   }
 }
 
 async function onLaunchClick() {
   if (running.value) {
+    if (stopping.value) return
+    stopping.value = true
     try {
       await killGame()
     } catch (error) {
       toast('结束游戏失败：' + errText(error), 'error')
-    }
+    } finally { stopping.value = false }
     return
   }
   if (!launching.value) await startVersion(selectedId.value)
@@ -466,7 +472,7 @@ onUnmounted(() => {
               <button
                 class="launch-main"
                 :class="{ launching, running }"
-                :disabled="launching || (!running && !currentVersion)"
+                :disabled="launching || stopping || (!running && !currentVersion)"
                 @click="onLaunchClick"
               >
                 <span v-if="launching" class="launch-progress" :style="{ width: percent + '%' }"></span>

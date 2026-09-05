@@ -235,8 +235,8 @@ export const resolveDirectInvitation = (text: string) => invoke<import('@shared/
 export const prepareDirectJoin = (text: string, versionId: string, folder: string) => invoke<{versionId:string; folder:string; address:string; directJoin:boolean}>(IPC.directPrepareJoin, text, versionId, folder)
 
 // ---------------- 游戏 ----------------
-export const launchGame = (id: string, serverAddress?: string) =>
-  invoke<void>(IPC.gameLaunch, id, serverAddress)
+export const launchGame = (id: string, serverAddress?: string, folder?: string) =>
+  invoke<void>(IPC.gameLaunch, id, serverAddress, folder)
 export const killGame = () => invoke<void>(IPC.gameKill)
 
 // ---------------- 服务器 ----------------

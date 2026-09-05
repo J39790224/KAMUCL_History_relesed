@@ -3,7 +3,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { GameSession } from './gameSession'
 import { app, screen } from 'electron'
 import AdmZip from 'adm-zip'
 import type { LaunchState, ProgressEvent } from '../../shared/types'
@@ -42,12 +43,12 @@ export type ProgressEmit = (e: ProgressEvent) => void
 export type SendLog = (line: string) => void
 export type OnState = (s: LaunchState) => void
 
-let current: ChildProcess | null = null
-let currentVersionId: string | null = null
+const gameSession = new GameSession()
+export const isBusy = () => gameSession.busy
 
 /** 当前正在运行的游戏版本 id（无则 null），供重命名等写操作前校验 */
 export function getRunningVersionId(): string | null {
-  return currentVersionId
+  return gameSession.versionId
 }
 
 /** 最近一次启动的上下文（导出错误日志摘要用） */
@@ -81,14 +82,7 @@ export function recordLaunchPreparationError(versionId: string, message: string)
 }
 
 /** 终止当前游戏进程 */
-export function killGame(): void {
-  try {
-    current?.kill()
-  } catch {
-    /* 进程可能已退出 */
-  }
-  current = null
-}
+export const killGame = (): Promise<void> => gameSession.stop()
 
 /**
  * 沿 inheritsFrom 读取版本链并合并：
@@ -162,6 +156,15 @@ export async function launch(
   onState: OnState,
   serverAddress?: string
 ): Promise<void> {
+  const token = gameSession.reserve(versionId)
+  try { await launchOwned(versionId, emit, sendLog, onState, serverAddress, token) }
+  catch (error) { gameSession.release(token); throw error }
+}
+
+async function launchOwned(
+  versionId: string, emit: ProgressEmit, sendLog: SendLog, onState: OnState,
+  serverAddress: string | undefined, token: symbol
+): Promise<void> {
   const settings = getSettings()
 
   // 日志落盘：gameDir/kamucl-logs/latest.log（每次启动覆盖）
@@ -189,6 +192,8 @@ export async function launch(
     }
   }
 
+  let spawned = false
+  try {
   // a0) 自愈：版本链 json 缺失或链底客户端 jar 缺失时，自动补全下载原版文件
   let baseIdProbe = versionId
   let chainBroken = false
@@ -464,8 +469,8 @@ export async function launch(
 
   emit({ stage: 'launch', progress: 1, text: '启动游戏进程' })
   const proc = spawn(javaPath, args, { cwd: effectiveGameDir })
-  current = proc
-  currentVersionId = versionId
+  gameSession.attach(token, proc)
+  spawned = true
   lastLaunch = {
     versionId,
     javaPath,
@@ -478,7 +483,7 @@ export async function launch(
     windowHeight: windowArgs.height,
     pid: proc.pid
   }
-  onState({ status: 'running', text: '游戏进程已启动' })
+  proc.once('spawn', () => onState({ status: 'running', text: '游戏进程已启动' }))
 
   const pushStdout = makeLinePusher((line) => {
     stdoutStream?.write(line + '\n')
@@ -491,8 +496,12 @@ export async function launch(
   proc.stdout?.on('data', pushStdout)
   proc.stderr?.on('data', pushStderr)
   proc.on('error', (err) => {
-    current = null
-    currentVersionId = null
+    // A failed kill can also emit 'error'; it is not evidence that the game exited.
+    if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
+      log(`进程操作失败，仍在跟踪游戏: ${err.message}`)
+      return
+    }
+    if (!gameSession.release(token)) return
     logStream?.end()
     stdoutStream?.end()
     stderrStream?.end()
@@ -502,9 +511,8 @@ export async function launch(
     }
     onState({ status: 'error', text: `进程启动失败: ${err.message}` })
   })
-  proc.on('exit', (code) => {
-    current = null
-    currentVersionId = null
+  proc.on('close', (code) => {
+    if (!gameSession.release(token)) return
     logStream?.end()
     stdoutStream?.end()
     stderrStream?.end()
@@ -514,4 +522,7 @@ export async function launch(
     }
     onState({ status: 'exited', code: code ?? 0, text: `游戏已退出 (code=${code ?? 0})` })
   })
+  } finally {
+    if (!spawned) { logStream?.end(); stdoutStream?.end(); stderrStream?.end() }
+  }
 }
