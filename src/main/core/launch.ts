@@ -64,17 +64,17 @@ export function cancelRestart(): void {
 
 /** Holds ownership across close -> relaunch so another click cannot race into the gap. */
 export async function restartGame(versionId: string, folder: string, forceToken?: string): Promise<{ requiresForce: boolean; forceToken?: string }> {
+  const targetToken = gameSession.tokenOf(versionId)
   if (forceToken) {
     if (!restartPending || restartPending.waiting || restartPending.forceToken !== forceToken || restartPending.invocation.versionId !== versionId || pathIdentity(restartPending.invocation.folder) !== pathIdentity(folder)) throw new Error('重启确认已失效，请重新请求')
-    if (gameSession.busy && gameSession.token !== restartPending.sessionToken) throw new Error('正在运行的会话已变化，未结束任何进程')
     restartPending.waiting = true
-    try { if (gameSession.busy) await gameSession.stop() }
+    try { if (targetToken) await gameSession.stop(8000, targetToken) }
     catch (error) { restartPending = undefined; throw error }
   } else {
     if (restartPending) throw new Error('已有重启请求正在处理')
-    if (!invocation || !gameSession.busy || invocation.versionId !== versionId || pathIdentity(invocation.folder) !== pathIdentity(folder)) throw new Error('此实例当前未运行；请选择启动实例')
-    restartPending = { invocation, sessionToken: gameSession.token, waiting: true }
-    try { await gameSession.stopGracefully(requestGameWindowClose) }
+    if (!invocation || !targetToken || invocation.versionId !== versionId || pathIdentity(invocation.folder) !== pathIdentity(folder)) throw new Error('此实例当前未运行；请选择启动实例')
+    restartPending = { invocation, sessionToken: targetToken, waiting: true }
+    try { await gameSession.stopGracefully(requestGameWindowClose, 30000, targetToken) }
     catch {
       restartPending.waiting = false
       restartPending.forceToken = crypto.randomUUID()
@@ -92,7 +92,12 @@ export async function restartGame(versionId: string, folder: string, forceToken?
   } finally { restartPending = undefined }
 }
 
-/** 当前正在运行的游戏版本 id（无则 null），供重命名等写操作前校验 */
+/** 当前正在运行的全部游戏版本 id（多开支持；改名等写操作前校验） */
+export function getRunningVersionIds(): Set<string> {
+  return gameSession.runningIds()
+}
+
+/** 最近一次会话的版本 id（兼容旧调用） */
 export function getRunningVersionId(): string | null {
   return gameSession.versionId
 }
@@ -595,7 +600,7 @@ async function launchOwned(
       lastLaunch.exitCode = code
       lastLaunch.endedAt = new Date().toISOString()
     }
-    onState({ status: 'exited', code: code ?? 0, intentionalRestart: restartPending?.sessionToken === token, intentionalStop: gameSession.stopIntentToken === token, text: `游戏已退出 (code=${code ?? 0})` })
+    onState({ status: 'exited', code: code ?? 0, intentionalRestart: restartPending?.sessionToken === token, intentionalStop: gameSession.wasIntentionalStop(token), text: `游戏已退出 (code=${code ?? 0})` })
   })
   } finally {
     if (!spawned) { logStream?.end(); stdoutStream?.end(); stderrStream?.end() }

@@ -7,7 +7,6 @@ import {
   exportLaunchLogs,
   getSkinProfile,
   getSettings,
-  killGame,
   launchGame,
   restartGame,
   cancelGameRestart,
@@ -159,8 +158,6 @@ function onBannerError(item: { custom: boolean; path: string }) {
 
 // ---------------- 启动、设置与日志 ----------------
 const launching = computed(() => store.launchState?.status === 'launching')
-const stopping = ref(false)
-const stopConfirm = ref<string | null>(null)
 const running = computed(() => store.launchState?.status === 'running')
 const launchFailed = computed(
   () =>
@@ -171,8 +168,6 @@ const percent = computed(() =>
   store.progress ? Math.round(progressMono(store.progress) * 100) : 0
 )
 const launchText = computed(() => {
-  if (stopping.value) return '正在结束…'
-  if (running.value) return '结束游戏'
   if (launching.value) return store.progress?.text || '正在启动…'
   return '开始游戏'
 })
@@ -190,8 +185,9 @@ const heroStatus = computed(() => {
 async function startVersion(id: string, createCommandWorld = false) {
   if (!id) return
   selectedId.value = id
-  if (launching.value || running.value) {
-    toast('已有游戏正在运行或启动中', 'info')
+  // 多开支持：仅「正在启动」的重复点击拦截；已有游戏运行中仍可再启动新实例
+  if (launching.value) {
+    toast('正在启动中，请稍候', 'info')
     return
   }
   if (!store.selectedAccount) {
@@ -225,21 +221,7 @@ async function quickRestart(version: InstalledVersion, token?: string) {
 }
 async function cancelRestartPrompt() { await cancelGameRestart(); restartConfirm.value = null }
 
-async function stopCurrentGame(forceToken?: string) {
-  if (stopping.value || restartBusy.value) return
-  stopping.value = true
-  try {
-    const result = await killGame(forceToken)
-    stopConfirm.value = result.requiresForce ? result.forceToken! : null
-  } catch (error) { toast('结束游戏失败：' + errText(error), 'error'); stopConfirm.value = null }
-  finally { stopping.value = false }
-}
-watch(running, value => { if (!value) stopConfirm.value = null })
 async function onLaunchClick() {
-  if (running.value) {
-    await stopCurrentGame()
-    return
-  }
   if (!launching.value) await startVersion(selectedId.value)
 }
 
@@ -498,17 +480,16 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <div class="launch-combo" :class="{ running }" data-edit="accent">
+            <div class="launch-combo" data-edit="accent">
               <button
                 class="launch-main"
-                :class="{ launching, running }"
-                :disabled="launching || stopping || (!running && !currentVersion)"
+                :class="{ launching }"
+                :disabled="launching || !currentVersion"
                 @click="onLaunchClick"
               >
                 <span v-if="launching" class="launch-progress" :style="{ width: percent + '%' }"></span>
                 <span class="launch-content">
-                  <svg v-if="running" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-                  <svg v-else viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5Z" /></svg>
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5Z" /></svg>
                   <span>{{ launchText }}</span>
                 </span>
               </button>
@@ -569,7 +550,7 @@ onUnmounted(() => {
             <span class="instance-last">上次游玩：{{ fmtLastPlayed(store.lastPlayed[version.id]) }}</span>
             <button
               class="instance-play"
-              :disabled="launching || running"
+              :disabled="launching"
               :title="`启动 ${version.id}`"
               @click.stop="startVersion(version.id)"
             >
@@ -712,10 +693,6 @@ onUnmounted(() => {
       @confirm="confirmRemove"
     />
   </div>
-  <Teleport to="body"><div v-if="stopConfirm" class="modal-mask" style="z-index: 10030"><section class="modal" role="dialog" aria-modal="true" aria-label="游戏正常退出超时">
-    <h3>游戏尚未确认退出</h3><p>已请求正常关闭，游戏可能仍在保存。建议继续等待或在游戏内退出；强制结束可能丢失未保存的进度。</p>
-    <div style="display: flex; gap: 12px; justify-content: flex-end"><button class="btn btn-ghost" :disabled="stopping" @click="stopConfirm = null">继续等待，不强制结束</button><button class="btn btn-danger" :disabled="stopping" @click="stopCurrentGame(stopConfirm!)">确认强制结束</button></div>
-  </section></div></Teleport>
   <Teleport to="body"><div v-if="restartConfirm" class="modal-mask" style="z-index: 10030"><section class="modal" role="dialog" aria-modal="true" aria-label="正常退出超时">
     <h3>正常退出等待超时</h3><p>Minecraft 可能仍在保存世界。建议在游戏内保存退出，然后重试。</p><p style="color: var(--danger)">强制结束可能丢失进度或损坏存档；只有你确认后才会执行。</p>
     <div style="display: flex; gap: 12px; justify-content: flex-end"><button class="btn btn-ghost" :disabled="restartBusy" @click="cancelRestartPrompt">取消重启，继续等待</button><button class="btn btn-danger" :disabled="restartBusy" @click="quickRestart({ id: restartConfirm.id, folder: restartConfirm.folder } as InstalledVersion, restartConfirm.token)">确认强制结束并重启</button></div>
@@ -787,8 +764,6 @@ onUnmounted(() => {
 .launch-content svg { width: 22px; height: 22px; flex: none; }
 .launch-content span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .launch-progress { position: absolute; inset: 0 auto 0 0; background: rgba(255, 255, 255, 0.25); transition: width 0.25s ease; }
-.launch-combo.running { background: linear-gradient(135deg, #d94b55, #b82e3b); }
-.launch-combo.running .launch-main, .launch-combo.running .launch-arrow { background: transparent; color: #fff; }
 .launch-main:disabled { cursor: not-allowed; filter: saturate(0.75); }
 .launch-arrow { width: 62px; border-left: 1px solid rgba(255, 255, 255, 0.22); }
 .launch-arrow:hover, .launch-main:hover:not(:disabled) { filter: brightness(1.08); }

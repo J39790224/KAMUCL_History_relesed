@@ -312,7 +312,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     const vid = String(id ?? '')
     const name = String(newName ?? '').trim()
     // 前置校验：游戏运行中禁止改名（文件夹句柄被占用，且引用会错乱）
-    if (launch.getRunningVersionId() === vid) {
+    if (launch.getRunningVersionIds().has(vid)) {
       throw new Error('该版本正在运行中，请先退出游戏再改名')
     }
     versions.renameVersion(vid, name)
@@ -650,7 +650,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   // ---------------- 游戏 ----------------
   // 异步执行；开始发 launching，退出/错误经 event:launchState 推送
   ipcMain.handle(IPC.gameLaunch, (_e, versionId: string, serverAddress?: string, requestedFolder?: string, createCommandWorld = false) => {
-    if (launch.isBusy()) throw new Error('已有游戏正在启动或运行，请先结束当前游戏')
+    // 多开支持：不再因已有游戏运行而拒绝新启动
     if (typeof versionId !== 'string' || !versionId.trim()) throw new Error('请选择有效的游戏实例')
     const config = settings.getSettings()
     const folder = requestedFolder || config.activeFolder || config.gameDir
@@ -763,12 +763,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   })
   ipcMain.handle(IPC.modsDiscard, (_e, id: string) => discardModPlan(String(id)))
   ipcMain.handle(IPC.modsCommit, async (_e, id: string, includeDependencies: boolean) => {
-    if (launch.isBusy()) throw new Error('请先退出游戏，再安装 MOD')
     const task = registerTask('安装 MOD 与前置依赖', 'download')
     try {
       const result = await executeModPlan(id, includeDependencies === true,
         ref => {
-          if (launch.isBusy()) throw new Error('游戏已开始运行，未安装任何 MOD；请退出游戏后重试')
+          // 多开时代：仅禁止向正在运行的目标实例装 MOD
+          if (launch.getRunningVersionIds().has(ref.id)) throw new Error('目标实例正在运行，未安装任何 MOD；请退出该游戏后重试')
           return selectModTarget(modTargets().versions, ref.id, ref.folder!)
         },
         e => emit({ ...e, taskId: task.id, taskTitle: task.title }), task.controller.signal)
