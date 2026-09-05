@@ -101,18 +101,61 @@ async function onAdd() {
   }
 }
 
-// ---------------- 删除（二次确认） ----------------
-const delModal = reactive({ open: false, target: null as ServerEntry | null, busy: false })
+// ---------------- 删除（二次确认，支持单个/多选/全选批量） ----------------
+const delModal = reactive({ open: false, target: null as ServerEntry | null, batch: false, busy: false })
+
+// ---------------- 多选模式 ----------------
+const selectMode = ref(false)
+const selected = ref<Set<string>>(new Set())
+const allChecked = computed(
+  () => filteredServers.value.length > 0 && filteredServers.value.every((s) => selected.value.has(s.id))
+)
+const selectedCount = computed(() => selected.value.size)
+
+function toggleSelectMode() {
+  selectMode.value = !selectMode.value
+  if (!selectMode.value) selected.value = new Set()
+}
+function toggleSelect(id: string) {
+  const next = new Set(selected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selected.value = next
+}
+function toggleAll() {
+  selected.value = allChecked.value ? new Set() : new Set(filteredServers.value.map((s) => s.id))
+}
+function openBatchDelete() {
+  if (!selectedCount.value) return
+  delModal.target = null
+  delModal.batch = true
+  delModal.open = true
+}
 
 async function onDelete() {
-  const t = delModal.target
-  if (!t || delModal.busy) return
+  if (delModal.busy) return
   delModal.busy = true
   try {
-    servers.value = await removeServer(t.id)
-    delete pings[t.id]
-    delModal.open = false
-    toast('已删除服务器', 'success')
+    if (delModal.batch) {
+      // 批量：逐个删除（同一存储文件，顺序执行）
+      const ids = [...selected.value]
+      let okCount = 0
+      for (const id of ids) {
+        servers.value = await removeServer(id)
+        delete pings[id]
+        okCount++
+      }
+      selected.value = new Set()
+      delModal.open = false
+      toast(`已删除 ${okCount} 个服务器`, 'success')
+    } else {
+      const t = delModal.target
+      if (!t) return
+      servers.value = await removeServer(t.id)
+      delete pings[t.id]
+      delModal.open = false
+      toast('已删除服务器', 'success')
+    }
   } catch (e) {
     toast('删除失败：' + errText(e), 'error')
   } finally {
@@ -279,6 +322,20 @@ const filteredServers = computed(() =>
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-5V2" /><path d="M4 17h5v5" /><path d="M5.1 9a8 8 0 0 1 13.2-3L20 7M4 17l1.7 1A8 8 0 0 0 18.9 15" /></svg>
         同步游戏列表
       </button>
+      <span class="toolbar-spacer"></span>
+      <button v-if="!selectMode" class="btn btn-ghost" :disabled="!servers.length" @click="toggleSelectMode">
+        多选删除
+      </button>
+      <template v-else>
+        <label class="check-all">
+          <input type="checkbox" :checked="allChecked" @change="toggleAll" />
+          <span>全选（{{ selectedCount }}/{{ filteredServers.length }}）</span>
+        </label>
+        <button class="btn btn-danger btn-sm" :disabled="!selectedCount" @click="openBatchDelete">
+          删除所选（{{ selectedCount }}）
+        </button>
+        <button class="btn btn-ghost" @click="toggleSelectMode">退出多选</button>
+      </template>
     </div>
 
     <!-- 列表 -->
@@ -296,7 +353,17 @@ const filteredServers = computed(() =>
     </div>
 
     <div v-else class="server-list">
-      <div v-for="s in filteredServers" :key="s.id" class="card server-card" @dblclick="onCardDblClick(s)">
+      <div
+        v-for="s in filteredServers"
+        :key="s.id"
+        class="card server-card"
+        :class="{ 'select-mode': selectMode, checked: selectMode && selected.has(s.id) }"
+        @dblclick="!selectMode && onCardDblClick(s)"
+        @click="selectMode && toggleSelect(s.id)"
+      >
+        <label v-if="selectMode" class="server-check" @click.stop>
+          <input type="checkbox" :checked="selected.has(s.id)" @change="toggleSelect(s.id)" />
+        </label>
         <span class="status-dot" :class="pingOf(s)?.online ? 'on' : 'off'"></span>
         <div class="server-main">
           <div class="server-title">
@@ -382,7 +449,12 @@ const filteredServers = computed(() =>
         <div class="modal">
           <h3 class="modal-title">删除服务器</h3>
           <p class="confirm-text">
-            确定要从 KAMUCL 删除「{{ delModal.target?.name }}」吗？这只会删除启动器记录，不会修改 Minecraft 的 servers.dat；下次同步时，游戏内仍存在的条目可能再次出现。
+            <template v-if="delModal.batch">
+              确定要从 KAMUCL 删除所选的 {{ selectedCount }} 个服务器吗？这只会删除启动器记录，不会修改 Minecraft 的 servers.dat；下次同步时，游戏内仍存在的条目可能再次出现。
+            </template>
+            <template v-else>
+              确定要从 KAMUCL 删除「{{ delModal.target?.name }}」吗？这只会删除启动器记录，不会修改 Minecraft 的 servers.dat；下次同步时，游戏内仍存在的条目可能再次出现。
+            </template>
           </p>
           <div class="modal-actions">
             <button class="btn btn-ghost" @click="delModal.open = false">取消</button>
@@ -427,11 +499,47 @@ const filteredServers = computed(() =>
 .toolbar {
   display: flex;
   gap: 10px;
+  align-items: center;
 }
 .toolbar .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+.check-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.check-all input {
+  accent-color: var(--accent);
+}
+/* 多选模式 */
+.server-card.select-mode {
+  cursor: pointer;
+}
+.server-card.checked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.server-check {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.server-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 .empty {
   display: flex;
