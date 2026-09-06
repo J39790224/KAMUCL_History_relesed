@@ -422,6 +422,13 @@ export async function installVanilla(
     // 2. 客户端 jar
     const client = vj.downloads?.client
     if (client?.url) {
+      // PCL2 本地复用优化：客户端 jar 优先从其他游戏文件夹的 versions 与 .kamucl/base
+      // 里按 大小+sha1 查找相同文件直接复制（多文件夹/加载器依赖原版间不再重复下载）
+      const versionDirs = allVersionsDirs()
+      const reuseDirs = versionDirs
+        .map((v) => v.dir)
+        .concat(versionDirs.map((v) => path.join(v.folder, '.kamucl', 'base')))
+        .filter((dir) => path.resolve(dir) !== path.resolve(path.dirname(jarPath)))
       await downloadFile(
         client.url,
         jarPath,
@@ -436,7 +443,7 @@ export async function installVanilla(
         mirror,
         signal,
         [],
-        { size: client.size }
+        { size: client.size, reuseDirs }
       )
     }
 

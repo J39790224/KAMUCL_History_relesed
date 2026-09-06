@@ -484,7 +484,9 @@ export function pingServer(address: string): Promise<ServerPingResult> {
         }
       }
 
-      const start = Date.now()
+      // 延迟只计协议往返：TCP 建连后发出 Status Request 起表，收到响应首字节止。
+      // DNS/SRV 解析与三次握手不计入，否则会混入数百毫秒伪延迟。
+      let start = 0
       let done = false
       const sock = net.connect({ host: connectHost, port: connectPort })
       const finish = (r: ServerPingResult): void => {
@@ -501,6 +503,7 @@ export function pingServer(address: string): Promise<ServerPingResult> {
       sock.setTimeout(6000)
 
       sock.on('connect', () => {
+        start = Date.now()
         // Handshake 保留玩家填写的原始主机与逻辑端口，TCP 目标可由 SRV 改写。
         const addrBuf = Buffer.from(parsed.host, 'utf-8')
         const payload = Buffer.concat([
@@ -515,7 +518,9 @@ export function pingServer(address: string): Promise<ServerPingResult> {
       })
 
       let buf = Buffer.alloc(0)
+      let rttMs = 0
       sock.on('data', (chunk) => {
+        if (start > 0 && rttMs === 0) rttMs = Math.max(1, Date.now() - start)
         buf = Buffer.concat([buf, chunk])
         let len = 0
         let shift = 0
@@ -545,7 +550,7 @@ export function pingServer(address: string): Promise<ServerPingResult> {
             players: `${s.players?.online ?? 0}/${s.players?.max ?? 0}`,
             motd: motdText(s.description) || '这个服务器没有介绍',
             version: s.version?.name ?? '未知',
-            latencyMs: Date.now() - start
+            latencyMs: rttMs
           })
         } catch {
           finish(offline)

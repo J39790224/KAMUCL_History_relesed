@@ -4,6 +4,7 @@ import {
   addCustomJava,
   cancelJavaScan,
   errText,
+  getSystemInfo,
   hideJava,
   installPlugin,
   listJava,
@@ -51,8 +52,8 @@ const featureToggles = [
   { key: 'keys', label: '默认按键' },
   { key: 'bridge', label: 'MOD 面板' },
   { key: 'servers', label: '服务器' },
-  { key: 'friends', label: '好友直连' },
-  { key: 'skins', label: '皮肤管理' },
+  { key: 'friends', label: '联机' },
+  { key: 'skins', label: '皮肤与披风' },
   { key: 'community', label: '社区资源' }
 ]
 
@@ -190,7 +191,29 @@ const javaLabel = (j: { major: number; path: string; version: string; architectu
 
 // ---------------- 内存显示与滑块填充 ----------------
 const MEM_MIN = 1024
-const MEM_MAX = 16384
+/** 滑块步长 256MB（0.25GB），比整 GB / 0.5GB 更精细 */
+const MEM_STEP = 256
+/** 上限 = 真实物理内存向下取 256MB 整（系统信息加载前的临时值） */
+const memMax = ref(16384)
+
+onMounted(async () => {
+  try {
+    const info = await getSystemInfo()
+    memMax.value = Math.max(MEM_MIN, Math.floor(info.totalMemMB / MEM_STEP) * MEM_STEP)
+    // 旧配置可能超出真实内存（换机/降配后），夹回可保存范围
+    const s = store.settings
+    if (s && s.memoryMB > memMax.value) {
+      s.memoryMB = memMax.value
+      void save({ memoryMB: memMax.value })
+    }
+  } catch {
+    /* 读不到就保持保守上限 */
+  }
+})
+
+const memoryMaxText = computed(() =>
+  memMax.value % 1024 === 0 ? `${memMax.value / 1024} GB` : `${memMax.value} MB`
+)
 
 const memoryText = computed(() => {
   const mb = store.settings?.memoryMB ?? 0
@@ -200,7 +223,7 @@ const memoryText = computed(() => {
 /* 已填充段 = accent 渐变 */
 const sliderFill = computed(() => {
   const mb = store.settings?.memoryMB ?? MEM_MIN
-  const pct = Math.max(0, Math.min(100, ((mb - MEM_MIN) / (MEM_MAX - MEM_MIN)) * 100))
+  const pct = Math.max(0, Math.min(100, ((mb - MEM_MIN) / (memMax.value - MEM_MIN)) * 100))
   return `linear-gradient(90deg, var(--accent-2), var(--accent) ${pct}%, var(--card-2) ${pct}%)`
 })
 
@@ -442,13 +465,13 @@ async function onRemovePlugin(p: PluginInfo) {
             class="slider"
             :style="{ background: sliderFill }"
             :min="MEM_MIN"
-            :max="MEM_MAX"
-            step="512"
+            :max="memMax"
+            :step="MEM_STEP"
             @change="save({ memoryMB: store.settings!.memoryMB })"
           />
           <span class="memory-value">{{ memoryText }}</span>
         </div>
-        <p class="muted group-hint">分配给游戏进程的最大内存（1024 - 16384 MB）</p>
+        <p class="muted group-hint">分配给游戏进程的最大内存（1 GB - {{ memoryMaxText }}，按本机物理内存识别）</p>
       </div>
 
       <!-- Java -->

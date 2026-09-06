@@ -10,6 +10,9 @@ import { fmlArgument, missingNeoRuntime, reuseExternalRuntimeLibraries } from '.
 import type { FabricApiVersion, LoaderName, ProgressEvent } from '../../shared/types'
 import { BMCL_MAVEN_ROOT, downloadAll, downloadFile, fetchSignal } from './download'
 import { isCancelError } from './tasks'
+import { logScope } from './launcherLog'
+
+const loaderLog = logScope('loader')
 import { getSettings } from './settings'
 import { gameDir, librariesDir, registerVersionFolder, versionDir, versionJsonPath, versionsDir } from './paths'
 import { ensureJava, scanJava } from './java'
@@ -66,6 +69,7 @@ export async function listLoaderVersions(
   mcVersion: string,
   signal?: AbortSignal
 ): Promise<string[]> {
+  loaderLog.debug(`查询 ${loader} 可用版本列表（MC ${mcVersion}）`)
   let list: string[]
   switch (loader) {
     case 'fabric': {
@@ -110,6 +114,7 @@ export async function listLoaderVersions(
         // 取消不降级：直接抛「已取消」
         if (signal?.aborted) throw new Error('已取消')
         // 回退：解析 maven-metadata.xml，过滤 mc 前缀（1.20.4 -> 20.4）
+        loaderLog.warn(`NeoForge 列表接口不可用，回退解析 maven-metadata（MC ${mcVersion}）`)
         const res = await fetch(
           'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml',
           { signal: fetchSignal(signal) }
@@ -151,6 +156,7 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
 
   const runOnce = (args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
+      loaderLog.info(`运行 ${path.basename(jar)} 安装器（目标目录 ${target}）`)
       const proc = spawn(javaPath, args, { windowsHide: true, cwd: target })
       let cancelled = false
       let spawnError: Error | null = null
@@ -200,10 +206,14 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
           /* 日志写盘失败不影响流程 */
         }
         if (cancelled || signal?.aborted) reject(new Error('已取消'))
-        else if (spawnError) reject(spawnError)
+        else if (spawnError) {
+          loaderLog.error(`安装器进程异常：${String(spawnError)}`)
+          reject(spawnError)
+        }
         else if (code === 0) resolve()
         else {
           const last = allLines.slice(-30).join('\n')
+          loaderLog.error(`安装器失败（退出码 ${code ?? '未知'}），末尾输出：${last.slice(-400)}`)
           reject(new Error(`安装器退出码 ${code}（完整日志见 kamucl-logs/installer.log）\n${last}`))
         }
       })
@@ -212,6 +222,7 @@ function runInstaller(javaPath: string, jar: string, emit: ProgressEmit, signal?
   return runOnce(buildArgs(useMirror)).catch((err) => {
     if (signal?.aborted || isCancelError(err)) throw new Error('已取消')
     if (!useMirror) throw err
+    loaderLog.warn('镜像模式安装失败，改用官方源重试')
     emit({ stage: 'loader', progress: 0.7, text: '镜像模式安装失败，改用官方源重试…' })
     return runOnce(buildArgs(false))
   })
@@ -223,6 +234,7 @@ export async function repairNeoRuntime(json: VersionJson, clientJar: string, bas
   if (!missingNeoRuntime(json, librariesDir()).length) return
   const neo = fmlArgument(json, '--fml.neoForgeVersion'), mc = fmlArgument(json, '--fml.mcVersion')
   if (!neo || !mc) throw new Error('NeoForge 本体库缺失，且启动元数据不完整；请修复该实例的加载器配置')
+  loaderLog.info(`检测到 NeoForge ${neo} 本体库缺失，启动修复流程（不修改实例内容）`)
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'kamucl-runtime-repair-'))
   // Keep failed repair logs for diagnosis; successful workspaces contain no player data.
   const jar = path.join(staging, 'installer.jar')
@@ -244,6 +256,7 @@ export async function repairNeoRuntime(json: VersionJson, clientJar: string, bas
     if (missing.length) throw new Error(`安装器未生成必要本体库：${missing.join('、')}`)
     fs.rmSync(staging, { recursive: true, force: true })
   } catch (error) {
+    loaderLog.error(`NeoForge ${neo} 本体修复失败（未改动存档）`, error)
     throw new Error(`NeoForge 本体修复失败（未改动存档），诊断目录：${staging}\n${error instanceof Error ? error.message : error}`)
   }
 }
@@ -275,6 +288,27 @@ function tagLoaderJson(id: string, loader: LoaderName, loaderVersion: string): v
  * forge/neoforge 安装器强制要求 versions/ 下存在原版，先落地、装完（无论成败）再迁移进 base。
  */
 export async function installLoader(
+  loader: LoaderName,
+  mcVersion: string,
+  loaderVersion: string,
+  emit: ProgressEmit,
+  instanceName?: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const started = Date.now()
+  loaderLog.info(`开始安装 ${loader} ${loaderVersion}（MC ${mcVersion}${instanceName ? `，实例名 ${instanceName}` : ''}）`)
+  try {
+    const id = await installLoaderInternal(loader, mcVersion, loaderVersion, emit, instanceName, signal)
+    loaderLog.info(`${loader} ${loaderVersion} 安装完成：实例 ${id}（耗时 ${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return id
+  } catch (error) {
+    if (!isCancelError(error)) loaderLog.error(`安装 ${loader} ${loaderVersion} 失败`, error)
+    else loaderLog.debug(`安装 ${loader} ${loaderVersion} 已取消`)
+    throw error
+  }
+}
+
+async function installLoaderInternal(
   loader: LoaderName,
   mcVersion: string,
   loaderVersion: string,
@@ -379,6 +413,7 @@ export async function installLoader(
     } catch {
       // 官方源失败回退 BMCLAPI（取消除外）
       if (signal?.aborted) throw new Error('已取消')
+      loaderLog.warn(`${loader} 安装器官方源下载失败，回退 BMCLAPI 镜像`)
       await downloadFile(mirrorUrlB, jarPath, (d, t) =>
         emit({
           stage: 'loader',

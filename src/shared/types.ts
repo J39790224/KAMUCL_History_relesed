@@ -558,6 +558,7 @@ export const IPC = {
   // 设置
   settingsGet: 'settings:get',
   settingsSet: 'settings:set', // (patch: Partial<Settings>) => Settings
+  appSystemInfo: 'app:systemInfo', // () => SystemInfo  真实物理内存等系统信息
   appSelectDir: 'app:selectDir', // () => string | null
   appSelectFile: 'app:selectFile', // () => string | null  选择整合包文件（.mrpack/.zip）
   // 插件系统（userData/plugins/<id>/{plugin.json,main.js}，JS 插件在页面上下文执行）
@@ -614,6 +615,27 @@ export const IPC = {
   directState: 'direct:state',
   directResolve: 'direct:resolve',
   directPrepareJoin: 'direct:prepareJoin',
+
+  // 联机 · VoxLink（Go 引擎源码级移植，主进程内运行）
+  voxlinkStart: 'voxlink:start', // ({mode:'host'|'join', code?, roomName?, isPublic?}) => VoxLinkState
+  voxlinkStop: 'voxlink:stop', // () => VoxLinkState
+  voxlinkStatus: 'voxlink:status', // () => VoxLinkState
+  voxlinkLobby: 'voxlink:lobby', // () => VoxLinkRoom[]
+  voxlinkSettings: 'voxlink:settings', // (partial) => VoxLinkSettings
+  voxlinkEvent: 'voxlink:event', // push: {type, data}
+
+  // 联机 · 陶瓦联机（Terracotta 官方工具驱动）
+  tcStart: 'tc:start', // ({mode:'host'|'join', code?, port?}) => TerracottaState
+  tcStop: 'tc:stop', // () => TerracottaState
+  tcStatus: 'tc:status', // () => TerracottaState
+  tcEvent: 'tc:event', // push: {type:'log'|'ready'|'error'|'stopped', data}
+
+  // 联机 · FRP（樱花穿透）
+  frpStart: 'frp:start', // ({accessKey, tunnelId, localPort?}) => FrpState
+  frpStop: 'frp:stop', // () => FrpState
+  frpStatus: 'frp:status', // () => FrpState
+  frpEvent: 'frp:event', // push: {type:'log'|'ready'|'error'|'stopped', data}
+
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetResolution: 'versions:setResolution', // (id: string, resolution: GameResolution | null) => void  null = 跟随全局
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
@@ -1073,4 +1095,9 @@ export interface ServerPingResult {
   motd: string
   version: string
   latencyMs: number
+}
+
+export interface SystemInfo {
+  /** 物理内存总量（MB，向下取整） */
+  totalMemMB: number
 }

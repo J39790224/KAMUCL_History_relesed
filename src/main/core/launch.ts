@@ -2,10 +2,14 @@
  * 游戏启动：版本链合并、classpath/natives 处理、JVM/游戏参数组装、进程管理
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { createCommandWorld } from './commandWorld'
 import { requestGameWindowClose, focusGameWindow } from './gracefulClose'
+import { logScope } from './launcherLog'
+
+const launchLog = logScope('launch')
 import { reuseExternalRuntimeLibraries } from './externalRuntime'
 import { repairNeoRuntime } from './loaders'
 import { pathIdentity } from './folderPaths'
@@ -66,18 +70,20 @@ export function cancelRestart(): void {
 
 /** Holds ownership across close -> relaunch so another click cannot race into the gap. */
 export async function restartGame(versionId: string, folder: string, forceToken?: string): Promise<{ requiresForce: boolean; forceToken?: string }> {
+  launchLog.info(`请求重启实例 ${versionId}${forceToken ? '（已带强杀确认）' : ''}`)
   const targetToken = gameSession.tokenOf(versionId)
   if (forceToken) {
     if (!restartPending || restartPending.waiting || restartPending.forceToken !== forceToken || restartPending.invocation.versionId !== versionId || pathIdentity(restartPending.invocation.folder) !== pathIdentity(folder)) throw new Error('重启确认已失效，请重新请求')
     restartPending.waiting = true
     try { if (targetToken) await gameSession.stop(8000, targetToken) }
-    catch (error) { restartPending = undefined; throw error }
+    catch (error) { restartPending = undefined; launchLog.error(`重启确认后强制停止游戏失败：${versionId}`, error); throw error }
   } else {
     if (restartPending) throw new Error('已有重启请求正在处理')
     if (!invocation || !targetToken || invocation.versionId !== versionId || pathIdentity(invocation.folder) !== pathIdentity(folder)) throw new Error('此实例当前未运行；请选择启动实例')
     restartPending = { invocation, sessionToken: targetToken, waiting: true }
     try { await gameSession.stopGracefully(requestGameWindowClose, 30000, targetToken) }
     catch {
+      launchLog.warn(`实例 ${versionId} 30 秒内未正常退出，需要用户确认强杀后重启`)
       restartPending.waiting = false
       restartPending.forceToken = crypto.randomUUID()
       return { requiresForce: true, forceToken: restartPending.forceToken }
@@ -136,6 +142,7 @@ export function recordLaunchPreparationError(versionId: string, message: string)
 
 /** 终止当前游戏进程 */
 export const killGame = (forceToken?: string) => {
+  launchLog.info('收到终止游戏进程请求')
   if (restartPending) throw new Error('正在处理重启，请先完成或取消重启请求')
   return gameSession.requestStop(requestGameWindowClose, forceToken)
 }
@@ -186,9 +193,14 @@ export async function launch(
 ): Promise<void> {
   if (restartPending) throw new Error('正在重启游戏，请稍后再启动')
   const token = gameSession.reserve(versionId)
+  launchLog.info(`开始启动实例 ${versionId}${serverAddress ? `（直达服务器 ${serverAddress}）` : ''}`)
   invocation = { versionId, folder: gameDir(), emit, sendLog, onState, serverAddress, options: { ...options } }
   try { await launchOwned(versionId, emit, sendLog, onState, serverAddress, token, invocation.options) }
-  catch (error) { gameSession.release(token); throw error }
+  catch (error) {
+    gameSession.release(token)
+    launchLog.error(`实例 ${versionId} 启动失败`, error)
+    throw error
+  }
 }
 
 async function launchOwned(
@@ -223,7 +235,9 @@ async function launchOwned(
   }
 
   let spawned = false
+  const pipelineStarted = Date.now()
   try {
+  launchLog.debug(`启动管线开始：实例 ${versionId}`)
   // a0) 自愈：版本链 json 缺失或链底客户端 jar 缺失时，自动补全下载原版文件
   let baseIdProbe = versionId
   let chainBroken = false
@@ -244,6 +258,7 @@ async function launchOwned(
   const baseInVersions = fs.existsSync(versionJsonPath(baseIdProbe))
   const jarProbe = baseInVersions ? versionJarPath(baseIdProbe) : baseVersionJarPath(baseIdProbe)
   if (chainBroken || !fs.existsSync(jarProbe)) {
+    launchLog.info(`检测到实例 ${versionId} 依赖的游戏文件缺失（chainBroken=${chainBroken}），开始自动补全`)
     // 自包含实例（flatten 后）：json 不缺，仅补客户端 jar，绝不重写合并后的 json
     let flattened = false
     try {
@@ -279,6 +294,7 @@ async function launchOwned(
   // a0.1) 启动与管理页面共用同一个目录判定，避免配置路径、整合包和已存在
   // 独立内容在 UI 与最终 --gameDir 之间出现分歧；assets 仍使用全局共享目录。
   const effectiveGameDir = instanceDirectoryState(versionId, readVersionJson(versionId)).path
+  launchLog.debug(`实例 ${versionId} 游戏目录：${effectiveGameDir}`)
   fs.mkdirSync(effectiveGameDir, { recursive: true })
 
   // 默认中文：仅在 options.txt 不存在时写入（绝不覆盖玩家已有设置）
@@ -304,6 +320,7 @@ async function launchOwned(
   // a) 版本链合并
   emit({ stage: 'launch', progress: 0, text: '解析版本信息' })
   const { merged, baseId } = resolveChain(versionId)
+  launchLog.debug(`版本链解析完成：${versionId} → 底层 ${baseId}`)
   const instanceConfig = readVersionJson(versionId)
   const clientJar = clientJarPath(baseId)
   if (!fs.existsSync(clientJar)) {
@@ -318,6 +335,7 @@ async function launchOwned(
   await repairNeoRuntime(merged, clientJar, readVersionJson(baseId), emit)
   const missingLibs = libTasks.filter((t) => !fs.existsSync(t.dest))
   if (missingLibs.length) {
+    launchLog.info(`检测到 ${missingLibs.length} 个依赖库缺失，正在补全`)
     emit({
       stage: 'repair',
       progress: 0,
@@ -372,6 +390,7 @@ async function launchOwned(
     javaPath = found.path
     emit({ stage: 'java', progress: 1, text: `使用本机 Java ${found.version}` })
   }
+  launchLog.info(`选定 Java（需要 major ${requiredMajor(merged)}）：${javaPath}`)
 
   // d) classpath 与 natives 解压
   emit({ stage: 'launch', progress: 0.5, text: '准备运行库与 natives' })
@@ -461,7 +480,10 @@ async function launchOwned(
   }
 
   // e) JVM 参数
-  const mem = Math.max(512, settings.memoryMB || 4096)
+  // Xmx 按真实物理内存钳制：配置文件可能被手改或从大内存机器迁移过来，
+  // 超出物理内存的分配会让 JVM 起不来或系统整卡死。
+  const totalMemMB = Math.floor(os.totalmem() / 1024 / 1024)
+  const mem = Math.min(Math.max(512, settings.memoryMB || 4096), totalMemMB)
   // forge ignoreList 需精确匹配 -cp 上的原版客户端 jar 文件名：实例自定义命名时
   // ${version_name}.jar 与实际 clientJar 不一致，原版 jar 会被模块系统当作自动模块
   // 与 fml 合成的 minecraft 模块重复导出包（ResolutionException 闪退），补写真实文件名
@@ -544,11 +566,14 @@ async function launchOwned(
         : ', fullscreen=true')
   )
   log(`[KAMUCL] 启动命令: ${commandSummary}`)
+  launchLog.debug(`启动命令：${commandSummary}`)
+  launchLog.info(`启动准备完成（耗时 ${Date.now() - pipelineStarted}ms），正在创建游戏进程`)
 
   emit({ stage: 'launch', progress: 1, text: '启动游戏进程' })
   const proc = spawn(javaPath, args, { cwd: effectiveGameDir })
   gameSession.attach(token, proc)
   spawned = true
+  const spawnedAt = Date.now()
   lastLaunch = {
     versionId,
     javaPath,
@@ -561,7 +586,10 @@ async function launchOwned(
     windowHeight: windowArgs.height,
     pid: proc.pid
   }
-  proc.once('spawn', () => onState({ status: 'running', text: '游戏进程已启动' }))
+  proc.once('spawn', () => {
+    launchLog.info(`游戏进程已启动：pid=${proc.pid}`)
+    onState({ status: 'running', text: '游戏进程已启动' })
+  })
   // QuickPlay 直达（创建命令世界/进服）：游戏窗口出现后拉到前台，避免鼠标被锁在未聚焦窗口里
   if (options.singleplayerWorld || serverAddress) {
     void focusGameWindow(proc).then(() => log('[KAMUCL] 游戏窗口已聚焦')).catch(error => log(`[KAMUCL] 自动聚焦未完成：${error.message}；请点击任务栏中的 Minecraft 窗口`))
@@ -580,10 +608,12 @@ async function launchOwned(
   proc.on('error', (err) => {
     // A failed kill can also emit 'error'; it is not evidence that the game exited.
     if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
+      launchLog.warn(`进程操作失败，仍在跟踪游戏：${err.message}`)
       log(`进程操作失败，仍在跟踪游戏: ${err.message}`)
       return
     }
     if (!gameSession.release(token)) return
+    launchLog.error(`游戏进程启动失败：pid=${proc.pid ?? '未知'}`, err)
     logStream?.end()
     stdoutStream?.end()
     stderrStream?.end()
@@ -595,6 +625,11 @@ async function launchOwned(
   })
   proc.on('close', (code) => {
     if (!gameSession.release(token)) return
+    const runS = spawnedAt ? Math.round((Date.now() - spawnedAt) / 1000) : null
+    const intentional = restartPending?.sessionToken === token || gameSession.wasIntentionalStop(token)
+    if (code === 0) launchLog.info(`实例 ${versionId} 游戏正常退出（code=0${runS !== null ? `，运行 ${runS}s` : ''}）`)
+    else if (intentional) launchLog.info(`实例 ${versionId} 游戏按用户要求退出（code=${code ?? '未知'}）`)
+    else launchLog.warn(`实例 ${versionId} 游戏异常退出（code=${code ?? '未知'}${runS !== null ? `，运行 ${runS}s` : ''}），如频繁出现请导出错误日志`)
     logStream?.end()
     stdoutStream?.end()
     stderrStream?.end()

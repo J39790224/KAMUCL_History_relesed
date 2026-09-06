@@ -40,6 +40,7 @@ import type {
   Settings,
   SkinHistoryEntry,
   SkinVariant,
+  SystemInfo,
   WorldImportInfo,
   WorldImportOptions,
   WorldImportResult,
@@ -66,6 +67,8 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 // ---------------- 设置 ----------------
 export const getSettings = () => invoke<Settings>(IPC.settingsGet)
+/** 真实系统信息（物理内存总量等），用于内存滑块上限等 */
+export const getSystemInfo = () => invoke<SystemInfo>(IPC.appSystemInfo)
 /**
  * 保存设置。Vue 的 reactive proxy 无法通过 IPC 结构化克隆，
  * 发送前用 JSON 深拷贝净化（同时剥掉一切不可序列化内容）。

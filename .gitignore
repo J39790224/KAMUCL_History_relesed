@@ -10,3 +10,6 @@ builder-*.log
 *.log
 bridge/build/
 bridge/dist/
+*.rar
+*.jar.log
+scripts/*.log

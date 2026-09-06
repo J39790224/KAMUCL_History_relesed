@@ -5,6 +5,7 @@
 import { ipcMain, dialog, shell, Menu, type BrowserWindow } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { DEFAULT_BACKGROUND, DEFAULT_LAUNCH_THUMBNAIL, IPC, IPC_EVENT } from '../shared/types'
 import type {
@@ -55,7 +56,7 @@ import {
 } from './core/tasks'
 import { exportLaunchLogs } from './core/exportLogs'
 import { ProgressEventGuard } from './core/progress'
-import { launcherLog } from './core/launcherLog'
+import { launcherLogDebug, launcherLogError, launcherLogInfo, launcherLogWarn } from './core/launcherLog'
 import * as gameFolders from './core/gameFolders'
 import * as instances from './core/instances'
 import * as worlds from './core/worlds'
@@ -66,12 +67,41 @@ import { carouselImages, MAX_CAROUSEL_IMAGES } from '../shared/appearancePolicy'
 import { pathIdentity } from './core/folderPaths'
 import * as direct from './core/directConnect'
 import type { DirectHostRequest } from '../shared/directConnect'
+import { registerVoxlinkIpc } from './core/voxlink'
+import { registerTerracottaIpc } from './core/terracotta'
+import { registerFrpIpc, installFrpEventBridge } from './core/frpIpc'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
 export function registerIpc(getWin: () => BrowserWindow | null): void {
+  // IPC 失败兜底：注册期统一包装 ipcMain.handle，handler 抛错时记录通道名与脱敏错误，
+  // 再原样抛回渲染端（渲染端收到的错误与原行为一致）；取消类错误属常规路径只记 debug。
+  type IpcInvokeListener = (event: unknown, ...args: unknown[]) => unknown
+  const rawHandle = ipcMain.handle.bind(ipcMain) as unknown as (
+    channel: string,
+    listener: IpcInvokeListener
+  ) => void
+  const patchedMain = ipcMain as unknown as {
+    handle: (channel: string, listener: IpcInvokeListener) => void
+  }
+  patchedMain.handle = (channel, listener) => {
+    rawHandle(channel, async (event, ...args) => {
+      try {
+        return await listener(event, ...args)
+      } catch (error) {
+        if (isCancelError(error)) launcherLogDebug('ipc', `通道 ${channel} 已取消：${errText(error)}`)
+        else launcherLogError('ipc', `IPC 通道 ${channel} 处理失败`, error)
+        throw error
+      }
+    })
+  }
+  // 联机三通道：VoxLink（TS 引擎）/ 陶瓦联机（Terracotta 官方工具）/ FRP（樱花穿透）
+  registerVoxlinkIpc(ipcMain)
+  registerTerracottaIpc(ipcMain)
+  registerFrpIpc(ipcMain)
+  installFrpEventBridge(getWin)
   const send = (channel: string, payload: unknown): void => {
     getWin()?.webContents.send(channel, payload)
   }
@@ -92,6 +122,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
+  ipcMain.handle(IPC.appSystemInfo, () => ({ totalMemMB: Math.floor(os.totalmem() / 1024 / 1024) }))
   ipcMain.handle(IPC.directOverview, () => direct.directOverview())
   ipcMain.handle(IPC.directHost, (_e, request: DirectHostRequest) => direct.startDirectHost(request))
   ipcMain.handle(IPC.directStop, () => direct.stopDirectHost())
@@ -274,6 +305,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
             }
           } catch (e) {
             console.error('[KAMUCL] 默认隔离设置失败:', e)
+            launcherLogWarn('install', '按默认设置开启新实例隔离失败，不影响安装结果', e)
           }
           taskDone(true)
           send(IPC_EVENT.installDone, { versionId: vid, installedId, ok: true, taskId: task.id })
@@ -663,7 +695,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     const folder = requestedFolder || config.activeFolder || config.gameDir
     if (!config.folders.some(f => pathIdentity(f.path) === pathIdentity(folder))) throw new Error('目标游戏文件夹未注册')
     if (!versions.scanInstalledFolder(folder).versions.some(v => v.id === versionId && !v.failed && !v.incomplete)) throw new Error('目标实例不存在或不完整，请刷新版本列表')
-    launcherLog(`Launch requested: version=${String(versionId ?? '')}`)
+    launcherLogInfo('game', `收到启动请求：version=${String(versionId ?? '')}`)
     sendState({ status: 'launching', text: '正在准备启动…' })
     void withGameFolder(folder, () => launch
       .launch(
@@ -671,9 +703,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         emit,
         (line) => send(IPC_EVENT.launchLog, line),
         (s) => {
-          launcherLog(
-            `Launch state: ${s.status}${s.status === 'exited' ? ` code=${s.code}` : ''} - ${s.text}`
-          )
+          if (s.status === 'error') launcherLogError('game', `启动状态异常：${s.text}`)
+          else if (s.status === 'exited') {
+            const code = s.code ?? 0
+            if (code === 0) launcherLogInfo('game', `游戏正常退出（code=0）：${s.text}`)
+            else launcherLogWarn('game', `游戏异常退出（code=${code}）：${s.text}`)
+          } else launcherLogInfo('game', `启动状态 ${s.status}：${s.text}`)
           sendState(s)
           // 设置项生效：游戏成功进入运行状态后关闭启动器窗口
           if (s.status === 'running' && settings.getSettings().closeAfterLaunch) {
@@ -685,7 +720,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       )
       .catch((err) => {
         launch.recordLaunchPreparationError(String(versionId ?? ''), errText(err))
-        launcherLog(`Launch preparation failed: ${errText(err)}`)
+        launcherLogError('game', '启动准备失败', err)
         sendState({ status: 'error', text: errText(err) })
       }))
   })

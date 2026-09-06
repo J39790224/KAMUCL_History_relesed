@@ -2,6 +2,9 @@
  * 后台任务注册表：安装/导入/下载类任务的取消控制
  * 每个任务持有一个 AbortController，取消信号贯穿 downloadAll/downloadFile
  */
+import { logScope } from './launcherLog'
+
+const taskLog = logScope('tasks')
 
 export interface TaskRecord {
   id: string
@@ -49,13 +52,18 @@ export function registerTask(title: string, kind: TaskRecord['kind']): TaskRecor
   }
   tasks.set(id, rec)
   taskBySignal.set(rec.controller.signal, rec)
+  taskLog.debug(`任务注册：${title}（${id}）`)
   return rec
 }
 
 export function cancelTask(id: string): boolean {
   const rec = tasks.get(id) as InternalTaskRecord | undefined
-  if (!rec) return false
+  if (!rec) {
+    taskLog.debug(`取消失败：任务不存在（${id}）`)
+    return false
+  }
   if (rec.status !== 'cancelling') {
+    taskLog.info(`任务取消：${rec.title}（${id}）`)
     rec.status = 'cancelling'
     rec.controller.abort(new DOMException('已取消', 'AbortError'))
     for (const resume of rec.resumeWaiters) resume()
@@ -66,6 +74,7 @@ export function cancelTask(id: string): boolean {
 
 export function finishTask(id: string): void {
   const rec = tasks.get(id) as InternalTaskRecord | undefined
+  if (rec) taskLog.debug(`任务结束：${rec.title}（${id}）`)
   rec?.settle()
   if (rec) {
     for (const resume of rec.resumeWaiters) resume()
@@ -77,14 +86,22 @@ export function finishTask(id: string): void {
 
 export function pauseTask(id: string): boolean {
   const rec = tasks.get(id)
-  if (!rec || rec.status !== 'running') return false
+  if (!rec || rec.status !== 'running') {
+    taskLog.warn(`任务暂停失败：任务不存在或不在运行中（${id}）`)
+    return false
+  }
+  taskLog.info(`任务暂停：${rec.title}（${id}）`)
   rec.status = 'paused'
   return true
 }
 
 export function resumeTask(id: string): boolean {
   const rec = tasks.get(id) as InternalTaskRecord | undefined
-  if (!rec || rec.status !== 'paused') return false
+  if (!rec || rec.status !== 'paused') {
+    taskLog.warn(`任务恢复失败：任务不存在或未处于暂停（${id}）`)
+    return false
+  }
+  taskLog.info(`任务恢复：${rec.title}（${id}）`)
   rec.status = 'running'
   for (const resume of rec.resumeWaiters) resume()
   rec.resumeWaiters.clear()
@@ -132,6 +149,9 @@ export async function cancelTaskAndWait(id: string, timeoutMs = 30_000): Promise
         timer = setTimeout(() => reject(new Error('取消超时：后台任务尚未停止，请稍后重试')), timeoutMs)
       })
     ])
+  } catch (error) {
+    taskLog.warn(`任务取消超时（${timeoutMs}ms）：${rec.title}（${id}）`, error)
+    throw error
   } finally {
     if (timer) clearTimeout(timer)
   }

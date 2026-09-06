@@ -152,7 +152,7 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
   },
   {
     key: 'friends',
-    label: '好友直连',
+    label: '联机',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 4 5"/></svg>'
   }
 ]
@@ -161,6 +161,34 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
 const resourceExpanded = ref(false)
 const inResourceGroup = computed(() =>
   ['mods', 'packs', 'shaders', 'keys', 'bridge', 'servers', 'friends'].includes(store.currentView)
+)
+
+// ---- 导航水滴：单一高亮块随指针在按钮间弹性滑动（iOS 液态感） ----
+const navEl = ref<HTMLElement | null>(null)
+const navHoverKey = ref('')
+const navBlob = reactive({ top: 0, height: 0, on: false, stretch: false })
+let blobStretchTimer: ReturnType<typeof setTimeout> | undefined
+const navBlobStyle = computed(() => ({
+  height: navBlob.height + 'px',
+  transform: `translateY(${navBlob.top}px) scale(${navBlob.stretch ? '0.96, 1.12' : '1, 1'})`
+}))
+function updateNavBlob() {
+  const root = navEl.value
+  if (!root) { navBlob.on = false; return }
+  const key = navHoverKey.value || store.currentView
+  let target = root.querySelector<HTMLElement>(`[data-nav="${key}"]`)
+  // 资源子项在子菜单折叠时不可见（v-show），回退到父级「资源管理」
+  if (target && target.offsetHeight === 0) target = root.querySelector<HTMLElement>('[data-nav="resources"]')
+  if (!target) { navBlob.on = false; return }
+  navBlob.top = target.offsetTop
+  navBlob.height = target.offsetHeight
+  navBlob.on = true
+  navBlob.stretch = true
+  clearTimeout(blobStretchTimer)
+  blobStretchTimer = setTimeout(() => { navBlob.stretch = false }, 430)
+}
+watch([navHoverKey, () => store.currentView, resourceExpanded, visibleNavItems, visibleResourceSubItems], () =>
+  nextTick(updateNavBlob)
 )
 
 // ---- 导航水滴：单一高亮块随指针在按钮间弹性滑动（iOS 液态感） ----

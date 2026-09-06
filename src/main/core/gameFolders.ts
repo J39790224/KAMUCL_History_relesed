@@ -4,6 +4,9 @@ import type { FolderScanResult, GameFolder } from '../../shared/types'
 import { getSettings, saveSettings } from './settings'
 import { canonicalPath, pathIdentity, resolveMinecraftRoot } from './folderPaths'
 import { scanInstalledFolder } from './versions'
+import { logScope } from './launcherLog'
+
+const folderLog = logScope('folders')
 
 const cleanName = (value: string): string => {
   const name = value.trim()
@@ -72,12 +75,16 @@ export function addGameFolder(input: string): { folders: GameFolder[]; folder: G
   const duplicate = current.folders.find(
     (folder) => pathIdentity(folder.path) === pathIdentity(resolved.path)
   )
-  if (duplicate) return { folders: current.folders, folder: duplicate, structure: resolved.structure }
+  if (duplicate) {
+    folderLog.info(`游戏文件夹已登记，直接复用：${duplicate.path}（结构 ${resolved.structure}）`)
+    return { folders: current.folders, folder: duplicate, structure: resolved.structure }
+  }
   const folder: GameFolder = {
     path: resolved.path,
     name: path.basename(resolved.path) || resolved.path,
     isDefault: false
   }
+  folderLog.info(`登记新游戏文件夹：${folder.path}（结构 ${resolved.structure}）`)
   return {
     folders: persistFolders([...current.folders, folder]),
     folder,
@@ -107,6 +114,7 @@ export function removeGameFolder(input: string): GameFolder[] {
   const target = current.folders.find((folder) => pathIdentity(folder.path) === identity)
   if (!target) throw new Error('文件夹未登记')
   if (current.folders.length <= 1) throw new Error('至少需要保留一个游戏文件夹')
+  folderLog.info(`解除登记游戏文件夹：${target.path}（磁盘文件保留）`)
   const folders = current.folders.filter((folder) => pathIdentity(folder.path) !== identity)
   if (target.isDefault) folders[0] = { ...folders[0], isDefault: true }
   const nextActive =
@@ -148,6 +156,7 @@ export function scanGameFolder(input: string): FolderScanResult {
   const folder = current.folders.find((value) => pathIdentity(value.path) === identity)
   if (!folder) throw new Error('文件夹未登记')
   if (!fs.existsSync(folder.path)) {
+    folderLog.warn(`扫描游戏文件夹失败：${folder.path} 不存在或磁盘不可用`)
     return {
       folder,
       structure: 'missing',
@@ -164,6 +173,11 @@ export function scanGameFolder(input: string): FolderScanResult {
       ? 'minecraft'
       : 'empty'
   const scanned = scanInstalledFolder(folder.path)
+  if (scanned.errors.length) {
+    folderLog.warn(`扫描 ${folder.path} 完成（结构 ${structure}，${scanned.versions.length} 个版本，${scanned.errors.length} 条警告，耗时 ${Date.now() - started}ms）`, new Error(scanned.errors.join('；')))
+  } else {
+    folderLog.info(`扫描 ${folder.path} 完成：结构 ${structure}，${scanned.versions.length} 个版本（耗时 ${Date.now() - started}ms）`)
+  }
   return {
     folder,
     structure,

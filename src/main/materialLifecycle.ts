@@ -19,7 +19,7 @@ export function trackMaterialLifecycle(
   for (const event of ['maximize', 'unmaximize', 'restore', 'show', 'leave-full-screen']) window.on(event, refresh)
 
   // 最大化/全屏窗口切屏（Alt+Tab、Win+D、锁屏）后再切回只产生 focus，不经过 restore：
-  // DWM 在该路径下可能丢弃 Acrylic 材质导致背景变不透明。focus 时重建，节流 1s 防止
+  // DWM 在该路径下可能丢失 Acrylic 材质导致背景变不透明。focus 时重建，节流 1s 防止
   // 普通点击激活窗口造成的反复闪动。
   let lastFocusRefresh = 0
   let focusPending: ReturnType<typeof setTimeout> | undefined
