@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LaunchNotice from './components/LaunchNotice.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { backgroundImageEffect } from '@shared/appearancePolicy'
@@ -137,7 +138,7 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
   },
   {
     key: 'friends',
-    label: '好友直连',
+    label: '联机',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 4 5"/></svg>'
   }
 ]
@@ -146,6 +147,34 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
 const resourceExpanded = ref(false)
 const inResourceGroup = computed(() =>
   ['mods', 'packs', 'shaders', 'servers', 'friends'].includes(store.currentView)
+)
+
+// ---- 导航水滴：单一高亮块随指针在按钮间弹性滑动（iOS 液态感） ----
+const navEl = ref<HTMLElement | null>(null)
+const navHoverKey = ref('')
+const navBlob = reactive({ top: 0, height: 0, on: false, stretch: false })
+let blobStretchTimer: ReturnType<typeof setTimeout> | undefined
+const navBlobStyle = computed(() => ({
+  height: navBlob.height + 'px',
+  transform: `translateY(${navBlob.top}px) scale(${navBlob.stretch ? '0.96, 1.12' : '1, 1'})`
+}))
+function updateNavBlob() {
+  const root = navEl.value
+  if (!root) { navBlob.on = false; return }
+  const key = navHoverKey.value || store.currentView
+  let target = root.querySelector<HTMLElement>(`[data-nav="${key}"]`)
+  // 资源子项在子菜单折叠时不可见（v-show），回退到父级「资源管理」
+  if (target && target.offsetHeight === 0) target = root.querySelector<HTMLElement>('[data-nav="resources"]')
+  if (!target) { navBlob.on = false; return }
+  navBlob.top = target.offsetTop
+  navBlob.height = target.offsetHeight
+  navBlob.on = true
+  navBlob.stretch = true
+  clearTimeout(blobStretchTimer)
+  blobStretchTimer = setTimeout(() => { navBlob.stretch = false }, 430)
+}
+watch([navHoverKey, () => store.currentView, resourceExpanded, visibleNavItems, visibleResourceSubItems], () =>
+  nextTick(updateNavBlob)
 )
 
 const win = (action: 'minimize' | 'maximize' | 'close') => {
@@ -535,6 +564,10 @@ const dlOpen = ref(false)
 const notesOpen = ref(false)
 
 /** 顶栏空白处点击关闭已展开的下拉面板（顶栏是 -webkit-app-region:drag 拖拽区，点击不会落到下拉遮罩上） */
+function onTopbarPointerDown(event: PointerEvent) {
+  const target = event.target as HTMLElement
+  if (!target.closest('button, input, select, textarea, a, [role="button"]')) closeTopDropdowns()
+}
 function closeTopDropdowns() {
   noticeOpen.value = false
   dlOpen.value = false
@@ -838,6 +871,8 @@ const offs: Array<() => void> = []
 
 onMounted(async () => {
   applyTheme(store.settings?.theme, store.settings?.custom)
+  nextTick(updateNavBlob)
+  void import('./plugins').then((m) => m.loadEnabledPlugins())
   window.addEventListener('keydown', onEditKeydown)
   // Teleports are outside .shell; capture above their masks without accepting
   // internal text/image drags or invoking the import handler twice.
@@ -850,6 +885,7 @@ onMounted(async () => {
   // 注册全局整合包导入入口（供首页快速操作等任意页面触发）
   store.importHandler = (filePath: string) => void openModpackImport(filePath)
   offs.push(
+    window.kamucl.on('window:caption-pointerdown', closeTopDropdowns),
     onProgress((e) => {
       store.progress = e
       upsertTaskProgress(e)
@@ -966,6 +1002,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <LaunchNotice />
   <!-- 自定义背景层（纯色/图片 + 透明度 + 模糊） -->
   <div v-if="bgStyle" class="app-bg" :style="bgStyle"></div>
   <div
@@ -985,11 +1022,14 @@ onUnmounted(() => {
       </div>
 
       <!-- 导航 -->
-      <nav class="nav">
+      <nav class="nav" ref="navEl" @mouseleave="navHoverKey = ''">
+        <div class="nav-blob" :class="{ on: navBlob.on }" :style="navBlobStyle" aria-hidden="true"></div>
         <template v-for="item in visibleNavItems" :key="item.key">
           <button
             class="nav-item"
+            :data-nav="item.key"
             :class="{ active: store.currentView === item.key }"
+            @mouseenter="navHoverKey = item.key"
             @click="store.currentView = item.key"
           >
             <span class="nav-icon" v-html="item.icon"></span>
@@ -1000,7 +1040,9 @@ onUnmounted(() => {
           <template v-if="item.key === 'game'">
             <button
               class="nav-item nav-parent"
+              data-nav="resources"
               :class="{ active: inResourceGroup }"
+              @mouseenter="navHoverKey = 'resources'"
               @click="resourceExpanded = !resourceExpanded"
             >
               <span class="nav-icon">
@@ -1020,7 +1062,9 @@ onUnmounted(() => {
                 v-for="sub in visibleResourceSubItems"
                 :key="sub.key"
                 class="nav-item nav-sub-item"
+                :data-nav="sub.key"
                 :class="{ active: store.currentView === sub.key }"
+                @mouseenter="navHoverKey = sub.key"
                 @click="store.currentView = sub.key"
               >
                 <span class="nav-icon" v-html="sub.icon"></span>
@@ -1046,7 +1090,7 @@ onUnmounted(() => {
     <!-- ============ 右侧（顶栏 + 内容） ============ -->
     <div class="main-area">
       <!-- 顶部栏（可拖拽） -->
-      <header class="topbar" data-edit="topbar" @click.self="closeTopDropdowns">
+      <header class="topbar" data-edit="topbar" @pointerdown="onTopbarPointerDown">
         <button
           v-if="canGoBack && store.currentView !== 'home'"
           class="top-back"
@@ -1504,6 +1548,30 @@ onUnmounted(() => {
   gap: 5px;
   padding: 4px 12px 12px;
   overflow-y: auto;
+  position: relative;
+}
+/* 水滴高亮块：随指针在导航项间弹性滑动并拉伸形变 */
+.nav-blob {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 15%, var(--card-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.42s cubic-bezier(0.3, 1.5, 0.4, 1),
+    height 0.42s cubic-bezier(0.3, 1.5, 0.4, 1),
+    opacity 0.16s ease;
+  will-change: transform;
+}
+.nav-blob.on {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-blob { transition: none; }
 }
 .nav-item {
   display: flex;
@@ -1518,17 +1586,16 @@ onUnmounted(() => {
   font-size: 14px;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: color 0.16s ease;
   flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 .nav-item:hover {
   color: var(--text);
-  background: var(--hover);
 }
 .nav-item.active {
-  background: color-mix(in srgb, var(--accent) 15%, var(--card-2));
   color: color-mix(in srgb, var(--text) 84%, var(--accent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .nav-icon {
   display: flex;

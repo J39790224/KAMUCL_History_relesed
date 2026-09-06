@@ -116,6 +116,7 @@ export interface VersionJson {
   _modpackVersion?: string
   /** KAMUCL 自定义字段：版本独立指定 Java 路径 */
   _javaPath?: string
+  _javaAuto?: boolean
   /** KAMUCL 自定义字段：实例级窗口设置覆盖。 */
   _resolution?: GameResolution
   /** KAMUCL 自定义字段：自定义命名的原版实例记录其真实 MC 版本 id（修复/推断用） */
@@ -421,6 +422,13 @@ export async function installVanilla(
     // 2. 客户端 jar
     const client = vj.downloads?.client
     if (client?.url) {
+      // PCL2 本地复用优化：客户端 jar 优先从其他游戏文件夹的 versions 与 .kamucl/base
+      // 里按 大小+sha1 查找相同文件直接复制（多文件夹/加载器依赖原版间不再重复下载）
+      const versionDirs = allVersionsDirs()
+      const reuseDirs = versionDirs
+        .map((v) => v.dir)
+        .concat(versionDirs.map((v) => path.join(v.folder, '.kamucl', 'base')))
+        .filter((dir) => path.resolve(dir) !== path.resolve(path.dirname(jarPath)))
       await downloadFile(
         client.url,
         jarPath,
@@ -435,7 +443,7 @@ export async function installVanilla(
         mirror,
         signal,
         [],
-        { size: client.size }
+        { size: client.size, reuseDirs }
       )
     }
 
@@ -767,6 +775,7 @@ export function scanInstalledFolder(folder: string): {
       if (j._modpackName) item.modpackName = j._modpackName
       if (j._modpackVersion) item.modpackVersion = j._modpackVersion
       if (j._javaPath) item.javaPath = j._javaPath
+      if (j._javaAuto === true) item.javaAuto = true
       if (j._resolution) item.resolution = normalizeStoredResolution(j._resolution)
       if (j._icon) item.icon = j._icon
       if (j._thumbnail) {
@@ -965,12 +974,14 @@ export function cleanupPartialInstall(id: string): boolean {
 }
 
 /** 版本独立指定 Java（写入 _javaPath；空串恢复自动匹配） */
-export function setVersionJava(id: string, javaPath: string): void {
+export function setVersionJava(id: string, javaPath: string, automatic = false): void {
   const jp = versionJsonPath(id)
   const j = readVersionJson(id)
   const p = javaPath.trim()
-  if (p) j._javaPath = p
+  if (p && !automatic) j._javaPath = p
   else delete j._javaPath
+  if (automatic) j._javaAuto = true
+  else delete j._javaAuto
   fs.writeFileSync(jp, JSON.stringify(j, null, 2), 'utf-8')
 }
 

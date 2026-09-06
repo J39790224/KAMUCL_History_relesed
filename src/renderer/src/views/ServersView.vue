@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 服务器页：服务器列表管理 + SLP 实时状态 + 一键进服
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   addServer,
+  editServer,
+  copyText,
   bindServer,
   errText,
   getSettings,
@@ -13,6 +15,10 @@ import {
   removeServer,
   syncServersFromDat
 } from '../api'
+import ConnectionStatus from '../components/connection/ConnectionStatus.vue'
+import ServerListItem from '../components/connection/ServerListItem.vue'
+import ServerDetails from '../components/connection/ServerDetails.vue'
+import '../components/connection/connection.css'
 import { refreshInstalled, store, toast } from '../store'
 import type { InstalledVersion, ServerEntry, ServerPingResult } from '@shared/types'
 
@@ -21,9 +27,13 @@ const servers = ref<ServerEntry[]>([])
 const targets = ref<InstalledVersion[]>([])
 const pings = reactive<Record<string, ServerPingResult | 'loading'>>({})
 const loading = ref(true)
+const refreshing = ref(false), launchBusy = ref(false), bindingId = ref(''), loadError = ref('')
+const activeId = ref('')
+const pingEpoch = new Map<string, number>()
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     // 先从各版本 servers.dat 合并（游戏内添加的服务器自动纳入并标注所属版本）
     const r = await syncServersFromDat()
@@ -32,7 +42,8 @@ async function load() {
     if (r.added > 0) toast(`已从游戏内同步 ${r.added} 个服务器`, 'info')
     if (r.errors?.length) toast(`有 ${r.errors.length} 个服务器列表未能读取：${r.errors[0]}`, 'error')
   } catch (e) {
-    toast('读取服务器列表失败：' + errText(e), 'error')
+    loadError.value = '读取服务器列表失败：' + errText(e)
+    toast(loadError.value, 'error')
   } finally {
     loading.value = false
   }
@@ -40,7 +51,9 @@ async function load() {
 }
 
 async function syncNow() {
+  if (loading.value) return
   loading.value = true
+  loadError.value = ''
   try {
     const r = await syncServersFromDat()
     servers.value = r.list
@@ -57,14 +70,21 @@ async function syncNow() {
 }
 
 async function pingAll() {
-  await Promise.allSettled(servers.value.map((s) => pingOne(s)))
+  if (refreshing.value) return
+  refreshing.value = true
+  try { await Promise.allSettled(servers.value.map((s) => pingOne(s))) }
+  finally { refreshing.value = false }
 }
 
 async function pingOne(s: ServerEntry) {
+  const epoch = (pingEpoch.get(s.id) ?? 0) + 1
+  pingEpoch.set(s.id, epoch)
   pings[s.id] = 'loading'
   try {
-    pings[s.id] = await pingServer(s.address)
+    const result = await pingServer(s.address)
+    if (pingEpoch.get(s.id) === epoch && servers.value.some(item => item.id === s.id && item.address === s.address)) pings[s.id] = result
   } catch {
+    if (pingEpoch.get(s.id) !== epoch || !servers.value.some(item => item.id === s.id && item.address === s.address)) return
     pings[s.id] = {
       online: false,
       players: '-',
@@ -81,21 +101,26 @@ onMounted(() => {
 })
 
 // ---------------- 添加 ----------------
-const addModal = reactive({ open: false, name: '', address: '', busy: false })
+const addModal = reactive({ open: false, id: '', name: '', address: '', busy: false, error: '' })
+function openAdd(server?: ServerEntry) {
+  Object.assign(addModal, { open: true, id: server?.id ?? '', name: server?.name ?? '', address: server?.address ?? '', error: '' })
+}
 
 async function onAdd() {
   if (addModal.busy) return
   addModal.busy = true
+  addModal.error = ''
   try {
-    servers.value = await addServer(addModal.name, addModal.address)
+    const editingId = addModal.id
+    servers.value = editingId ? await editServer(editingId, addModal.name, addModal.address) : await addServer(addModal.name, addModal.address)
     addModal.open = false
     addModal.name = ''
     addModal.address = ''
-    toast('服务器已添加', 'success')
-    const just = servers.value[servers.value.length - 1]
-    if (just) void pingOne(just)
+    toast(editingId ? '服务器已更新' : '服务器已添加', 'success')
+    const just = editingId ? servers.value.find(s => s.id === editingId) : servers.value[servers.value.length - 1]
+    if (just) { activeId.value = just.id; void pingOne(just) }
   } catch (e) {
-    toast('添加失败：' + errText(e), 'error')
+    addModal.error = errText(e)
   } finally {
     addModal.busy = false
   }
@@ -204,6 +229,7 @@ const formatLastUsed = (value?: string): string => {
 
 /** 双击卡片：已绑定版本直接启动进服；未绑定弹版本选择 */
 function onCardDblClick(s: ServerEntry) {
+  if (launchBusy.value || bindingId.value || store.launchState?.status === 'running' || store.launchState?.status === 'launching') return
   if (s.versionId) {
     const v = targetOf(s)
     if (v) {
@@ -217,6 +243,8 @@ function onCardDblClick(s: ServerEntry) {
 }
 
 async function doLaunch(s: ServerEntry, versionId: string) {
+  if (launchBusy.value) return
+  launchBusy.value = true
   try {
     const target = targets.value.find(
       (item) => item.id === versionId && (!s.folder || normalizedPath(item.folder) === normalizedPath(s.folder))
@@ -236,18 +264,20 @@ async function doLaunch(s: ServerEntry, versionId: string) {
     )
   } catch (e) {
     toast('启动失败：' + errText(e), 'error')
-  }
+  } finally { launchBusy.value = false }
 }
 
 /** 仅更新 KAMUCL 的实例关联；绝不写回或覆盖 Minecraft 的 servers.dat。 */
 async function onBind(s: ServerEntry, token: string) {
+  if (bindingId.value) return
+  bindingId.value = s.id
   try {
     const target = parseTargetToken(token)
     servers.value = await bindServer(s.id, target?.id ?? '', target?.folder)
     toast(target ? `已关联到 ${target.id}` : '已解除实例关联', 'success')
   } catch (e) {
     toast('绑定失败：' + errText(e), 'error')
-  }
+  } finally { bindingId.value = '' }
 }
 
 function relinkMissing(s: ServerEntry) {
@@ -299,153 +329,69 @@ const filteredServers = computed(() =>
       })
     : servers.value
 )
+const activeServer = computed(() => filteredServers.value.find(s => s.id === activeId.value) ?? filteredServers.value[0])
+const onlineCount = computed(() => servers.value.filter(s => pingOf(s)?.online).length)
+watch(servers, list => { selected.value = new Set([...selected.value].filter(id => list.some(s => s.id === id))) })
+function requestDelete(s: ServerEntry) {
+  Object.assign(delModal, { open: true, target: s, batch: false })
+}
+async function copyAddress(s: ServerEntry) {
+  try { toast(await copyText(s.address) ? '服务器地址已复制' : '复制失败', 'info') }
+  catch (e) { toast(errText(e), 'error') }
+}
 </script>
 
 <template>
-  <div class="page">
-    <div class="page-head">
-      <h1 class="page-title">服务器</h1>
-      <p class="page-sub">收藏常用服务器，实时查看状态并一键进入</p>
+  <div class="connect-page servers-page">
+    <header class="connection-header">
+      <div><span class="connection-eyebrow">YOUR DESTINATIONS</span><h1>服务器</h1><p>收藏常去的世界，为每一次出发选好实例。</p></div>
+      <button class="btn btn-gold" :disabled="loading" @click="openAdd()"><span aria-hidden="true">＋</span> 添加服务器</button>
+    </header>
+    <div class="server-toolbar">
+      <label class="server-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input v-model="store.searchKeyword" type="search" placeholder="搜索名称、地址或服务器介绍" aria-label="搜索服务器" /></label>
+      <div class="connection-actions"><button class="btn btn-ghost" :disabled="refreshing || loading || !servers.length" @click="pingAll">{{ refreshing ? '刷新中…' : '刷新状态' }}</button><button class="btn btn-ghost" :disabled="loading || !!bindingId || launchBusy" @click="syncNow">{{ loading ? '同步中…' : '同步游戏列表' }}</button></div>
     </div>
-
-    <!-- 工具行 -->
-    <div class="toolbar">
-      <button class="btn btn-gold" @click="addModal.open = true">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-        添加服务器
-      </button>
-      <button class="btn btn-ghost" @click="pingAll">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
-        刷新状态
-      </button>
-      <button class="btn btn-ghost" :disabled="loading" @click="syncNow">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-5V2" /><path d="M4 17h5v5" /><path d="M5.1 9a8 8 0 0 1 13.2-3L20 7M4 17l1.7 1A8 8 0 0 0 18.9 15" /></svg>
-        同步游戏列表
-      </button>
-      <span class="toolbar-spacer"></span>
-      <button v-if="!selectMode" class="btn btn-ghost" :disabled="!servers.length" @click="toggleSelectMode">
-        多选删除
-      </button>
-      <template v-else>
-        <label class="check-all">
-          <input type="checkbox" :checked="allChecked" @change="toggleAll" />
-          <span>全选（{{ selectedCount }}/{{ filteredServers.length }}）</span>
-        </label>
-        <button class="btn btn-danger btn-sm" :disabled="!selectedCount" @click="openBatchDelete">
-          删除所选（{{ selectedCount }}）
-        </button>
-        <button class="btn btn-ghost" @click="toggleSelectMode">退出多选</button>
-      </template>
+    <p v-if="loadError" class="connection-error" role="alert">{{ loadError }} <button class="btn btn-ghost" @click="load">重试</button></p>
+    <div class="server-collection-head"><div><strong>我的服务器 <span>{{ servers.length }}</span></strong><ConnectionStatus :tone="refreshing ? 'pending' : 'neutral'" :label="refreshing ? '检测状态中' : onlineCount + ' 个在线'" /></div><button class="btn btn-ghost" :disabled="!servers.length || loading" @click="toggleSelectMode">{{ selectMode ? '退出多选' : '批量管理' }}</button></div>
+    <div v-if="selectMode" class="server-batch"><label class="check-all"><input type="checkbox" :checked="allChecked" @change="toggleAll" /> 全选搜索结果</label><span>已选 {{ selectedCount }} 项</span><button class="btn btn-danger" :disabled="!selectedCount" @click="openBatchDelete">删除所选</button></div>
+    <div v-if="loading" class="connection-panel connection-empty" role="status"><span class="spin"></span><h3>正在整理服务器列表</h3><p>同步各实例中的收藏，不会覆盖游戏文件。</p></div>
+    <div v-else-if="!servers.length" class="connection-panel connection-empty">
+      <span class="connection-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h2m-2 10h2"/></svg></span><h3>下一站，去哪个世界？</h3><p>添加好友的服务器地址，或同步游戏内的收藏。关联实例后即可快速进入。</p><button class="btn btn-gold" @click="openAdd()">添加第一个服务器</button>
     </div>
-
-    <!-- 列表 -->
-    <div v-if="loading" class="card empty">
-      <span class="spin"></span>
-      <span>正在读取服务器列表…</span>
+    <div v-else-if="!filteredServers.length" class="connection-panel connection-empty"><h3>没有找到匹配的服务器</h3><p>试试其他名称、地址或关键词。</p><button class="btn btn-ghost" @click="store.searchKeyword = ''">清除搜索</button></div>
+    <div v-else class="server-workspace">
+      <section class="server-list" aria-label="服务器列表">
+        <ServerListItem v-for="s in filteredServers" :key="s.id" :server="s" :ping="pingOf(s)" :pending="pings[s.id] === 'loading'" :active="activeServer?.id === s.id" :select-mode="selectMode" :checked="selected.has(s.id)" @select="activeId = s.id" @toggle="toggleSelect(s.id)" @connect="onCardDblClick(s)" />
+        <p class="connection-muted server-list-hint">选择查看详情 · 双击快速连接</p>
+      </section>
+      <ServerDetails v-if="activeServer" :server="activeServer" :ping="pingOf(activeServer)" :pending="pings[activeServer.id] === 'loading'" :busy="launchBusy || store.launchState?.status === 'running' || store.launchState?.status === 'launching'" :binding="!!bindingId" :targets="targets" :bound="boundToken(activeServer)" :missing="versionMissing(activeServer)" :last-used="formatLastUsed(activeServer.lastUsedAt)" :target-token="targetToken" :target-label="targetLabel" @bind="onBind(activeServer, $event)" @connect="onCardDblClick(activeServer)" @refresh="pingOne(activeServer)" @edit="openAdd(activeServer)" @remove="requestDelete(activeServer)" @relink="relinkMissing(activeServer)" @versions="store.currentView = 'game'" @copy="copyAddress(activeServer)" />
     </div>
-    <div v-else-if="!servers.length" class="card empty servers-empty">
-      <svg class="servers-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="7" rx="2" />
-        <rect x="3" y="13" width="18" height="7" rx="2" />
-        <path d="M7 7.5h.01M7 16.5h.01" />
-      </svg>
-      <p class="servers-text">还没有收藏服务器，点击上方「添加服务器」吧</p>
-    </div>
-
-    <div v-else class="server-list">
-      <div
-        v-for="s in filteredServers"
-        :key="s.id"
-        class="card server-card"
-        :class="{ 'select-mode': selectMode, checked: selectMode && selected.has(s.id) }"
-        @dblclick="!selectMode && onCardDblClick(s)"
-        @click="selectMode && toggleSelect(s.id)"
-      >
-        <label v-if="selectMode" class="server-check" @click.stop>
-          <input type="checkbox" :checked="selected.has(s.id)" @change="toggleSelect(s.id)" />
-        </label>
-        <span class="status-dot" :class="pingOf(s)?.online ? 'on' : 'off'"></span>
-        <div class="server-main">
-          <div class="server-title">
-            <span class="server-name">{{ s.name }}</span>
-            <span class="muted server-addr">{{ s.address }}</span>
-          </div>
-          <p class="server-motd" :class="{ muted: !pingOf(s)?.online }">
-            <span v-if="pings[s.id] === 'loading'" class="muted">正在连接…</span>
-            <template v-else>{{ pingOf(s)?.motd }}</template>
-          </p>
-          <div class="server-bind">
-            <select
-              class="bind-select"
-              :value="boundToken(s)"
-              :title="s.versionId ? '双击卡片直接启动该版本进服' : '绑定版本后可双击进服'"
-              @change="onBind(s, ($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">未关联实例</option>
-              <option v-for="v in targets" :key="`${v.folder}\u0000${v.id}`" :value="targetToken(v)">
-                {{ targetLabel(v) }}{{ v.isolated ? '（隔离）' : '' }}
-              </option>
-            </select>
-            <template v-if="versionMissing(s)">
-              <span class="tag tag-danger">关联实例缺失</span>
-              <button class="btn btn-ghost btn-sm" @click="relinkMissing(s)">重新关联</button>
-              <button class="btn btn-ghost btn-sm" @click="store.currentView = 'game'">前往版本页</button>
-            </template>
-            <span v-else-if="s.candidateVersionIds?.length" class="tag">共享目录，待确认实例</span>
-          </div>
-          <div class="server-instance-meta">
-            <span v-if="s.minecraftVersion">Minecraft {{ s.minecraftVersion }}</span>
-            <span v-if="s.loader">{{ s.loader }} {{ s.loaderVersion ?? '' }}</span>
-            <span>{{ formatLastUsed(s.lastUsedAt) }}</span>
-          </div>
-        </div>
-        <div class="server-meta">
-          <template v-if="pingOf(s)?.online">
-            <span class="tag">{{ pingOf(s)?.version }}</span>
-            <span class="muted meta-text">在线 {{ pingOf(s)?.players }}</span>
-            <span class="muted meta-text">{{ pingOf(s)?.latencyMs }}ms</span>
-          </template>
-          <span v-else-if="pings[s.id] !== 'loading'" class="tag">离线</span>
-        </div>
-        <div class="server-actions">
-          <button
-            class="btn btn-gold btn-sm"
-            :disabled="!!store.launchState && store.launchState.status === 'running'"
-            @click="s.versionId && !versionMissing(s) ? doLaunch(s, s.versionId) : openJoin(s)"
-          >
-            {{ s.versionId && !versionMissing(s) ? '一键启动' : '选择实例' }}
-          </button>
-          <button class="btn btn-danger btn-sm" @click="delModal.open = true; delModal.target = s">删除</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 添加模态框 -->
     <Teleport to="body">
-      <div v-if="addModal.open" class="modal-mask" @pointerdown.self="addModal.open = false">
-        <div class="modal">
-          <h3 class="modal-title">添加服务器</h3>
-          <p class="modal-label">服务器名称</p>
-          <input v-model="addModal.name" class="input" placeholder="例如：好友的生存服" maxlength="30" />
-          <p class="modal-label">服务器地址</p>
+      <div v-if="addModal.open" class="modal-mask connection-modal" @pointerdown.self="!addModal.busy && (addModal.open = false)">
+        <div class="modal" role="dialog" aria-modal="true" aria-label="服务器操作">
+          <h3 class="modal-title">{{ addModal.id ? '编辑服务器' : '添加服务器' }}</h3><p class="connection-muted">只修改启动器记录，不会覆盖游戏内服务器列表。</p><p v-if="addModal.error" class="connection-error" role="alert">{{ addModal.error }}</p>
+          <label for="server-edit-name" class="modal-label">服务器名称</label>
+          <input id="server-edit-name" v-model="addModal.name" class="input" placeholder="例如：好友的生存服" maxlength="30" />
+          <label for="server-edit-address" class="modal-label">服务器地址</label>
           <input
-            v-model="addModal.address"
+            id="server-edit-address" v-model="addModal.address"
             class="input mono"
             placeholder="例如：mc.example.com 或 1.2.3.4:25565"
             spellcheck="false"
             @keyup.enter="onAdd"
           />
           <div class="modal-actions">
-            <button class="btn btn-ghost" @click="addModal.open = false">取消</button>
-            <button class="btn btn-gold" :disabled="addModal.busy" @click="onAdd">
-              {{ addModal.busy ? '添加中…' : '添加' }}
+            <button class="btn btn-ghost" :disabled="addModal.busy" @click="addModal.open = false">取消</button>
+            <button class="btn btn-gold" :disabled="addModal.busy || !addModal.name.trim() || !addModal.address.trim()" @click="onAdd">
+              {{ addModal.busy ? '保存中…' : addModal.id ? '保存修改' : '添加服务器' }}
             </button>
           </div>
         </div>
       </div>
 
       <!-- 删除确认 -->
-      <div v-if="delModal.open" class="modal-mask" @pointerdown.self="delModal.open = false">
+      <div v-if="delModal.open" class="modal-mask connection-modal" @pointerdown.self="!delModal.busy && (delModal.open = false)">
         <div class="modal">
           <h3 class="modal-title">删除服务器</h3>
           <p class="confirm-text">
@@ -457,7 +403,7 @@ const filteredServers = computed(() =>
             </template>
           </p>
           <div class="modal-actions">
-            <button class="btn btn-ghost" @click="delModal.open = false">取消</button>
+            <button class="btn btn-ghost" :disabled="delModal.busy" @click="delModal.open = false">取消</button>
             <button class="btn btn-danger" :disabled="delModal.busy" @click="onDelete">
               {{ delModal.busy ? '删除中…' : '确认删除' }}
             </button>
@@ -466,7 +412,7 @@ const filteredServers = computed(() =>
       </div>
 
       <!-- 进入游戏（选版本） -->
-      <div v-if="joinModal.open" class="modal-mask" @pointerdown.self="joinModal.open = false">
+      <div v-if="joinModal.open" class="modal-mask connection-modal" @pointerdown.self="joinModal.open = false">
         <div class="modal">
           <h3 class="modal-title">进入 {{ joinModal.target?.name }}</h3>
           <p class="modal-label">选择游戏实例（将保存关联并启动 {{ joinModal.target?.address }}）</p>
@@ -487,201 +433,54 @@ const filteredServers = computed(() =>
     </Teleport>
   </div>
 </template>
-
-<style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 940px;
-  margin: 0 auto;
-}
-.toolbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.toolbar .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.toolbar-spacer {
-  flex: 1;
-}
-.check-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  color: var(--text-dim);
-  cursor: pointer;
-  user-select: none;
-}
-.check-all input {
-  accent-color: var(--accent);
-}
-/* 多选模式 */
-.server-card.select-mode {
-  cursor: pointer;
-}
-.server-card.checked {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.server-check {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.server-check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 60px 20px;
-  color: var(--text-dim);
-}
-.servers-icon {
-  width: 52px;
-  height: 52px;
-  color: var(--accent);
-  opacity: 0.8;
-}
-.servers-text {
-  font-size: 14px;
-}
-
-/* 服务器卡片 */
-.server-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.server-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-}
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--text-dim);
-}
-.status-dot.on {
-  background: var(--ok);
-  box-shadow: 0 0 8px var(--ok);
-}
-.server-main {
-  flex: 1;
-  min-width: 0;
-}
-.server-title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.server-name {
-  font-size: 15px;
-  font-weight: 700;
-}
-.server-addr {
-  font-size: 12px;
-  font-family: ui-monospace, Consolas, monospace;
-}
-.server-motd {
-  margin-top: 4px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-/* 绑定版本行 */
-.server-bind {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 7px;
-}
-.bind-select {
-  max-width: min(360px, 100%);
-  padding: 4px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card-2);
-  color: var(--text);
-  font-size: 12px;
-  font-family: inherit;
-}
-.server-instance-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  margin-top: 7px;
-  color: var(--text-dim);
-  font-size: 11.5px;
-}
-.server-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.meta-text {
-  font-size: 12px;
-}
-.server-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.modal-label {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.confirm-text {
-  font-size: 13.5px;
-  line-height: 1.7;
-}
-.join-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-@media (max-width: 820px) {
-  .server-card {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-  .server-main {
-    min-width: calc(100% - 28px);
-  }
-  .server-meta {
-    flex-direction: row;
-    align-items: center;
-    margin-left: 24px;
-  }
-  .server-actions {
-    margin-left: auto;
-  }
-}
+<style>
+/* Server children share these page-scoped rules with the connection components. */
+.servers-page .server-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.servers-page .server-search { display: flex; flex: 1 1 250px; align-items: center; gap: 10px; min-width: 0; height: 44px; border: 1px solid var(--border); border-radius: 12px; padding: 0 14px; background: var(--card); }
+.servers-page .server-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.servers-page .server-search svg { width: 18px; height: 18px; flex: none; color: var(--text-dim); }
+.servers-page .server-search input { border: 0; outline: 0; background: transparent; color: var(--text); min-width: 0; width: 100%; font: inherit; font-size: 12px; }
+.servers-page .server-search input::placeholder { color: var(--text-dim); }
+.servers-page .server-collection-head, .servers-page .server-collection-head > div { display: flex; align-items: center; gap: 12px; }
+.servers-page .server-collection-head { justify-content: space-between; }
+.servers-page .server-collection-head strong { font-size: 14px; }
+.servers-page .server-collection-head strong > span { margin-left: 7px; color: var(--text-dim); font-size: 12px; font-weight: 400; }
+.servers-page .server-workspace { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.05fr); gap: 18px; align-items: start; }
+.servers-page .server-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.servers-page .server-list-item { display: flex; align-items: center; min-width: 0; border: 1px solid var(--border); border-radius: 13px; background: var(--card); transition: background 160ms ease, border-color 160ms ease; overflow: hidden; }
+.servers-page .server-list-item:hover { border-color: var(--border-strong); background: var(--card-2); }
+.servers-page .server-list-item.active, .servers-page .server-list-item.checked { border-color: var(--accent); background: linear-gradient(110deg, var(--accent-soft), transparent), var(--card); box-shadow: inset 3px 0 var(--accent); }
+.servers-page .server-row-button { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 17px; border: 0; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.servers-page .server-row-button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -4px; border-radius: 12px; }
+.servers-page .server-monogram { display: flex; align-items: center; justify-content: center; width: 36px; height: 40px; flex: none; border-radius: 10px; background: var(--accent-soft); color: var(--accent-2); font-size: 19px; font-weight: 700; }
+.servers-page .server-monogram.large { width: 48px; height: 52px; font-size: 25px; }
+.servers-page .server-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 6px; }
+.servers-page .server-row-copy strong { font-size: 13px; }
+.servers-page .server-row-copy > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.servers-page .server-row-copy > span { color: var(--text-dim); font-size: 11px; }
+.servers-page .server-row-copy small { color: var(--text-dim); font-size: 10px; }
+.servers-page .server-row-state { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+.servers-page .server-row-state small { color: var(--text-dim); font-size: 10px; }
+.servers-page .server-list-hint { padding: 6px 2px; }
+.servers-page .server-detail { position: sticky; top: 0; }
+.servers-page .server-detail-title { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.servers-page .server-detail-title > div { min-width: 0; }
+.servers-page .server-detail-title h3 { font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.servers-page .server-detail-title p { color: var(--text-dim); font-size: 12px; line-height: 1.7; margin-top: 5px; }
+.servers-page .server-description { color: var(--text-dim); background: var(--card-2); border-radius: 10px; padding: 13px 14px; font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.servers-page .server-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.servers-page .server-facts > div { display: flex; flex-direction: column; gap: 7px; }
+.servers-page .server-facts span { color: var(--text-dim); font-size: 11px; }
+.servers-page .server-facts strong { font-size: 20px; font-weight: 650; }
+.servers-page .server-connect { width: 100%; justify-content: space-between; min-height: 46px; }
+.servers-page .server-secondary { gap: 6px; }
+.servers-page .server-secondary .btn { flex: 1; padding: 8px 10px; white-space: nowrap; }
+.servers-page .server-delete { color: var(--danger); }
+.servers-page .server-footnote { font-size: 11px; }
+.servers-page .server-check { padding-left: 16px; cursor: pointer; }
+.servers-page input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.servers-page .check-all, .servers-page .server-batch { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.servers-page .server-batch { padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--accent-soft); flex-wrap: wrap; }
+.servers-page .server-batch > .btn { margin-left: auto; }
+@media (max-width: 1120px) { .servers-page .server-workspace { grid-template-columns: 1fr; } .servers-page .server-detail { position: static; } }
 </style>

@@ -40,6 +40,7 @@ import type {
   Settings,
   SkinHistoryEntry,
   SkinVariant,
+  SystemInfo,
   WorldImportInfo,
   WorldImportOptions,
   WorldImportResult,
@@ -66,6 +67,8 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 // ---------------- 设置 ----------------
 export const getSettings = () => invoke<Settings>(IPC.settingsGet)
+/** 真实系统信息（物理内存总量等），用于内存滑块上限等 */
+export const getSystemInfo = () => invoke<SystemInfo>(IPC.appSystemInfo)
 /**
  * 保存设置。Vue 的 reactive proxy 无法通过 IPC 结构化克隆，
  * 发送前用 JSON 深拷贝净化（同时剥掉一切不可序列化内容）。
@@ -127,8 +130,8 @@ export const installVersion = (id: string, opts?: InstallOptions) =>
 export const removeVersion = (id: string) => invoke<void>(IPC.versionsRemove, id)
 export const renameVersion = (id: string, newName: string) =>
   invoke<void>(IPC.versionsRename, id, newName)
-export const setVersionJava = (id: string, javaPath: string) =>
-  invoke<void>(IPC.versionsSetJava, id, javaPath)
+export const setVersionJava = (id: string, javaPath: string, automatic = false, folder?: string) =>
+  invoke<void>(IPC.versionsSetJava, id, javaPath, automatic, folder)
 export const setVersionResolution = (id: string, resolution: GameResolution | null) =>
   invoke<void>(IPC.versionsSetResolution, id, resolution)
 export const cleanupPartialInstall = (id: string) =>
@@ -247,6 +250,8 @@ export const listServers = () => invoke<ServerEntry[]>(IPC.serversList)
 export const addServer = (name: string, address: string) =>
   invoke<ServerEntry[]>(IPC.serversAdd, name, address)
 export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
+export const editServer = (id: string, name: string, address: string) =>
+  invoke<ServerEntry[]>(IPC.serversEdit, id, name, address)
 export const pingServer = (address: string) =>
   invoke<ServerPingResult>(IPC.serversPing, address)
 export const bindServer = (id: string, versionId: string, folder?: string) =>
@@ -266,6 +271,19 @@ export const installMods = (files: string[], targetVersionId: string, folder?: s
   invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId, folder)
 export const findModDuplicates = (versionId: string) =>
   invoke<ModDuplicateGroup[]>(IPC.modsDuplicates, versionId)
+export const checkModUpdates = (versionId: string, folder?: string) =>
+  invoke<import('@shared/types').ModUpdateReport>(IPC.modsCheckUpdates, versionId, folder)
+export const applyModUpdates = (versionId: string, items: import('@shared/types').ModUpdateTarget[], folder?: string) =>
+  invoke<Array<{ fileName: string; ok: boolean; error?: string }>>(IPC.modsApplyUpdates, versionId, items, folder)
+
+// ---------------- 插件系统 ----------------
+export const listPlugins = () => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsList)
+export const installPlugin = () => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsInstall)
+export const setPluginEnabled = (id: string, enabled: boolean) =>
+  invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsSetEnabled, id, enabled)
+export const removePlugin = (id: string) => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsRemove, id)
+export const readPluginCode = (id: string) => invoke<string>(IPC.pluginsReadCode, id)
+export const openPluginsDir = () => invoke<void>(IPC.pluginsOpenDir)
 export const findModCrossDuplicates = (versionIds: string[]) =>
   invoke<ModCrossDuplicate[]>(IPC.modsCrossDuplicates, versionIds)
 

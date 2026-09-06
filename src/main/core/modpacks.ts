@@ -24,6 +24,9 @@ import { packRuntimeProfile } from './packRuntime'
 import { throwIfCancelled } from './tasks'
 import { listGameFolders, setActiveGameFolder } from './gameFolders'
 import { canonicalPath, samePath } from './folderPaths'
+import { logScope } from './launcherLog'
+
+const packLog = logScope('modpack')
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
@@ -821,6 +824,7 @@ function requestedGameFolder(input?: string): string {
 
 /** 只解析整合包元信息（不解压不下载），供导入确认弹窗展示 */
 export async function probeModpack(filePath: string): Promise<ModpackInfo> {
+  packLog.debug(`解析整合包元信息：${path.basename(filePath)}`)
   const zip = openPackZip(filePath)
   const detected = detectPack(zip)
   const fileName = packFileName(filePath)
@@ -874,8 +878,23 @@ export async function installModpack(
   emit: ProgressEmit,
   opts?: ModpackInstallOpts
 ): Promise<string> {
-  const folder = requestedGameFolder(opts?.targetFolder)
-  return withGameFolder(folder, () => installModpackInFolder(filePath, emit, { ...opts, targetFolder: folder }))
+  const started = Date.now()
+  packLog.info(`开始安装整合包 ${path.basename(filePath)} → 文件夹 ${opts?.targetFolder || '当前活动文件夹'}`)
+  try {
+    const id = await (async () => {
+      const folder = requestedGameFolder(opts?.targetFolder)
+      return withGameFolder(folder, () => installModpackInFolder(filePath, emit, { ...opts, targetFolder: folder }))
+    })()
+    packLog.info(`整合包 ${path.basename(filePath)} 安装完成：实例 ${id}（耗时 ${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return id
+  } catch (error) {
+    if (error instanceof Error && /已取消|取消/.test(error.message)) {
+      packLog.info(`整合包 ${path.basename(filePath)} 安装已取消`)
+    } else {
+      packLog.error(`整合包 ${path.basename(filePath)} 安装失败`, error)
+    }
+    throw error
+  }
 }
 
 async function installModpackInFolder(filePath: string, emit: ProgressEmit, opts?: ModpackInstallOpts): Promise<string> {

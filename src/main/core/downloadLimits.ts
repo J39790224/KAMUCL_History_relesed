@@ -16,6 +16,10 @@ export class DownloadLimiter {
   private queue: Array<() => void> = []
   private tokens = 0
   private sampledAt = performance.now()
+  /** 当前是否启用了限速（慢速连接检测在限速时跳过：慢是限速的预期行为） */
+  get isThrottling(): boolean {
+    return this.limits.downloadSpeedKBps > 0
+  }
   configure(limits: DownloadLimits): void {
     validateDownloadLimits(limits)
     this.limits = { ...limits }

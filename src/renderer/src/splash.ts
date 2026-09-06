@@ -1,5 +1,5 @@
 import faceUrl from './assets/splash-face.png'
-import { makeBootPixels, pixelPosition, RISE_END, CONVERGE_DURATION, type BootState } from '@shared/startup'
+import { makeBootPixels, pixelPosition, RISE_END, CONVERGE_DURATION, ASSEMBLED_HOLD_MS, type BootState } from '@shared/startup'
 import './splash.css'
 
 const bridge = window.kamuclSplash
@@ -38,8 +38,9 @@ function frame(now: number) {
   }
   if (!assembled && convergence !== null && (reduced || elapsed - convergence >= CONVERGE_DURATION)) {
     assembled = true
-    // Allow this exact, fully assembled face to reach the compositor before revealing the main window.
-    raf = requestAnimationFrame(() => bridge.assembled())
+    // 完整头像先抵达合成器，再停留展示 ASSEMBLED_HOLD_MS 后揭示主界面；
+    // reduced-motion 用户不强制停留。
+    raf = requestAnimationFrame(() => setTimeout(() => bridge.assembled(), reduced ? 0 : ASSEMBLED_HOLD_MS))
   } else if (!assembled) raf = requestAnimationFrame(frame)
 }
 face.onload = () => { resize(); raf = requestAnimationFrame(frame); bridge.ready() }

@@ -128,6 +128,8 @@ export interface InstalledVersion {
   failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
+  /** 当前实例显式自动匹配，优先于全局手动设置。 */
+  javaAuto?: boolean
   /** 实例窗口设置覆盖；未设置时跟随全局设置。 */
   resolution?: GameResolution
   /** 实例图标：'mob:<内置生物头像id>' | 'file:<自定义图标文件名>'（空 = 默认图标） */
@@ -316,9 +318,9 @@ export const THEME_PRESETS: Record<
   },
   transparent: {
     label: '默认 · 透明',
-    description: '图一深色绿调的系统桌面磨砂玻璃',
+    description: '蒂芙尼蓝重点色的系统桌面磨砂玻璃',
     colors: {
-      accent: '#55c96b',
+      accent: '#81d8d0',
       bg: '#10191b',
       card: '#172225',
       text: '#f4f8f5',
@@ -550,8 +552,16 @@ export const IPC = {
   // 设置
   settingsGet: 'settings:get',
   settingsSet: 'settings:set', // (patch: Partial<Settings>) => Settings
+  appSystemInfo: 'app:systemInfo', // () => SystemInfo  真实物理内存等系统信息
   appSelectDir: 'app:selectDir', // () => string | null
   appSelectFile: 'app:selectFile', // () => string | null  选择整合包文件（.mrpack/.zip）
+  // 插件系统（userData/plugins/<id>/{plugin.json,main.js}，JS 插件在页面上下文执行）
+  pluginsList: 'plugins:list', // () => PluginInfo[]
+  pluginsInstall: 'plugins:install', // () => PluginInfo[]  弹框选择 .js/文件夹后安装
+  pluginsSetEnabled: 'plugins:setEnabled', // (id: string, enabled: boolean) => PluginInfo[]
+  pluginsRemove: 'plugins:remove', // (id: string) => PluginInfo[]
+  pluginsReadCode: 'plugins:readCode', // (id: string) => string  仅启用插件可读
+  pluginsOpenDir: 'plugins:openDir', // () => void  打开插件目录
   appSelectImage: 'app:selectImage', // () => string | null  选择图片文件（png/jpg/webp）
   appearanceImportBackground: 'appearance:importBackground', // () => Settings | null  导入受管背景并保存
   appearanceResetBackground: 'appearance:resetBackground', // () => Settings  恢复默认并清理旧受管背景
@@ -599,6 +609,27 @@ export const IPC = {
   directState: 'direct:state',
   directResolve: 'direct:resolve',
   directPrepareJoin: 'direct:prepareJoin',
+
+  // 联机 · VoxLink（Go 引擎源码级移植，主进程内运行）
+  voxlinkStart: 'voxlink:start', // ({mode:'host'|'join', code?, roomName?, isPublic?}) => VoxLinkState
+  voxlinkStop: 'voxlink:stop', // () => VoxLinkState
+  voxlinkStatus: 'voxlink:status', // () => VoxLinkState
+  voxlinkLobby: 'voxlink:lobby', // () => VoxLinkRoom[]
+  voxlinkSettings: 'voxlink:settings', // (partial) => VoxLinkSettings
+  voxlinkEvent: 'voxlink:event', // push: {type, data}
+
+  // 联机 · 陶瓦联机（Terracotta 官方工具驱动）
+  tcStart: 'tc:start', // ({mode:'host'|'join', code?, port?}) => TerracottaState
+  tcStop: 'tc:stop', // () => TerracottaState
+  tcStatus: 'tc:status', // () => TerracottaState
+  tcEvent: 'tc:event', // push: {type:'log'|'ready'|'error'|'stopped', data}
+
+  // 联机 · FRP（樱花穿透）
+  frpStart: 'frp:start', // ({accessKey, tunnelId, localPort?}) => FrpState
+  frpStop: 'frp:stop', // () => FrpState
+  frpStatus: 'frp:status', // () => FrpState
+  frpEvent: 'frp:event', // push: {type:'log'|'ready'|'error'|'stopped', data}
+
   versionsSetJava: 'versions:setJava', // (id: string, javaPath: string) => void  版本独立指定 Java（空串恢复自动匹配）
   versionsSetResolution: 'versions:setResolution', // (id: string, resolution: GameResolution | null) => void  null = 跟随全局
   versionsSetIsolation: 'versions:setIsolation', // (versionId: string, isolated: boolean) => void  版本隔离开关；开启时把共享目录的存档/mods/配置等复制进版本独立目录（已存在项不覆盖）
@@ -633,6 +664,7 @@ export const IPC = {
   // 服务器（SLP 协议 ping）
   serversList: 'servers:list', // () => ServerEntry[]
   serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
+  serversEdit: 'servers:edit', // (id: string, name: string, address: string) => ServerEntry[]
   serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
   serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
   serversBind: 'servers:bind', // (id: string, versionId: string, folder?: string) => ServerEntry[]  绑定/解绑具体实例
@@ -648,6 +680,8 @@ export const IPC = {
   modsInstall: 'mods:install', // (files: string[], targetVersionId: string) => ModInstallResult[]  装入目标版本 mods 目录（遵循版本隔离）
   modsDuplicates: 'mods:duplicates', // (versionId: string) => ModDuplicateGroup[]  单版本查重
   modsCrossDuplicates: 'mods:crossDuplicates', // (versionIds: string[]) => ModCrossDuplicate[]  跨版本查重
+  modsCheckUpdates: 'mods:checkUpdates', // (versionId: string) => ModUpdateReport  按 sha1 反查 Modrinth 可更新项
+  modsApplyUpdates: 'mods:applyUpdates', // (versionId: string, items: ModUpdateTarget[]) => { fileName, ok, error? }[]
 
   // 整合包
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
@@ -727,6 +761,8 @@ export interface CommunityResult {
   projectId: string
   slug: string
   title: string
+  /** 源站原始名称，不包含启动器追加的中文译名。 */
+  originalTitle?: string
   author: string
   description: string
   iconUrl: string
@@ -955,6 +991,53 @@ export interface ModCrossDuplicate {
   presentIn: Array<{ versionId: string; fileName: string }>
 }
 
+/** MOD 更新检测：单个已安装 MOD 的检测结果 */
+export interface ModUpdateEntry {
+  fileName: string
+  name: string
+  modId: string
+  currentVersion: string
+  sha1: string
+  /** null = 未在 Modrinth 匹配到来源（可能来自 CurseForge 或手动安装） */
+  source: 'modrinth' | null
+  alreadyLatest: boolean
+  update: null | {
+    projectId: string
+    versionId: string
+    versionNumber: string
+    fileName: string
+    url: string
+    sha1?: string
+    size?: number
+  }
+}
+
+export interface ModUpdateReport {
+  mcVersion: string
+  loader: string
+  entries: ModUpdateEntry[]
+}
+
+/** 应用更新的单项：旧文件 + 新文件下载信息 */
+export interface ModUpdateTarget {
+  fileName: string
+  url: string
+  targetName: string
+  sha1?: string
+  size?: number
+}
+
+/** 插件信息（plugin.json 元数据 + 启用状态） */
+export interface PluginInfo {
+  id: string
+  name: string
+  version: string
+  author: string
+  description: string
+  enabled: boolean
+  hasCode: boolean
+}
+
 export interface ServerPingResult {
   online: boolean
   /** 在线/上限，如 "12/100" */
@@ -963,4 +1046,9 @@ export interface ServerPingResult {
   motd: string
   version: string
   latencyMs: number
+}
+
+export interface SystemInfo {
+  /** 物理内存总量（MB，向下取整） */
+  totalMemMB: number
 }

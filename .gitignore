@@ -7,3 +7,7 @@ builder-*.log
 *.part
 .DS_Store
 *-installer.jar.log
+
+*.rar
+*.jar.log
+scripts/*.log

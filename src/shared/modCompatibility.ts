@@ -58,6 +58,17 @@ function predicate(range: string, version: string): boolean {
   return c >= 0 && compareVersions(version, upper.join('.')) < 0
 }
 
+/** CurseForge-style hyphen ranges: `1.20.1-1.20.4` / `1.20.1 - 1.20.4`, inclusive on both ends.
+ * The right side must start with a digit so prerelease tags (`26.1.2.65-beta`) never match. */
+const HYPHEN_RANGE = /^(\d+(?:\.\d+)*)\s*-\s*(\d+(?:\.\d+)*)$/
+
+/** A hyphen range written INSIDE a Maven interval bound (`[1.20.1-1.20.4,)`):
+ * lower bound takes the low end, upper bound takes the high end. */
+function expandBound(value: string, pick: 'lo' | 'hi'): string {
+  const m = HYPHEN_RANGE.exec(value)
+  return m ? (pick === 'lo' ? m[1] : m[2]) : value
+}
+
 /** Maven interval unions, Fabric/Quilt OR alternatives and AND predicates.
  * A comma inside an interval is NEVER an alternative separator. Malformed ranges fail closed. */
 export function matchesVersionRange(range: string, version: string): boolean {
@@ -66,15 +77,17 @@ export function matchesVersionRange(range: string, version: string): boolean {
   if (!r || r === '*') return true
   if (r.includes('||')) return r.split('||').some(part => !!part.trim() && matchesVersionRange(part, version))
   if (r.includes(' && ')) return r.split(' && ').every(part => !!part.trim() && matchesVersionRange(part, version))
+  const hyphen = HYPHEN_RANGE.exec(r)
+  if (hyphen) return compareVersions(version, hyphen[1]) >= 0 && compareVersions(version, hyphen[2]) <= 0
   if (/^[[(]/.test(r)) {
     const intervals = r.match(/[[(][^()[\]]*[)\]]/g)
     if (!intervals || intervals.join(',').replace(/\s/g, '') !== r.replace(/\s/g, '')) return false
     return intervals.some(interval => {
       const body = interval.slice(1, -1).trim()
-      if (!body.includes(',')) return interval[0] === '[' && interval.endsWith(']') && !!body && compareVersions(version, body) === 0
+      if (!body.includes(',')) return interval[0] === '[' && interval.endsWith(']') && !!body && compareVersions(version, expandBound(body, 'lo')) === 0
       const bounds = body.split(',').map(s => s.trim())
       if (bounds.length !== 2 || (!bounds[0] && !bounds[1])) return false
-      const [lo, hi] = bounds
+      const [lo, hi] = [expandBound(bounds[0], 'lo'), expandBound(bounds[1], 'hi')]
       if (lo && hi && compareVersions(lo, hi) > 0) return false
       const low = lo ? compareVersions(version, lo) : 1
       const high = hi ? compareVersions(version, hi) : -1

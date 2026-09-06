@@ -4,11 +4,11 @@
  * 通过 IPC fs:list / fs:remove / app:openDir 管理游戏目录下的子目录。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { copyText, errText, listFs, openDir, removeFs } from '../api'
+import { applyModUpdates, checkModUpdates, copyText, errText, listFs, openDir, removeFs } from '../api'
 import { refreshInstalled, store, toast } from '../store'
 import ConfirmModal from './ConfirmModal.vue'
 import DupCleanModal from './DupCleanModal.vue'
-import type { FsEntry } from '@shared/types'
+import type { FsEntry, ModUpdateReport } from '@shared/types'
 
 const props = defineProps<{
   /** 页面标题，如「模组」 */
@@ -141,6 +141,86 @@ const fmtDate = (ts: number) => {
   const d = new Date(ts)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN')
 }
+
+// ---------------- MOD 更新检测（仅模组页；按 sha1 反查 Modrinth，内联面板不跳页） ----------------
+const updatePanel = reactive({
+  open: false,
+  checking: false,
+  error: '',
+  report: null as ModUpdateReport | null,
+  selected: new Set<string>(),
+  applying: false,
+  itemState: {} as Record<string, 'start' | 'ok' | 'error' | undefined>,
+  itemError: {} as Record<string, string>
+})
+
+const updatableEntries = computed(() => updatePanel.report?.entries.filter((e) => e.update) ?? [])
+const unmatchedCount = computed(() => updatePanel.report?.entries.filter((e) => !e.source).length ?? 0)
+const latestCount = computed(() => updatePanel.report?.entries.filter((e) => e.alreadyLatest || (e.source && !e.update)).length ?? 0)
+
+async function onCheckUpdates() {
+  const v = currentVersion.value
+  if (!v || updatePanel.checking) return
+  updatePanel.checking = true
+  updatePanel.error = ''
+  updatePanel.report = null
+  updatePanel.open = true
+  updatePanel.itemState = {}
+  updatePanel.itemError = {}
+  try {
+    const report = await checkModUpdates(v.id, v.folder)
+    updatePanel.report = report
+    updatePanel.selected = new Set(report.entries.filter((e) => e.update).map((e) => e.fileName))
+    if (!report.entries.length) toast('该实例 mods 目录为空', 'info')
+  } catch (e) {
+    updatePanel.error = errText(e)
+  } finally {
+    updatePanel.checking = false
+  }
+}
+
+async function applyUpdates(fileNames: string[]) {
+  const v = currentVersion.value
+  const report = updatePanel.report
+  if (!v || !report || updatePanel.applying) return
+  const targets = report.entries
+    .filter((e) => e.update && fileNames.includes(e.fileName))
+    .map((e) => ({ fileName: e.fileName, url: e.update!.url, targetName: e.update!.fileName, sha1: e.update!.sha1, size: e.update!.size }))
+  if (!targets.length) return
+  updatePanel.applying = true
+  try {
+    const results = await applyModUpdates(v.id, targets, v.folder)
+    let okCount = 0
+    for (const r of results) {
+      updatePanel.itemState[r.fileName] = r.ok ? 'ok' : 'error'
+      if (r.ok) okCount++
+      else updatePanel.itemError[r.fileName] = r.error ?? '未知错误'
+    }
+    if (okCount) {
+      toast(`已更新 ${okCount} 个 MOD`, 'success')
+      updatePanel.report = {
+        ...report,
+        entries: report.entries.filter((e) => updatePanel.itemState[e.fileName] !== 'ok')
+      }
+      updatePanel.selected = new Set([...updatePanel.selected].filter((f) => updatePanel.itemState[f] !== 'ok'))
+      void load()
+    }
+    const failed = results.filter((r) => !r.ok)
+    if (failed.length) toast(`${failed.length} 个更新失败：${failed[0].error ?? ''}`, 'error')
+    if (updatePanel.report.entries.length === 0) updatePanel.open = false
+  } catch (e) {
+    toast('更新失败：' + errText(e), 'error')
+  } finally {
+    updatePanel.applying = false
+  }
+}
+
+function toggleUpdateSelect(fileName: string, checked: boolean) {
+  const next = new Set(updatePanel.selected)
+  if (checked) next.add(fileName)
+  else next.delete(fileName)
+  updatePanel.selected = next
+}
 </script>
 
 <template>
@@ -176,6 +256,14 @@ const fmtDate = (ts: number) => {
           </svg>
           刷新
         </button>
+        <button v-if="props.rel === 'mods'" class="btn btn-ghost" :disabled="updatePanel.checking || !currentVersion" title="按文件哈希在 Modrinth 反查可更新版本" @click="onCheckUpdates">
+          <span v-if="updatePanel.checking" class="spin"></span>
+          <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4" />
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          检测更新
+        </button>
         <button v-if="props.rel === 'mods'" class="btn btn-ghost" @click="dupOpen = true">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6Z" />
@@ -194,6 +282,51 @@ const fmtDate = (ts: number) => {
     <!-- 未安装任何版本时提示 -->
     <div v-if="!store.installed.length" class="card empty" style="padding: 40px 20px">
       <span>还没有安装任何游戏版本，请先到「游戏版本」页安装</span>
+    </div>
+
+    <!-- MOD 更新检测面板（内联，不跳页） -->
+    <div v-if="props.rel === 'mods' && updatePanel.open" class="card upd-panel">
+      <div class="upd-head">
+        <strong>MOD 更新检测</strong>
+        <span v-if="updatePanel.report" class="muted">
+          共 {{ updatePanel.report.entries.length }} 个 · 可更新 {{ updatableEntries.length }} · 已最新 {{ latestCount }}<template v-if="unmatchedCount"> · {{ unmatchedCount }} 个未匹配来源</template>
+        </span>
+        <span class="upd-head-spacer"></span>
+        <button class="btn btn-ghost btn-sm" :disabled="updatePanel.applying" @click="updatePanel.open = false">收起</button>
+      </div>
+      <div v-if="updatePanel.checking" class="empty upd-empty">
+        <span class="spin"></span>
+        <span>正在计算文件哈希并查询 Modrinth…</span>
+      </div>
+      <div v-else-if="updatePanel.error" class="empty upd-empty">
+        <span>检测失败：{{ updatePanel.error }}</span>
+        <button class="btn btn-ghost btn-sm" @click="onCheckUpdates">重试</button>
+      </div>
+      <template v-else-if="updatePanel.report">
+        <div v-if="updatableEntries.length" class="upd-list">
+          <div v-for="e in updatableEntries" :key="e.fileName" class="upd-row" :class="{ 'is-ok': updatePanel.itemState[e.fileName] === 'ok' }">
+            <input
+              type="checkbox"
+              class="upd-check"
+              :checked="updatePanel.selected.has(e.fileName)"
+              :disabled="updatePanel.applying"
+              @change="toggleUpdateSelect(e.fileName, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="upd-name" :title="e.fileName">{{ e.name }}</span>
+            <span class="muted upd-ver">{{ e.currentVersion || '未知' }} → <b>{{ e.update!.versionNumber }}</b></span>
+            <span v-if="updatePanel.itemState[e.fileName] === 'start'" class="spin upd-spin"></span>
+            <span v-else-if="updatePanel.itemState[e.fileName] === 'error'" class="upd-err" :title="updatePanel.itemError[e.fileName]">失败</span>
+            <button class="btn btn-ghost btn-sm" :disabled="updatePanel.applying" @click="applyUpdates([e.fileName])">更新</button>
+          </div>
+        </div>
+        <div v-else class="empty upd-empty"><span>所有已匹配来源的 MOD 均为最新</span></div>
+        <div v-if="updatableEntries.length" class="upd-foot">
+          <button class="btn btn-gold btn-sm" :disabled="updatePanel.applying || !updatePanel.selected.size" @click="applyUpdates([...updatePanel.selected])">
+            {{ updatePanel.applying ? '正在更新…' : `一键更新选中（${updatePanel.selected.size}）` }}
+          </button>
+          <span class="muted">更新会先校验新文件哈希，失败时保留旧文件</span>
+        </div>
+      </template>
     </div>
 
     <!-- 文件列表 -->
@@ -356,5 +489,80 @@ const fmtDate = (ts: number) => {
 .empty-icon :deep(svg) {
   width: 100%;
   height: 100%;
+}
+
+/* MOD 更新检测面板 */
+.upd-panel {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.upd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.upd-head-spacer {
+  flex: 1;
+}
+.upd-empty {
+  padding: 16px 0;
+}
+.upd-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.upd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.upd-row:hover {
+  background: var(--card-2);
+}
+.upd-row.is-ok {
+  opacity: 0.55;
+}
+.upd-check {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.upd-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upd-ver {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.upd-ver b {
+  color: var(--accent-2);
+}
+.upd-spin {
+  width: 14px;
+  height: 14px;
+}
+.upd-err {
+  color: var(--danger);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.upd-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.upd-foot .muted {
+  font-size: 12px;
 }
 </style>

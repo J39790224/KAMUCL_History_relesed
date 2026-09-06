@@ -12,9 +12,12 @@ import { getSettings, saveSettings } from './settings'
 import { runtimesDir } from './paths'
 import { downloadFile } from './download'
 import type { VersionJson } from './versions'
-import { waitIfTaskPaused } from './tasks'
+import { waitIfTaskPaused, isCancelError } from './tasks'
+import { logScope } from './launcherLog'
 import { JavaProbeCache } from './javaProbeCache'
 const probeCache = new JavaProbeCache(() => path.join(app.getPath('userData'), 'java-probe-cache.json'))
+
+const javaLog = logScope('java')
 import {
   parseJavaProbeOutput,
   javaHomeExecutable,
@@ -397,6 +400,7 @@ export function listJavaSummary(): Promise<JavaInfo[]> {
     const hidden = new Set((settings.javaHidden ?? []).map(pathKey))
     const list = sortJava(found.filter(j => !hidden.has(pathKey(j.path))))
     console.info(`[KAMUCL] Java summary: ${list.length} runtimes, ${Date.now() - started} ms (persistent probe cache enabled)`)
+    javaLog.info(`Java 概览扫描完成：${list.length} 个运行时（耗时 ${Date.now() - started}ms）`)
     return list
   })().finally(() => { summaryPending = undefined })
   return summaryPending
@@ -662,9 +666,12 @@ function scanProgress(emit: ProgressEmit | undefined, progress: number, text: st
  */
 export async function scanJavaInstallations(options: JavaScanOptions = {}): Promise<JavaInfo[]> {
   const { refresh = false, signal, emit } = options
+  const started = Date.now()
+  javaLog.info(`开始完整扫描本机 Java（refresh=${refresh}）`)
   if (!refresh) {
     const cached = cachedCompleteList(PERSISTENT_SCAN_TTL)
     if (cached) {
+      javaLog.info(`命中持久缓存，直接载入 ${cached.length} 个 Java（耗时 ${Date.now() - started}ms）`)
       scanProgress(emit, 1, `已从缓存载入 ${cached.length} 个 Java`)
       return mergeCustom(cached)
     }
@@ -743,6 +750,7 @@ export async function scanJavaInstallations(options: JavaScanOptions = {}): Prom
   const list = sortJava(found)
   scanCache = { time: Date.now(), list, complete: true }
   writePersistentCache(list)
+  javaLog.info(`本机 Java 扫描完成：共 ${list.length} 个可用（验证 ${pending.length} 个候选，耗时 ${((Date.now() - started) / 1000).toFixed(1)}s）`)
   scanProgress(emit, 1, `扫描完成，共找到 ${list.length} 个可用 Java`)
   return mergeCustom(list)
 }
@@ -814,10 +822,24 @@ interface AdoptiumAsset {
  */
 export async function ensureJava(versionJson: VersionJson, emit: ProgressEmit): Promise<string> {
   const need = requiredMajor(versionJson)
-
+  const started = Date.now()
   const local = scanJava().find((j) => j.major === need && j.is64Bit)
-  if (local) return local.path
+  if (local) {
+    javaLog.debug(`本机已有 Java ${need}（64位）：${local.path}`)
+    return local.path
+  }
+  javaLog.info(`本机没有 Java ${need} (64位)，开始从 Adoptium 自动下载`)
+  try {
+    const exe = await downloadAndExtractJava(need, emit)
+    javaLog.info(`Java ${need} 自动下载完成：${exe}（耗时 ${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return exe
+  } catch (error) {
+    if (!isCancelError(error)) javaLog.error(`自动准备 Java ${need} 失败`, error)
+    throw error
+  }
+}
 
+async function downloadAndExtractJava(need: number, emit: ProgressEmit): Promise<string> {
   emit({ stage: 'java', progress: 0, text: `本机没有 Java ${need} (64位)，开始自动下载…` })
 
   // 查询 Adoptium 最新 JRE（平台与架构按当前系统）

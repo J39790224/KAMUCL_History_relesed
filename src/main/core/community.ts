@@ -20,6 +20,9 @@ import { readVersionJson } from './versions'
 import { instanceDirectoryState } from './instances'
 import { MOD_ZH, ZH_TO_SLUGS } from './community-zh'
 import { matchesCommunityFilter } from '../../shared/communityPolicy'
+import { logScope } from './launcherLog'
+
+const communityLog = logScope('community')
 
 export type ProgressEmit = (e: ProgressEvent) => void
 
@@ -320,11 +323,12 @@ function zhKeywordToSlugs(keyword: string): string[] {
 /** 给搜索结果标题加中文名前缀（slug 命中映射表时） */
 function withZhTitle(list: CommunityResult[]): CommunityResult[] {
   return list.map((r) => {
+    const originalTitle = r.originalTitle ?? r.title
     const zh = MOD_ZH[r.slug]
     if (zh && !r.title.startsWith(zh)) {
-      return { ...r, title: `${zh} | ${r.title}` }
+      return { ...r, originalTitle, title: `${zh} | ${r.title}` }
     }
-    return r
+    return { ...r, originalTitle }
   })
 }
 
@@ -373,6 +377,13 @@ export async function communitySearch(q: CommunityQuery): Promise<CommunityResul
     const half = Math.max(1, Math.ceil(q.limit / 2))
     const sub: CommunityQuery = { ...q, limit: half }
     const [mr, cf] = await Promise.allSettled([mrSearch(sub), cfSearch(sub)])
+    // 单源失败可恢复：另一源结果照常展示
+    if (mr.status === 'rejected') {
+      communityLog.warn('Modrinth 源搜索失败，仅展示 CurseForge 结果', mr.reason)
+    }
+    if (cf.status === 'rejected') {
+      communityLog.warn('CurseForge 源搜索失败，仅展示 Modrinth 结果', cf.reason)
+    }
     if (mr.status === 'rejected' && cf.status === 'rejected') {
       throw mr.reason instanceof Error ? mr.reason : new Error(String(mr.reason))
     }
@@ -454,6 +465,7 @@ export async function communityDownload(
   signal?: AbortSignal
 ): Promise<string> {
   const fileName = path.basename(String(file.fileName ?? '')) || 'download.bin'
+  communityLog.info(`开始下载 ${target.kind} 资源 ${fileName} → 实例 ${target.versionId}`)
   const dlProgress = (d: number, t: number) =>
     emit({
       stage: 'download',
@@ -474,6 +486,7 @@ export async function communityDownload(
       .catch((err) => {
         fs.rmSync(tmpPath, { force: true })
         const text = errText(err)
+        communityLog.error(`整合包 ${fileName} 后台安装失败`, err)
         emit({ stage: 'error', progress: 0, text: `整合包安装失败: ${text}` })
         onDone?.({ versionId: '', ok: false, error: text })
       })

@@ -5,6 +5,7 @@
 import { ipcMain, dialog, shell, Menu, type BrowserWindow } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { DEFAULT_BACKGROUND, DEFAULT_LAUNCH_THUMBNAIL, IPC, IPC_EVENT } from '../shared/types'
 import type {
@@ -36,6 +37,8 @@ import * as servers from './core/servers'
 import { scanModTargets, selectModTarget, copyCompatibleMods } from './core/modTargets'
 import { prepareModInstall, executeModPlan, discardModPlan } from './core/modInstallPlan'
 import * as modinfo from './core/modinfo'
+import * as modUpdates from './core/modUpdates'
+import * as plugins from './core/plugins'
 import * as gamedir from './core/gamedir'
 import { folderOfVersion, instanceIconsDir, withGameFolder } from './core/paths'
 import * as modpacks from './core/modpacks'
@@ -51,7 +54,7 @@ import {
 } from './core/tasks'
 import { exportLaunchLogs } from './core/exportLogs'
 import { ProgressEventGuard } from './core/progress'
-import { launcherLog } from './core/launcherLog'
+import { launcherLogDebug, launcherLogError, launcherLogInfo, launcherLogWarn } from './core/launcherLog'
 import * as gameFolders from './core/gameFolders'
 import * as instances from './core/instances'
 import * as worlds from './core/worlds'
@@ -62,12 +65,41 @@ import { carouselImages, MAX_CAROUSEL_IMAGES } from '../shared/appearancePolicy'
 import { pathIdentity } from './core/folderPaths'
 import * as direct from './core/directConnect'
 import type { DirectHostRequest } from '../shared/directConnect'
+import { registerVoxlinkIpc } from './core/voxlink'
+import { registerTerracottaIpc } from './core/terracotta'
+import { registerFrpIpc, installFrpEventBridge } from './core/frpIpc'
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
 export function registerIpc(getWin: () => BrowserWindow | null): void {
+  // IPC 失败兜底：注册期统一包装 ipcMain.handle，handler 抛错时记录通道名与脱敏错误，
+  // 再原样抛回渲染端（渲染端收到的错误与原行为一致）；取消类错误属常规路径只记 debug。
+  type IpcInvokeListener = (event: unknown, ...args: unknown[]) => unknown
+  const rawHandle = ipcMain.handle.bind(ipcMain) as unknown as (
+    channel: string,
+    listener: IpcInvokeListener
+  ) => void
+  const patchedMain = ipcMain as unknown as {
+    handle: (channel: string, listener: IpcInvokeListener) => void
+  }
+  patchedMain.handle = (channel, listener) => {
+    rawHandle(channel, async (event, ...args) => {
+      try {
+        return await listener(event, ...args)
+      } catch (error) {
+        if (isCancelError(error)) launcherLogDebug('ipc', `通道 ${channel} 已取消：${errText(error)}`)
+        else launcherLogError('ipc', `IPC 通道 ${channel} 处理失败`, error)
+        throw error
+      }
+    })
+  }
+  // 联机三通道：VoxLink（TS 引擎）/ 陶瓦联机（Terracotta 官方工具）/ FRP（樱花穿透）
+  registerVoxlinkIpc(ipcMain)
+  registerTerracottaIpc(ipcMain)
+  registerFrpIpc(ipcMain)
+  installFrpEventBridge(getWin)
   const send = (channel: string, payload: unknown): void => {
     getWin()?.webContents.send(channel, payload)
   }
@@ -88,6 +120,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
 
   // ---------------- 设置 ----------------
   ipcMain.handle(IPC.settingsGet, () => settings.getSettings())
+  ipcMain.handle(IPC.appSystemInfo, () => ({ totalMemMB: Math.floor(os.totalmem() / 1024 / 1024) }))
   ipcMain.handle(IPC.directOverview, () => direct.directOverview())
   ipcMain.handle(IPC.directHost, (_e, request: DirectHostRequest) => direct.startDirectHost(request))
   ipcMain.handle(IPC.directStop, () => direct.stopDirectHost())
@@ -270,6 +303,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
             }
           } catch (e) {
             console.error('[KAMUCL] 默认隔离设置失败:', e)
+            launcherLogWarn('install', '按默认设置开启新实例隔离失败，不影响安装结果', e)
           }
           taskDone(true)
           send(IPC_EVENT.installDone, { versionId: vid, installedId, ok: true, taskId: task.id })
@@ -357,8 +391,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     const error = await shell.openPath(target.path)
     if (error) throw new Error(error)
   })
-  ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
-    versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
+  ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string, automatic?: boolean, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(id ?? '')), () => versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''), automatic === true))
   )
   ipcMain.handle(
     IPC.versionsSetResolution,
@@ -656,7 +690,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     const folder = requestedFolder || config.activeFolder || config.gameDir
     if (!config.folders.some(f => pathIdentity(f.path) === pathIdentity(folder))) throw new Error('目标游戏文件夹未注册')
     if (!versions.scanInstalledFolder(folder).versions.some(v => v.id === versionId && !v.failed && !v.incomplete)) throw new Error('目标实例不存在或不完整，请刷新版本列表')
-    launcherLog(`Launch requested: version=${String(versionId ?? '')}`)
+    launcherLogInfo('game', `收到启动请求：version=${String(versionId ?? '')}`)
     sendState({ status: 'launching', text: '正在准备启动…' })
     void withGameFolder(folder, () => launch
       .launch(
@@ -664,9 +698,12 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
         emit,
         (line) => send(IPC_EVENT.launchLog, line),
         (s) => {
-          launcherLog(
-            `Launch state: ${s.status}${s.status === 'exited' ? ` code=${s.code}` : ''} - ${s.text}`
-          )
+          if (s.status === 'error') launcherLogError('game', `启动状态异常：${s.text}`)
+          else if (s.status === 'exited') {
+            const code = s.code ?? 0
+            if (code === 0) launcherLogInfo('game', `游戏正常退出（code=0）：${s.text}`)
+            else launcherLogWarn('game', `游戏异常退出（code=${code}）：${s.text}`)
+          } else launcherLogInfo('game', `启动状态 ${s.status}：${s.text}`)
           sendState(s)
           // 设置项生效：游戏成功进入运行状态后关闭启动器窗口
           if (s.status === 'running' && settings.getSettings().closeAfterLaunch) {
@@ -678,7 +715,7 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       )
       .catch((err) => {
         launch.recordLaunchPreparationError(String(versionId ?? ''), errText(err))
-        launcherLog(`Launch preparation failed: ${errText(err)}`)
+        launcherLogError('game', '启动准备失败', err)
         sendState({ status: 'error', text: errText(err) })
       }))
   })
@@ -704,6 +741,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     servers.addServer(String(name ?? ''), String(address ?? ''))
   )
   ipcMain.handle(IPC.serversRemove, (_e, id: string) => servers.removeServer(String(id ?? '')))
+  ipcMain.handle(IPC.serversEdit, (_e, id: string, name: string, address: string) =>
+    servers.editServer(String(id ?? ''), String(name ?? ''), String(address ?? ''))
+  )
   ipcMain.handle(IPC.serversPing, (_e, address: string) =>
     servers.pingServer(String(address ?? ''))
   )
@@ -754,6 +794,41 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modsCrossDuplicates, (_e, versionIds: string[]) =>
     modinfo.findCrossDuplicates(Array.isArray(versionIds) ? versionIds.map(String) : [])
   )
+  ipcMain.handle(IPC.modsCheckUpdates, (_e, versionId: string, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(versionId ?? '')), () =>
+      modUpdates.checkModUpdates(String(versionId ?? ''))
+    )
+  )
+  ipcMain.handle(IPC.modsApplyUpdates, (_e, versionId: string, items: unknown, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(versionId ?? '')), () =>
+      modUpdates.applyModUpdates(String(versionId ?? ''), Array.isArray(items) ? items : [])
+    )
+  )
+
+  // ---------------- 插件系统 ----------------
+  ipcMain.handle(IPC.pluginsList, () => plugins.listPlugins())
+  ipcMain.handle(IPC.pluginsInstall, async () => {
+    const win = getWin()
+    const opts = {
+      properties: ['openFile' as const],
+      title: '选择插件（.js 文件）',
+      filters: [{ name: 'KAMUCL 插件', extensions: ['js'] }]
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths[0]) return plugins.listPlugins()
+    plugins.installPlugin(r.filePaths[0])
+    return plugins.listPlugins()
+  })
+  ipcMain.handle(IPC.pluginsSetEnabled, (_e, id: string, enabled: boolean) =>
+    plugins.setPluginEnabled(String(id ?? ''), enabled === true)
+  )
+  ipcMain.handle(IPC.pluginsRemove, (_e, id: string) => plugins.removePlugin(String(id ?? '')))
+  ipcMain.handle(IPC.pluginsReadCode, (_e, id: string) => plugins.readPluginCode(String(id ?? '')))
+  ipcMain.handle(IPC.pluginsOpenDir, () => {
+    const dir = plugins.pluginsRoot()
+    fs.mkdirSync(dir, { recursive: true })
+    void shell.openPath(dir)
+  })
 
   const modTargets = () => scanModTargets(settings.getSettings().folders.map(f => f.path), versions.scanInstalledFolder)
   ipcMain.handle(IPC.modsTargets, () => modTargets())

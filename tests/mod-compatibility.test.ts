@@ -42,6 +42,29 @@ test('Fabric/Quilt AND, OR, wildcard, caret, tilde and non-release versions', ()
   assert(!matches('24w14a', '24w15a'))
 })
 
+test('CurseForge-style hyphen ranges and hyphen bounds inside Maven intervals', () => {
+  // Bare hyphen range is inclusive on both ends (CF file pages, some mods.toml).
+  for (const range of ['1.20.1-1.20.4', '1.20.1 - 1.20.4']) {
+    assert(matches(range, '1.20.1'), range)
+    assert(matches(range, '1.20.3'), range)
+    assert(matches(range, '1.20.4'), range)
+    assert(!matches(range, '1.20.5'), range)
+    assert(!matches(range, '1.20'), range)
+    assert(!matches(range, '1.21'), range)
+  }
+  // Hyphen inside an interval bound: lower bound expands to the low end, upper to the high end.
+  assert(matches('[1.20.1-1.20.4,)', '1.20.1'))
+  assert(matches('[1.20.1-1.20.4,)', '1.21'))
+  assert(!matches('[1.20.1-1.20.4,)', '1.20'))
+  assert(matches('[,1.20.1-1.20.4]'.replace('[,', '(,'), '1.20.4'))
+  assert(!matches('(,1.20.1-1.20.4]', '1.20.5'))
+  // Prerelease tags are never mistaken for hyphen ranges.
+  assert(!matches('26.1.2.65-beta', '26.1.2.65'))
+  assert(matches('26.1.2.65-beta', '26.1.2.65-beta'))
+  assert(matches('[26.1.2.65-beta,26.2)', '26.1.2.66'))
+  assert(!matches('[26.1.2.65-beta,26.2)', '26.2'))
+})
+
 test('real metadata: custom names, flattened profiles, inherited loaders and missing/cyclic parents', () => {
   const neo = resolveInstanceMetadata({ id: '任意显示名', mainClass: 'net.neoforged.fml.startup.Client', arguments: { game: ['--fml.mcVersion', '26.2', '--fml.neoForgeVersion', '26.2.0.66'] } }, () => undefined)
   assert.deepEqual(neo, { mcVersion: '26.2', loader: 'neoforge', loaderVersion: '26.2.0.66', broken: false })

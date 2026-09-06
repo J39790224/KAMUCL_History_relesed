@@ -15,6 +15,8 @@ export class StartupGate {
 export interface BootPixel { col: number; row: number; x: number; y: number; rise: number; delay: number; phase: number; targetX: number; targetY: number }
 export const RISE_END = 900
 export const CONVERGE_DURATION = 620
+/** 汇聚成完整头像后的停留展示时长，之后主界面才渐显（splash 淡出）。 */
+export const ASSEMBLED_HOLD_MS = 2000
 const clamp = (v: number) => Math.max(0, Math.min(1, v))
 const smooth = (v: number) => v * v * v * (v * (v * 6 - 15) + 10)
 

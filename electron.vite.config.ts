@@ -2,11 +2,15 @@ import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
 
 export default defineConfig({
   main: {
+    plugins: [{ name: 'kamucl-native-material', closeBundle() {
+      execFileSync(process.execPath, [resolve(__dirname, 'scripts/build-native.cjs')], { stdio: 'inherit', windowsHide: true })
+    } }],
     build: {
       outDir: 'out/main'
     }

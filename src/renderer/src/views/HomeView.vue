@@ -11,6 +11,7 @@ import {
   restartGame,
   cancelGameRestart,
   listJava,
+  setVersionJava,
   openDir,
   removeVersion,
   setActiveFolder,
@@ -33,6 +34,7 @@ import {
 import Avatar from '../components/Avatar.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import SkinViewer3D from '../components/SkinViewer3D.vue'
+import CreatorCard from '../components/CreatorCard.vue'
 import type {
   ImageFit,
   InstalledVersion,
@@ -80,9 +82,9 @@ const versionLabel = (version: InstalledVersion) => displayVersionName(version)
 const cap = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
 const loaderText = (version: InstalledVersion) =>
   version.loader ? `${version.loader === 'neoforge' ? 'NeoForge' : cap(version.loader)} ${version.loaderVersion ?? ''}`.trim() : '正式版'
-const heroVersion = computed(() =>
-  currentVersion.value?.mcVersion || (currentVersion.value ? versionLabel(currentVersion.value) : '—')
-)
+// 与下方实例卡片共用命名规则；技术版本只读真实元数据，不从名称推断。
+const heroName = computed(() => currentVersion.value ? versionLabel(currentVersion.value) : '选择游戏实例')
+const heroVersion = computed(() => currentVersion.value?.mcVersion || '版本未知')
 
 function fitCss(fit: ImageFit): 'fill' | 'contain' | 'cover' {
   return fit === 'fill' ? 'fill' : fit === 'fit' ? 'contain' : 'cover'
@@ -274,6 +276,7 @@ async function exportFailureLogs() {
 const javas = ref<JavaInfo[]>([])
 const javaChecked = ref(false)
 const javaText = computed(() => {
+  if (currentVersion.value?.javaAuto) return '自动选择'
   const versionJava = currentVersion.value?.javaPath || (!store.settings?.javaAuto ? store.settings?.javaPath : '')
   if (versionJava) {
     const match = javas.value.find((java) => java.path === versionJava)
@@ -281,12 +284,29 @@ const javaText = computed(() => {
       ? `Java ${match.version} (${match.architecture ?? (match.is64Bit ? '64-bit' : '32-bit')})`
       : versionJava
   }
-  const java = javas.value[0]
-  if (java) {
-    return `Java ${java.version} (${java.architecture ?? (java.is64Bit ? '64-bit' : '32-bit')})`
-  }
-  return javaChecked.value ? '未检测到 Java' : '正在检测…'
+  return '自动选择'
 })
+const javaPicker = ref<{ id: string; folder?: string; name: string; choice: string } | null>(null)
+const javaSaving = ref(false)
+function openJavaPicker() {
+  const version = currentVersion.value
+  if (!version) { openSettings('java'); return }
+  javaPicker.value = { id: version.id, folder: version.folder, name: versionLabel(version),
+    choice: version.javaAuto ? '@auto' : version.javaPath || '@inherit' }
+  void loadJavaSummaryImpl()
+}
+async function saveJavaChoice() {
+  const target = javaPicker.value
+  if (!target || javaSaving.value) return
+  javaSaving.value = true
+  try {
+    await setVersionJava(target.id, target.choice.startsWith('@') ? '' : target.choice, target.choice === '@auto', target.folder)
+    await refreshInstalled()
+    javaPicker.value = null
+    toast('已更新此实例的 Java 选择', 'success')
+  } catch (error) { toast('保存失败：' + errText(error), 'error') }
+  finally { javaSaving.value = false }
+}
 const memoryText = computed(() => {
   const mb = store.settings?.memoryMB ?? 0
   if (!mb) return '—'
@@ -468,10 +488,10 @@ onUnmounted(() => {
           <span class="hero-kicker">当前版本</span>
           <div class="hero-metadata-slot">
             <Transition name="instance-switch" mode="out-in">
-              <div :key="JSON.stringify([currentVersion?.folder, selectedId, heroVersion, currentVersion?.loaderVersion])" class="hero-metadata">
-                <h1 :title="heroVersion">{{ heroVersion }}</h1>
+              <div :key="JSON.stringify([currentVersion?.folder, selectedId, heroName, heroVersion, currentVersion?.loader, currentVersion?.loaderVersion])" class="hero-metadata">
+                <h1 :title="heroName" :class="{ 'long-name': heroName.length > 16 }">{{ heroName }}</h1>
                 <div class="hero-edition">
-                  <span>Java 版</span>
+                  <span v-if="currentVersion" class="hero-game-version" :title="`Minecraft ${heroVersion}`">{{ heroVersion }}</span>
                   <span v-if="currentVersion" class="loader-badge">{{ loaderText(currentVersion) }}</span>
                 </div>
               </div>
@@ -516,7 +536,7 @@ onUnmounted(() => {
       </section>
 
       <section class="runtime-strip" data-edit="card">
-        <button class="runtime-item" @click="openSettings('java')">
+        <button class="runtime-item" @click="openJavaPicker" title="选择此实例的 Java：自动或手动">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M7 8h10a4 4 0 0 1 4 4v0a8 8 0 0 1-8 8h-2a8 8 0 0 1-8-8v0a4 4 0 0 1 4-4Z" /><path d="M8 13h8M9 17h6" /></svg>
           <span><small>运行环境</small><strong>{{ javaText }}</strong></span>
           <svg class="runtime-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
@@ -628,6 +648,7 @@ onUnmounted(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
         </button>
       </section>
+      <CreatorCard class="home-creator" />
     </aside>
 
     <Teleport to="body">
@@ -707,6 +728,26 @@ onUnmounted(() => {
       @confirm="confirmRemove"
     />
   </div>
+  <Teleport to="body">
+    <div v-if="javaPicker" class="modal-mask" @pointerdown.self="!javaSaving && (javaPicker = null)" @keydown.esc="!javaSaving && (javaPicker = null)">
+      <section class="modal java-picker" role="dialog" aria-modal="true" aria-labelledby="java-picker-title">
+        <h3 id="java-picker-title" class="modal-title">选择 Java 运行环境</h3>
+        <p class="java-picker-description">{{ javaPicker.name }} · 仅修改此实例，不影响其他实例</p>
+        <label class="java-option"><input v-model="javaPicker.choice" type="radio" value="@auto" name="home-java" /><span><strong>自动选择</strong><small>按游戏的真实版本要求匹配 Java，必要时自动下载</small></span></label>
+        <label class="java-option"><input v-model="javaPicker.choice" type="radio" value="@inherit" name="home-java" /><span><strong>跟随全局设置</strong><small>{{ store.settings?.javaAuto ? '当前全局：自动选择' : '当前全局：' + (store.settings?.javaPath || '匹配本地 Java') }}</small></span></label>
+        <div class="java-list">
+          <label v-for="java in javas" :key="java.path" class="java-option"><input v-model="javaPicker.choice" type="radio" :value="java.path" name="home-java" /><span><strong>Java {{ java.version }} · {{ java.architecture || (java.is64Bit ? '64-bit' : '32-bit') }}</strong><small :title="java.path">{{ java.path }}</small></span></label>
+          <p v-if="!javas.length" class="java-picker-description">{{ javaChecked ? '未发现本地 Java，可使用自动选择，或在设置中添加 Java。' : '正在扫描本地 Java…' }}</p>
+          <p v-if="javaPicker.choice && !javaPicker.choice.startsWith('@') && !javas.some(java => java.path === javaPicker?.choice)" class="java-picker-description">当前指定：{{ javaPicker.choice }}</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" :disabled="javaSaving" @click="javaPicker = null; openSettings('java')">管理 Java</button>
+          <button class="btn btn-ghost" :disabled="javaSaving" @click="javaPicker = null">取消</button>
+          <button class="btn btn-gold" :disabled="javaSaving" @click="saveJavaChoice">{{ javaSaving ? '保存中…' : '保存选择' }}</button>
+        </div>
+      </section>
+    </div>
+  </Teleport>
   <Teleport to="body"><div v-if="restartConfirm" class="modal-mask" style="z-index: 10030"><section class="modal" role="dialog" aria-modal="true" aria-label="正常退出超时">
     <h3>正常退出等待超时</h3><p>Minecraft 可能仍在保存世界。建议在游戏内保存退出，然后重试。</p><p style="color: var(--danger)">强制结束可能丢失进度或损坏存档；只有你确认后才会执行。</p>
     <div style="display: flex; gap: 12px; justify-content: flex-end"><button class="btn btn-ghost" :disabled="restartBusy" @click="cancelRestartPrompt">取消重启，继续等待</button><button class="btn btn-danger" :disabled="restartBusy" @click="quickRestart({ id: restartConfirm.id, folder: restartConfirm.folder } as InstalledVersion, restartConfirm.token)">确认强制结束并重启</button></div>
@@ -714,6 +755,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.java-picker { width: min(580px, calc(100vw - 40px)); }
+.java-picker .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.java-picker-description { color: var(--text-dim); font-size: 12px; margin-bottom: 16px; overflow-wrap: anywhere; }
+.java-list { max-height: 32vh; overflow: auto; margin-top: 10px; }
+.java-option { display: flex; gap: 12px; align-items: center; padding: 13px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
+.java-option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.java-option input { accent-color: var(--accent); flex: none; }
+.java-option span { min-width: 0; }
+.java-option strong, .java-option small { display: block; }
+.java-option small { margin-top: 5px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
 .home-dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 286px;
@@ -751,7 +802,8 @@ onUnmounted(() => {
 }
 .hero-content { position: relative; z-index: 1; display: flex; height: 100%; padding: 48px 36px 30px; flex-direction: column; align-items: flex-start; color: var(--bn-text); }
 .hero-kicker { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 7px; background: rgba(9, 13, 14, 0.48); backdrop-filter: blur(12px); font-size: 13px; font-weight: 650; }
-.hero-content h1 { max-width: 78%; margin-top: 18px; overflow: hidden; color: #fff; font-size: clamp(46px, 5.2vw, 64px); font-weight: 850; line-height: 1; letter-spacing: -1px; text-overflow: ellipsis; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.32); white-space: nowrap; }
+.hero-content h1 { max-width: 100%; margin-top: 18px; overflow: hidden; color: #fff; font-size: clamp(46px, 5.2vw, 64px); font-weight: 850; line-height: 1.15; letter-spacing: -1px; text-overflow: ellipsis; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.32); white-space: nowrap; }
+.hero-content h1.long-name { font-size: clamp(28px, 3.2vw, 42px); letter-spacing: -0.5px; }
 .hero-metadata-slot { width: 100%; min-height: 130px; position: relative; }
 .hero-metadata { width: 100%; }
 .instance-switch-enter-active, .instance-switch-leave-active { transition: opacity 100ms ease, transform 100ms ease; }
@@ -760,7 +812,8 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .instance-switch-enter-active, .instance-switch-leave-active { transition: none; }
 }
-.hero-edition { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 17px; font-weight: 650; }
+.hero-edition { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
+.hero-game-version { color: #fff; }
 .loader-badge { padding: 5px 11px; border: 1px solid color-mix(in srgb, var(--accent-2) 34%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 30%, rgba(20, 30, 24, 0.46)); color: #f6fff8; font-size: 11px; font-weight: 650; }
 .hero-actions { display: flex; width: 100%; margin-top: auto; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .hero-secondary-actions, .launch-combo { display: flex; align-items: stretch; }
@@ -826,6 +879,7 @@ onUnmounted(() => {
 .empty-instances { width: 100%; min-height: 110px; border: 1px dashed var(--border-strong); border-radius: 13px; background: var(--card); color: var(--text-dim); cursor: pointer; }
 
 .home-side { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+.home-creator { margin-top: auto; }
 .account-panel, .skin-panel { border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--card) 78%, transparent); box-shadow: var(--shadow); }
 .account-panel { min-height: 146px; padding: 18px; }
 .account-head { display: flex; align-items: center; gap: 13px; }

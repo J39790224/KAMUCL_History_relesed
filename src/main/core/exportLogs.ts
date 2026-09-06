@@ -257,6 +257,22 @@ export async function exportLaunchLogs(
       missingPlaceholder: true
     }
   ]
+  // 历史会话归档一并带上（最多 3 份）；缺失时 manifest 只记 missing，不影响导出
+  const logsDir = path.dirname(launcherLogPath())
+  let archives: string[] = []
+  try {
+    archives = fs
+      .readdirSync(logsDir)
+      .filter((name) => /^launcher-\d{8}-\d{6}.*\.log$/.test(name))
+      .sort()
+      .reverse()
+      .slice(0, 3)
+  } catch {
+    /* 日志目录不可读时跳过归档 */
+  }
+  for (const name of archives) {
+    sources.push({ archivePath: `launcher/${name}`, source: path.join(logsDir, name) })
+  }
   try {
     await writeDiagnosticArchive(
       result.filePath,

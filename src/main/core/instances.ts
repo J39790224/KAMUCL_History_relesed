@@ -5,6 +5,9 @@ import type { VersionJson } from './versions'
 import { folderOfVersion, versionDir, versionJsonPath } from './paths'
 import { canonicalPath, samePath } from './folderPaths'
 import { commitIsolationFiles, hasIsolationContent, planIsolationFiles } from './isolationFiles'
+import { logScope } from './launcherLog'
+
+const instanceLog = logScope('instances')
 
 export interface InstanceDirectoryState {
   path: string
@@ -82,6 +85,7 @@ function writeIsolationFlag(id: string, isolated: boolean): void {
 
 /** 新建实例使用：只设置目录语义，不复制既有共享内容。 */
 export function setNewInstanceIsolation(id: string, isolated: boolean): void {
+  instanceLog.debug(`新实例 ${id} 预设版本隔离：${isolated ? '开启' : '关闭'}`)
   writeIsolationFlag(id, isolated)
 }
 
@@ -94,16 +98,20 @@ export async function applyIsolation(
   isolated: boolean,
   copyShared = true
 ): Promise<IsolationMigrationPlan> {
+  instanceLog.info(`实例 ${id} 请求${isolated ? '开启' : '关闭'}版本隔离（copyShared=${copyShared}）`)
   const plan = isolationMigrationPlan(id)
   if (!isolated || !copyShared) {
     writeIsolationFlag(id, isolated)
+    instanceLog.info(`实例 ${id} 版本隔离已${isolated ? '开启' : '关闭'}（未复制共享内容）`)
     return plan
   }
 
   try {
     await commitIsolationFiles(plan, () => writeIsolationFlag(id, true))
+    instanceLog.info(`实例 ${id} 版本隔离开启完成：复制 ${plan.totalFiles} 个文件（${plan.items.length} 个顶层项），冲突跳过 ${plan.conflicts.length} 项`)
     return plan
   } catch (error) {
+    instanceLog.error(`实例 ${id} 隔离迁移失败，已回滚`, error)
     throw new Error(`隔离迁移失败，已回滚：${error instanceof Error ? error.message : String(error)}`)
   }
 }

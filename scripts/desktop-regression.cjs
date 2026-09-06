@@ -17,7 +17,7 @@ const folder = path.join(qaRoot, 'games')
 const versionRoot = path.join(folder, 'versions')
 fs.mkdirSync(versionRoot, { recursive: true })
 const longId = 'Fabulously-Optimized-自定义整合包-长名称缩放验证-v13.4.0'
-for (const id of ['26.2', longId]) {
+for (const id of ['26.2', '背刺', longId]) {
   const target = path.join(versionRoot, id)
   fs.mkdirSync(target, { recursive: true })
   const sourceRoot = previous.folders.map(item => path.join(item.path, 'versions', '26.2')).find(p => fs.existsSync(path.join(p, '26.2.json')) && fs.existsSync(path.join(p, '26.2.jar')))
@@ -56,6 +56,28 @@ dialog.showOpenDialog = async (...args) => {
   return choose(...args)
 }
 console.log('QA_ROOT=' + qaRoot)
+if (process.argv.includes('--qa-connections')) {
+  // A loopback-only protocol fixture: real SLP requests use the production ping code.
+  // No remote server, account or user server list is changed.
+  const varint = n => { const bytes = []; do { let b = n & 127; n >>>= 7; if (n) b |= 128; bytes.push(b) } while (n); return Buffer.from(bytes) }
+  const fixture = require('node:net').createServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      const json = Buffer.from(JSON.stringify({ version: { name: 'Minecraft 26.2', protocol: 1 }, players: { online: 3, max: 12 }, description: '山间小屋 · 和朋友慢慢建造一个世界\n这是本地协议测试服务器，不是真实游戏服务。' }))
+      const body = Buffer.concat([Buffer.from([0]), varint(json.length), json])
+      socket.end(Buffer.concat([varint(body.length), body]))
+    })
+  })
+  fixture.listen(0, '127.0.0.1', () => {
+    const address = `127.0.0.1:${fixture.address().port}`
+    fs.writeFileSync(path.join(qaRoot, 'servers.json'), JSON.stringify([
+      { id: 'qa-local', name: '山间小屋 · 好友生存服', address, versionId: '背刺', folder, minecraftVersion: '26.2', source: 'launcher' },
+      { id: 'qa-offline', name: '周末建筑计划', address: '127.0.0.1:1', source: 'launcher' },
+      { id: 'qa-missing', name: '长名称-我们的冒险与机械动力整合包测试服务器', address: '127.0.0.1:2', versionId: '缺失实例', folder, source: 'launcher' }
+    ]))
+  })
+  app.on('before-quit', () => fixture.close())
+}
 app.on('browser-window-created', (_event, window) => {
   window.webContents.on('console-message', (_event, level, message, line, source) => console.log('QA_CONSOLE', level, message, line, source))
   if (window.getTitle().includes('正在启动')) return
