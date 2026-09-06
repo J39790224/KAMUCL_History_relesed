@@ -317,6 +317,16 @@ async function launchOwned(
     }
   }
 
+  // 其他游戏配置同步（独立开关：FOV/灵敏度/亮度/视频/潜行疾跑方式/资源包）
+  if (settings.optionsSync) {
+    try {
+      const { syncOptionsToGameDir } = await import('./keybindings')
+      if (syncOptionsToGameDir(effectiveGameDir)) log('[KAMUCL] 已同步其他游戏配置到 options.txt')
+    } catch (error) {
+      log(`[KAMUCL] 其他游戏配置同步失败（不影响启动）：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   // a) 版本链合并
   emit({ stage: 'launch', progress: 0, text: '解析版本信息' })
   const { merged, baseId } = resolveChain(versionId)

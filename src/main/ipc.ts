@@ -164,10 +164,28 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
       throw error
     }
   })
+  ipcMain.handle(IPC.appearanceImportBackgroundMulti, async () => {
+    const win = getWin()
+    const options = { title: '导入背景图片（可多选）', properties: ['openFile' as const, 'multiSelections' as const],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }
+    const selection = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (selection.canceled || !selection.filePaths.length) return null
+    const imported: string[] = []
+    try {
+      for (const source of selection.filePaths) imported.push((await appearance.importGlobalImage(source, 'background')).path)
+      const current = settings.getSettings().background
+      const images = [...new Set([...(current.images ?? []), ...imported])]
+      return settings.saveSettings({ background: { ...current, images, image: images[0] ?? current.image, mode: 'image' } })
+    } catch (error) {
+      for (const image of imported) appearance.removeGlobalImage(image, 'background')
+      throw error
+    }
+  })
   ipcMain.handle(IPC.appearanceResetBackground, () => {
-    const previous = settings.getSettings().background.image
+    const previous = settings.getSettings().background
     const next = settings.saveSettings({ background: structuredClone(DEFAULT_BACKGROUND) })
-    appearance.removeGlobalImage(previous, 'background')
+    appearance.removeGlobalImage(previous.image, 'background')
+    for (const image of previous.images ?? []) appearance.removeGlobalImage(image, 'background')
     return next
   })
   ipcMain.handle(IPC.appearanceImportLaunchThumbnail, async () => {
@@ -223,8 +241,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.accountsSelect, (_e, id: string) => accounts.selectAccount(id))
   ipcMain.handle(IPC.accountsSelected, () => accounts.selectedAccountPublic())
   ipcMain.handle(IPC.accountsMsBegin, () =>
-    accounts.beginMsDeviceCode((account) =>
-      send(IPC_EVENT.msLoginDone, account ? accounts.publicAccount(account) : null)
+    accounts.beginMsDeviceCode((account, error) =>
+      send(IPC_EVENT.msLoginDone, account ? { account: accounts.publicAccount(account) } : { account: null, error: error ?? null })
     )
   )
   ipcMain.handle(IPC.accountsMsCancel, () => accounts.cancelMsLogin())
@@ -841,6 +859,11 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     keybindings.setDefaultKey(String(id ?? ''), String(bind ?? ''))
   )
   ipcMain.handle(IPC.keysReset, () => keybindings.resetDefaultKeys())
+  ipcMain.handle(IPC.optionsGetDefault, () => keybindings.getDefaultOptions())
+  ipcMain.handle(IPC.optionsSetDefault, (_e, id: string, value: string) =>
+    keybindings.setDefaultOption(String(id ?? ''), String(value ?? ''))
+  )
+  ipcMain.handle(IPC.optionsReset, () => keybindings.resetDefaultOptions())
 
   // ---------------- 桥接 MOD 实时配置面板 ----------------
   ipcMain.handle(IPC.bridgeStatus, (_e, versionId: string) => modBridge.bridgeStatus(String(versionId ?? '')))

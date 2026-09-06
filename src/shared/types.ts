@@ -399,6 +399,10 @@ export interface Settings {
   closeAfterLaunch: boolean
   /** 默认按键同步：开启后启动任何版本时把启动器默认键位写入该实例 options.txt 的 key_* 项 */
   keySync?: boolean
+  /** 其他游戏配置同步：FOV/灵敏度/亮度/视频设置/潜行疾跑方式/资源包（独立开关，与按键同步分开） */
+  optionsSync?: boolean
+  /** 正版登录使用系统代理：默认直连（安全优先）；直连微软端点失败时用户可开启（CONNECT 隧道+端到端 TLS 校验保持） */
+  msUseProxy?: boolean
 }
 
 // ---------------- 首页布局 ----------------
@@ -440,12 +444,18 @@ export const HOME_MODULE_LABELS: Record<string, string> = {
 
 // ---------------- 背景 ----------------
 export interface BackgroundSettings {
-  /** none=默认主题底色 / color=纯色 / image=本地图片 */
+  /** none=默认透明/颜色 / color=纯色 / image=自定义图片 */
   mode: 'none' | 'color' | 'image'
   color: string
   /** 图片路径（userData 内复制的文件名） */
   image: string
-  /** 0-1 背景层透明度 */
+  /** 多张背景图（自动切换用；为空时回退单张 image） */
+  images?: string[]
+  /** 切换策略：off=固定第一张 / order=按顺序 / random=随机；每次启动自动切换一张 */
+  switchMode?: 'off' | 'order' | 'random'
+  /** 运行中自动切换间隔秒数（默认 300） */
+  switchIntervalSec?: number
+  /** 0-1 背景不透明度 */
   opacity: number
   /** 0-40 模糊度 px */
   blur: number
@@ -570,6 +580,7 @@ export const IPC = {
   pluginsOpenDir: 'plugins:openDir', // () => void  打开插件目录
   appSelectImage: 'app:selectImage', // () => string | null  选择图片文件（png/jpg/webp）
   appearanceImportBackground: 'appearance:importBackground', // () => Settings | null  导入受管背景并保存
+  appearanceImportBackgroundMulti: 'appearance:importBackgroundMulti', // () => Settings | null  多选导入背景图（自动切换用）
   appearanceResetBackground: 'appearance:resetBackground', // () => Settings  恢复默认并清理旧受管背景
   appearanceImportLaunchThumbnail: 'appearance:importLaunchThumbnail', // () => Settings | null
   appearanceResetLaunchThumbnail: 'appearance:resetLaunchThumbnail', // () => Settings
@@ -692,6 +703,10 @@ export const IPC = {
   keysGetDefault: 'keys:getDefault', // () => Record<string, string>
   keysSetDefault: 'keys:setDefault', // (id: string, bind: string) => Record<string, string>
   keysReset: 'keys:reset', // () => Record<string, string>  全部恢复 MC 原版默认
+  // 其他游戏配置默认值（FOV/灵敏度/亮度/视频/潜行疾跑/资源包）
+  optionsGetDefault: 'options:getDefault', // () => Record<string, string>
+  optionsSetDefault: 'options:setDefault', // (id: string, value: string) => Record<string, string>
+  optionsReset: 'options:reset', // () => Record<string, string>
   // 桥接 MOD 实时配置面板（游戏目录 .kamucl-bridge.json 发现 + token 校验，仅本机）
   bridgeStatus: 'bridge:status', // (versionId: string) => BridgeStatus
   bridgeManifest: 'bridge:manifest', // (versionId: string) => { protocol, params: BridgeParam[] }

@@ -6,6 +6,7 @@ import { updateSettings } from '../settingsUpdates'
 import {
   errText,
   importBackground,
+  importBackgroundMulti,
   importLaunchThumbnail,
   resetBackground,
   resetLaunchThumbnail
@@ -80,6 +81,45 @@ async function pickImage() {
     importingBackground.value = false
   }
 }
+
+/** 多选导入背景图（自动切换用）：追加进 images 数组 */
+const importingBackgroundMulti = ref(false)
+async function pickImageMulti() {
+  if (importingBackgroundMulti.value) return
+  importingBackgroundMulti.value = true
+  try {
+    const settings = await importBackgroundMulti()
+    if (settings) {
+      store.settings = settings
+      backgroundPreviewFailed.value = false
+      toast(`背景图已加入切换列表（共 ${settings.background.images?.length ?? 1} 张）`, 'success')
+    }
+  } catch (e) {
+    toast('导入背景失败：' + errText(e), 'error')
+  } finally {
+    importingBackgroundMulti.value = false
+  }
+}
+
+/** 背景图列表（多图切换用；空时回退单张 image） */
+const bgImageList = computed(() => {
+  const bg = store.settings?.background
+  if (!bg) return [] as string[]
+  return bg.images?.length ? bg.images : (bg.image ? [bg.image] : [])
+})
+function removeBgImage(image: string) {
+  if (!store.settings) return
+  const next = bgImageList.value.filter((i) => i !== image)
+  backgroundPreviewFailed.value = false
+  save({ background: { ...store.settings.background, images: next, image: next[0] ?? '' } })
+}
+
+/** 切换策略 */
+const switchModes = [
+  { value: 'off', label: '固定' },
+  { value: 'order', label: '按顺序' },
+  { value: 'random', label: '随机' }
+] as const
 
 async function resetBg() {
   try {
@@ -174,12 +214,51 @@ function setLaunchFit(fit: ImageFit) {
       </div>
       <div class="bg-row">
         <span class="muted bg-label">背景图片</span>
-        <button class="btn btn-ghost btn-sm" :disabled="importingBackground" @click="pickImage">
-          {{ importingBackground ? '处理中…' : '导入图片…' }}
+        <button class="btn btn-ghost btn-sm" :disabled="importingBackground || importingBackgroundMulti" @click="pickImage">
+          {{ importingBackground ? '处理中…' : '导入单张…' }}
+        </button>
+        <button class="btn btn-ghost btn-sm" :disabled="importingBackground || importingBackgroundMulti" @click="pickImageMulti">
+          {{ importingBackgroundMulti ? '处理中…' : '添加多张（可多选）…' }}
         </button>
         <span class="muted bg-img-path" :title="store.settings.background.image">
           {{ store.settings.background.image ? '已由 KAMUCL 管理' : '未选择' }}
         </span>
+      </div>
+      <ol v-if="bgImageList.length > 1" class="carousel-list" aria-label="背景图切换列表">
+        <li v-for="(image, index) in bgImageList" :key="image">
+          <img :src="managedImageUrl(image)" :alt="`第 ${index + 1} 张`" />
+          <span>{{ index + 1 }}</span>
+          <button class="btn btn-ghost btn-sm" @click="removeBgImage(image)">移除</button>
+        </li>
+      </ol>
+      <div v-if="bgImageList.length > 1" class="bg-row">
+        <span class="muted bg-label">自动切换</span>
+        <div class="fit-options">
+          <button
+            v-for="m in switchModes"
+            :key="m.value"
+            class="capsule"
+            :class="{ active: (store.settings.background.switchMode ?? 'off') === m.value }"
+            :title="m.value === 'off' ? '固定显示第一张' : m.value === 'order' ? '每次上线切换到下一张，运行中按间隔轮换' : '每次上线随机一张，运行中按间隔随机'"
+            @click="setBg({ switchMode: m.value })"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+      </div>
+      <div v-if="bgImageList.length > 1 && (store.settings.background.switchMode ?? 'off') !== 'off'" class="bg-row">
+        <span class="muted bg-label">切换间隔</span>
+        <input
+          type="number"
+          class="input"
+          style="width: 90px"
+          min="30"
+          max="7200"
+          step="30"
+          :value="store.settings.background.switchIntervalSec ?? 300"
+          @change="setBg({ switchIntervalSec: Math.max(30, Number(($event.target as HTMLInputElement).value) || 300) })"
+        />
+        <span class="muted">秒 · 每次上线也会自动切换一张</span>
       </div>
       <div class="bg-row">
         <span class="muted bg-label">显示方式</span>
