@@ -1,11 +1,11 @@
 /**
- * 默认按键：启动器级默认键位表 + 启动时同步进实例 options.txt。
- * options.txt 行格式 key:value；只覆盖 key_* 项，其余行原样保留。
+ * 默认按键 + 其他游戏配置：启动器级默认值 + 启动时同步进实例 options.txt。
+ * options.txt 行格式 key:value；只覆盖登记的项，其余行原样保留。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import { VANILLA_KEYBINDS } from '../../shared/keybindings'
+import { VANILLA_KEYBINDS, VANILLA_OPTIONS } from '../../shared/keybindings'
 
 const KEY_ID_RE = /^key_key\.[a-z0-9.]+$/i
 const BIND_RE = /^key\.(keyboard|mouse)\.[a-z0-9.]+$/
@@ -81,6 +81,90 @@ export function syncKeysToGameDir(gameDir: string, keys: Record<string, string> 
   const file = path.join(gameDir, 'options.txt')
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : ''
   const after = mergeKeysIntoOptions(before, keys)
+  if (after === before) return false
+  fs.writeFileSync(file, after, 'utf-8')
+  return true
+}
+
+// ---------------- 其他游戏配置（FOV / 灵敏度 / 亮度 / 视频 / 潜行疾跑方式 / 资源包） ----------------
+
+function optionsStoreFile(): string {
+  return path.join(app.getPath('userData'), 'default-options.json')
+}
+
+/** 读取其他配置的默认值（无存储时用 MC 原版默认生成） */
+export function getDefaultOptions(): Record<string, string> {
+  let stored: Record<string, unknown> = {}
+  try {
+    const j = JSON.parse(fs.readFileSync(optionsStoreFile(), 'utf-8'))
+    if (j && typeof j === 'object' && !Array.isArray(j)) stored = j
+  } catch { /* 无存储或损坏：全部回退默认 */ }
+  const out: Record<string, string> = {}
+  for (const def of VANILLA_OPTIONS) {
+    const value = stored[def.id]
+    out[def.id] = typeof value === 'string' ? value : serializeOptionValue(def.defaultValue)
+  }
+  return out
+}
+
+function persistOptions(options: Record<string, string>): void {
+  fs.mkdirSync(path.dirname(optionsStoreFile()), { recursive: true })
+  fs.writeFileSync(optionsStoreFile(), JSON.stringify(options, null, 2), 'utf-8')
+}
+
+/** 配置值序列化为 options.txt 文本值 */
+export function serializeOptionValue(value: number | string | boolean): string {
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return String(value)
+}
+
+export function setDefaultOption(id: string, value: string): Record<string, string> {
+  const key = String(id ?? '')
+  const def = VANILLA_OPTIONS.find((d) => d.id === key)
+  if (!def) throw new Error('未知的配置项')
+  const v = String(value ?? '')
+  // 按类型校验
+  if (def.type === 'slider' || def.type === 'select') {
+    const n = Number(v)
+    if (def.type === 'slider') {
+      if (!Number.isFinite(n)) throw new Error('需要数值')
+      if (def.min != null && n < def.min) throw new Error(`不能小于 ${def.min}`)
+      if (def.max != null && n > def.max) throw new Error(`不能大于 ${def.max}`)
+    } else if (def.options && !def.options.some((o) => o.value === v)) {
+      throw new Error('无效的可选值')
+    }
+  } else if (def.type === 'boolean' && v !== 'true' && v !== 'false') {
+    throw new Error('需要 true/false')
+  }
+  const options = getDefaultOptions()
+  options[key] = v
+  persistOptions(options)
+  return options
+}
+
+export function resetDefaultOptions(): Record<string, string> {
+  const options = Object.fromEntries(VANILLA_OPTIONS.map((d) => [d.id, serializeOptionValue(d.defaultValue)]))
+  persistOptions(options)
+  return options
+}
+
+/** 启动时同步其他配置：写进实例 options.txt（resourcePacks 为空字符串时不同步该项）。返回是否有改动。 */
+export function syncOptionsToGameDir(gameDir: string, options: Record<string, string> = getDefaultOptions()): boolean {
+  const effective: Record<string, string> = {}
+  for (const [key, value] of Object.entries(options)) {
+    // 资源包列表：逗号分隔文本 → options.txt 的 JSON 数组；为空 = 未配置，不同步
+    if (key === 'resourcePacks') {
+      const list = value.split(',').map((s) => s.trim()).filter(Boolean)
+      if (!list.length) continue
+      effective[key] = JSON.stringify(list)
+      continue
+    }
+    effective[key] = value
+  }
+  if (!Object.keys(effective).length) return false
+  const file = path.join(gameDir, 'options.txt')
+  const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : ''
+  const after = mergeKeysIntoOptions(before, effective)
   if (after === before) return false
   fs.writeFileSync(file, after, 'utf-8')
   return true

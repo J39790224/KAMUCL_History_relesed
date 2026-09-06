@@ -10,6 +10,20 @@ import type { Account, MsDeviceCodeInfo } from '../../shared/types'
 import { getSettings } from './settings'
 import * as yggdrasil from './yggdrasil'
 import { microsoftFetch } from './microsoftTls'
+import { logScope } from './launcherLog'
+
+const authLog = logScope('ms-auth')
+
+/** 登录链路某一步失败时抛出带步骤标签的错误，并写启动器日志（供错误报告诊断）。 */
+async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    authLog.error(`微软登录步骤失败：${name}`, error)
+    throw new Error(`${name}：${message}`)
+  }
+}
 
 /** 微软 OAuth 端点（consumers 租户：支持个人 MSA 账号的 device code 流程） */
 const MS_SCOPE = 'XboxLive.signin offline_access'
@@ -304,12 +318,22 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** 正版登录代理开关：默认直连（安全优先）；用户网络直连失败时可开启走系统代理（端到端 TLS 校验保持） */
+function useProxy(): boolean {
+  try {
+    return getSettings().msUseProxy === true
+  } catch {
+    return false
+  }
+}
+
 async function postForm(url: string, body: Record<string, string>): Promise<Record<string, unknown>> {
   const res = await microsoftFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body).toString(),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(30000),
+    useProxy: useProxy()
   })
   return (await res.json().catch(() => ({}))) as Record<string, unknown>
 }
@@ -319,7 +343,8 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(30000),
+    useProxy: useProxy()
   })
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
@@ -332,7 +357,8 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
 async function getJson(url: string, bearer: string): Promise<Record<string, unknown>> {
   const res = await microsoftFetch(url, {
     headers: { Authorization: `Bearer ${bearer}` },
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(30000),
+    useProxy: useProxy()
   })
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) throw new Error(`请求失败 HTTP ${res.status}: ${url}`)
@@ -355,7 +381,7 @@ async function completeMsLogin(
   select = true
 ): Promise<Account> {
   // 1. XBL 认证
-  const xbl = await postJson('https://user.auth.xboxlive.com/user/authenticate', {
+  const xbl = await step('Xbox Live 认证', () => postJson('https://user.auth.xboxlive.com/user/authenticate', {
     Properties: {
       AuthMethod: 'RPS',
       SiteName: 'user.auth.xboxlive.com',
@@ -363,16 +389,16 @@ async function completeMsLogin(
     },
     RelyingParty: 'http://auth.xboxlive.com',
     TokenType: 'JWT'
-  })
+  }))
   const xblToken = xbl.Token as string
-  if (!xblToken) throw new Error('Xbox Live 认证失败')
+  if (!xblToken) throw new Error('Xbox Live 认证失败：响应缺少 Token')
 
   // 2. XSTS 授权
-  const xsts = await postJson('https://xsts.auth.xboxlive.com/xsts/authorize', {
+  const xsts = await step('XSTS 授权', () => postJson('https://xsts.auth.xboxlive.com/xsts/authorize', {
     Properties: { SandboxId: 'RETAIL', UserTokens: [xblToken] },
     RelyingParty: 'rp://api.minecraftservices.com/',
     TokenType: 'JWT'
-  })
+  }))
   const xstsToken = xsts.Token as string
   const xui = (xsts.DisplayClaims as { xui?: { uhs?: string }[] } | undefined)?.xui
   const uhs = xui?.[0]?.uhs
@@ -381,25 +407,25 @@ async function completeMsLogin(
   }
 
   // 3. MC 登录
-  const mc = await postJson('https://api.minecraftservices.com/authentication/login_with_xbox', {
+  const mc = await step('Minecraft 登录', () => postJson('https://api.minecraftservices.com/authentication/login_with_xbox', {
     identityToken: `XBL3.0 x=${uhs};${xstsToken}`
-  })
+  }))
   const mcToken = mc.access_token as string
   const mcExpires = (mc.expires_in as number | undefined) ?? expiresIn
-  if (!mcToken) throw new Error('Minecraft 登录失败')
+  if (!mcToken) throw new Error('Minecraft 登录失败：响应缺少 access_token')
 
   // 4. 拥有权检查
-  const entitlements = await getJson(
+  const entitlements = await step('Minecraft 拥有权检查', () => getJson(
     'https://api.minecraftservices.com/entitlements/mcstore',
     mcToken
-  )
+  ))
   const items = (entitlements.items as { name?: string }[] | undefined) ?? []
   if (!items.some((i) => i.name === 'product_minecraft')) {
-    throw new Error('该账号未拥有 Minecraft')
+    throw new Error('Minecraft 拥有权检查：该账号未拥有 Minecraft')
   }
 
   // 5. 档案
-  const profile = await getJson('https://api.minecraftservices.com/minecraft/profile', mcToken)
+  const profile = await step('获取 Minecraft 档案', () => getJson('https://api.minecraftservices.com/minecraft/profile', mcToken))
   const pid = profile.id as string
   const pname = profile.name as string
   if (!pid || !pname) throw new Error('获取 Minecraft 档案失败')
@@ -454,10 +480,10 @@ async function pollDeviceCode(
 
 /**
  * 开始 device code 登录：返回展示信息给前端，后台轮询，
- * 完成后调用 onDone(account)（失败/取消时 onDone(null)）
+ * 完成后调用 onDone(account)；失败时 onDone(null, 具体原因)；用户取消时 onDone(null)。
  */
 export async function beginMsDeviceCode(
-  onDone: (account: Account | null) => void
+  onDone: (account: Account | null, error?: string) => void
 ): Promise<MsDeviceCodeInfo> {
   cancelMsLogin() // 取消上一次未完成的轮询
   const clientId = getSettings().msClientId
@@ -467,7 +493,9 @@ export async function beginMsDeviceCode(
   })
   const deviceCode = dc.device_code as string | undefined
   if (!deviceCode) {
-    throw new Error((dc.error_description as string | undefined) ?? '获取设备码失败')
+    const message = (dc.error_description as string | undefined) ?? '获取设备码失败'
+    authLog.error(`微软登录步骤失败：获取设备码（${message}）`)
+    throw new Error(`获取设备码：${message}`)
   }
 
   pollAbort = new AbortController()
@@ -480,8 +508,10 @@ export async function beginMsDeviceCode(
   )
     .then((account) => onDone(account))
     .catch((e) => {
-      if (!signal.aborted) console.error('[KAMUCL] 微软登录失败:', e)
-      onDone(null)
+      const message = e instanceof Error ? e.message : String(e)
+      // 用户主动取消不写错误日志；真实失败写日志供诊断
+      if (!signal.aborted) authLog.error('微软登录失败', e)
+      onDone(null, signal.aborted ? undefined : message)
     })
 
   return {

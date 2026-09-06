@@ -78,6 +78,7 @@ export const saveSettings = (patch: Partial<Settings>) =>
 export const selectDir = () => invoke<string | null>(IPC.appSelectDir)
 export const selectImage = () => invoke<string | null>(IPC.appSelectImage)
 export const importBackground = () => invoke<Settings | null>(IPC.appearanceImportBackground)
+export const importBackgroundMulti = () => invoke<Settings | null>(IPC.appearanceImportBackgroundMulti)
 export const resetBackground = () => invoke<Settings>(IPC.appearanceResetBackground)
 export const importLaunchThumbnail = () =>
   invoke<Settings | null>(IPC.appearanceImportLaunchThumbnail)
@@ -292,6 +293,10 @@ export const getDefaultKeys = () => invoke<Record<string, string>>(IPC.keysGetDe
 export const setDefaultKey = (id: string, bind: string) =>
   invoke<Record<string, string>>(IPC.keysSetDefault, id, bind)
 export const resetDefaultKeys = () => invoke<Record<string, string>>(IPC.keysReset)
+export const getDefaultOptions = () => invoke<Record<string, string>>(IPC.optionsGetDefault)
+export const setDefaultOption = (id: string, value: string) =>
+  invoke<Record<string, string>>(IPC.optionsSetDefault, id, value)
+export const resetDefaultOptions = () => invoke<Record<string, string>>(IPC.optionsReset)
 
 // ---------------- 桥接 MOD 实时配置面板 ----------------
 export const bridgeStatus = (versionId: string) =>
@@ -327,8 +332,8 @@ export const onLaunchLog = (cb: (line: string) => void) =>
   subscribe<string>(IPC_EVENT.launchLog, cb)
 export const onLaunchState = (cb: (s: LaunchState) => void) =>
   subscribe<LaunchState>(IPC_EVENT.launchState, cb)
-export const onMsLoginDone = (cb: (account: Account | null) => void) =>
-  subscribe<Account | null>(IPC_EVENT.msLoginDone, cb)
+export const onMsLoginDone = (cb: (result: { account: Account | null; error?: string | null }) => void) =>
+  subscribe<{ account: Account | null; error?: string | null }>(IPC_EVENT.msLoginDone, cb)
 export const onInstallDone = (
   cb: (r: { versionId: string; installedId?: string; ok: boolean; error?: string; taskId?: string; cancelled?: boolean; stage?: string }) => void
 ) =>

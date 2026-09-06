@@ -137,7 +137,7 @@ const resourceSubItems: Array<{ key: ViewName; label: string; icon: string }> = 
   },
   {
     key: 'keys',
-    label: '默认按键',
+    label: '默认配置',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   },
   {
@@ -670,17 +670,53 @@ function fmtNoticeTime(ts: number): string {
 
 const failedBackground = ref('')
 
+/** 背景图列表：多图自动切换用 images；否则回退单张 image */
+const bgImages = computed(() => {
+  const bg = store.settings?.background
+  if (!bg || bg.mode !== 'image') return [] as string[]
+  return bg.images?.length ? bg.images : (bg.image ? [bg.image] : [])
+})
+const BG_INDEX_KEY = 'kamucl:bg-last-index'
+const currentBgIndex = ref(0)
+const currentBgImage = computed(() => bgImages.value[currentBgIndex.value % Math.max(1, bgImages.value.length)] ?? '')
+
+/** 切换到下一张背景图（按顺序/随机）；off 模式不切换 */
+function switchBackground() {
+  const list = bgImages.value
+  const mode = store.settings?.background.switchMode ?? 'off'
+  if (mode === 'off' || list.length < 2) return
+  if (mode === 'random') {
+    let next = currentBgIndex.value
+    while (next === currentBgIndex.value) next = Math.floor(Math.random() * list.length)
+    currentBgIndex.value = next
+  } else {
+    currentBgIndex.value = (currentBgIndex.value + 1) % list.length
+  }
+  localStorage.setItem(BG_INDEX_KEY, String(currentBgIndex.value))
+}
+
+let bgSwitchTimer: ReturnType<typeof setInterval> | undefined
+function armBgSwitchTimer() {
+  clearInterval(bgSwitchTimer)
+  bgSwitchTimer = undefined
+  const bg = store.settings?.background
+  const mode = bg?.switchMode ?? 'off'
+  if (bg?.mode !== 'image' || mode === 'off' || bgImages.value.length < 2) return
+  const sec = Math.max(30, bg?.switchIntervalSec ?? 300)
+  bgSwitchTimer = setInterval(switchBackground, sec * 1000)
+}
+
 watch(
-  () => [store.settings?.background.mode, store.settings?.background.image] as const,
+  () => [store.settings?.background.mode, currentBgImage.value] as const,
   ([mode, imagePath]) => {
     failedBackground.value = ''
     if (mode !== 'image' || !imagePath) return
     const probe = new Image()
     probe.onload = () => {
-      if (store.settings?.background.image === imagePath) failedBackground.value = ''
+      if (currentBgImage.value === imagePath) failedBackground.value = ''
     }
     probe.onerror = () => {
-      if (store.settings?.background.image !== imagePath) return
+      if (currentBgImage.value !== imagePath) return
       failedBackground.value = imagePath
       toast('自定义背景不可用，已回退到主题默认背景', 'error')
     }
@@ -688,6 +724,12 @@ watch(
   },
   { immediate: true }
 )
+
+// 切换策略/图片列表变化时重排定时器；图片被删除导致越界时收敛索引
+watch([() => store.settings?.background.switchMode, () => store.settings?.background.switchIntervalSec, bgImages], () => {
+  if (currentBgIndex.value >= bgImages.value.length) currentBgIndex.value = 0
+  armBgSwitchTimer()
+})
 
 /**
  * 用户显式选择的个性化背景层。默认不生成内部壁纸：桌面透视由透明
@@ -702,12 +744,12 @@ const bgStyle = computed(() => {
       opacity: String(bg.opacity)
     }
   }
-  if (bg.mode === 'image' && bg.image && failedBackground.value !== bg.image) {
+  if (bg.mode === 'image' && currentBgImage.value && failedBackground.value !== currentBgImage.value) {
     const size = bg.fit === 'fill' ? '100% 100%' : bg.fit === 'fit' ? 'contain' : 'cover'
     return {
       inset: bg.blur > 0 ? `${-Math.ceil(bg.blur * 1.5)}px` : '0',
       backgroundColor: bg.color,
-      backgroundImage: `url("${managedImageUrl(bg.image)}")`,
+      backgroundImage: `url("${managedImageUrl(currentBgImage.value)}")`,
       backgroundSize: size,
       backgroundPosition: 'center',
       backgroundRepeat: 'no-repeat',
@@ -896,6 +938,16 @@ const offs: Array<() => void> = []
 onMounted(async () => {
   applyTheme(store.settings?.theme, store.settings?.custom)
   nextTick(updateNavBlob)
+  // 每次上线自动切换一张背景图（按顺序/随机）；off 模式固定第一张
+  {
+    const mode = store.settings?.background.switchMode ?? 'off'
+    if (store.settings?.background.mode === 'image' && mode !== 'off' && bgImages.value.length > 1) {
+      const last = Number(localStorage.getItem(BG_INDEX_KEY) ?? -1)
+      currentBgIndex.value = Number.isInteger(last) && last >= 0 && last < bgImages.value.length ? last : 0
+      switchBackground()
+    }
+    armBgSwitchTimer()
+  }
   void import('./plugins').then((m) => m.loadEnabledPlugins())
   window.addEventListener('keydown', onEditKeydown)
   // Teleports are outside .shell; capture above their masks without accepting
@@ -1022,6 +1074,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopDragWatchdog()
+  clearInterval(bgSwitchTimer)
   window.removeEventListener('keydown', onEditKeydown)
   offs.forEach((off) => off())
 })

@@ -49,7 +49,7 @@ const featureToggles = [
   { key: 'mods', label: '模组（资源管理）' },
   { key: 'packs', label: '资源包' },
   { key: 'shaders', label: '光影包' },
-  { key: 'keys', label: '默认按键' },
+  { key: 'keys', label: '默认配置' },
   { key: 'bridge', label: 'MOD 面板' },
   { key: 'servers', label: '服务器' },
   { key: 'friends', label: '联机' },
@@ -649,6 +649,22 @@ async function onRemovePlugin(p: PluginInfo) {
           @change="save({ msClientId: store.settings!.msClientId })"
         />
         <p class="muted group-hint">使用 device code 流程的 Azure 应用 ID</p>
+      </div>
+
+      <!-- 正版登录系统代理 -->
+      <div class="card group group-inline">
+        <div>
+          <h3 class="group-title">正版登录使用系统代理</h3>
+          <p class="muted group-hint">默认直连微软端点（安全优先）。浏览器能打开微软登录页但启动器登录失败时开启；经代理 CONNECT 隧道传输，端到端 TLS 证书校验保持不变。</p>
+        </div>
+        <label class="switch">
+          <input
+            :checked="store.settings.msUseProxy === true"
+            type="checkbox"
+            @change="save({ msUseProxy: ($event.target as HTMLInputElement).checked })"
+          />
+          <span class="switch-ui"></span>
+        </label>
       </div>
 
       <!-- 启动后关闭 -->

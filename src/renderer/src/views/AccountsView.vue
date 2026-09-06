@@ -325,16 +325,20 @@ onMounted(() => {
     store.pendingYggdrasilImport = null
     openProviderImport(pending)
   }
-  offMsDone = onMsLoginDone(async (account) => {
+  offMsDone = onMsLoginDone(async (result) => {
     if (!ms.open) return
     ms.open = false
     ms.waiting = false
     ms.info = null
+    const account = result?.account ?? null
     if (account) {
       await refreshAccounts()
       toast(`登录成功，欢迎 ${account.username}`, 'success')
+    } else if (result?.error) {
+      // 具体失败步骤与原因（设备码/轮询/XBL/XSTS/MC 登录/拥有权/档案），可被查日志诊断
+      toast(`微软登录失败：${result.error}`, 'error')
     } else {
-      toast('微软登录失败或已取消', 'error')
+      toast('微软登录已取消', 'info')
     }
   })
 })
