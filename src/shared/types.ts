@@ -128,6 +128,8 @@ export interface InstalledVersion {
   failed?: boolean
   /** 版本独立指定的 Java 路径（空 = 自动匹配） */
   javaPath?: string
+  /** 当前实例显式自动匹配，优先于全局手动设置。 */
+  javaAuto?: boolean
   /** 实例窗口设置覆盖；未设置时跟随全局设置。 */
   resolution?: GameResolution
   /** 实例图标：'mob:<内置生物头像id>' | 'file:<自定义图标文件名>'（空 = 默认图标） */
@@ -316,9 +318,9 @@ export const THEME_PRESETS: Record<
   },
   transparent: {
     label: '默认 · 透明',
-    description: '图一深色绿调的系统桌面磨砂玻璃',
+    description: '蒂芙尼蓝重点色的系统桌面磨砂玻璃',
     colors: {
-      accent: '#55c96b',
+      accent: '#81d8d0',
       bg: '#10191b',
       card: '#172225',
       text: '#f4f8f5',
@@ -395,6 +397,8 @@ export interface Settings {
   /** 首页启动卡的全局默认缩略图（实例专属缩略图优先）。 */
   launchThumbnail: LaunchThumbnailSettings
   closeAfterLaunch: boolean
+  /** 默认按键同步：开启后启动任何版本时把启动器默认键位写入该实例 options.txt 的 key_* 项 */
+  keySync?: boolean
 }
 
 // ---------------- 首页布局 ----------------
@@ -507,6 +511,10 @@ export interface SkinHistoryItem {
   id: string
   variant: SkinVariant
   time: number
+  /** 显示名（默认上传时的源文件名，可重命名） */
+  name?: string
+  /** 内容哈希：重复上传同一皮肤只保留一条记录 */
+  hash?: string
 }
 
 export interface SkinHistoryEntry extends SkinHistoryItem {
@@ -552,6 +560,13 @@ export const IPC = {
   settingsSet: 'settings:set', // (patch: Partial<Settings>) => Settings
   appSelectDir: 'app:selectDir', // () => string | null
   appSelectFile: 'app:selectFile', // () => string | null  选择整合包文件（.mrpack/.zip）
+  // 插件系统（userData/plugins/<id>/{plugin.json,main.js}，JS 插件在页面上下文执行）
+  pluginsList: 'plugins:list', // () => PluginInfo[]
+  pluginsInstall: 'plugins:install', // () => PluginInfo[]  弹框选择 .js/文件夹后安装
+  pluginsSetEnabled: 'plugins:setEnabled', // (id: string, enabled: boolean) => PluginInfo[]
+  pluginsRemove: 'plugins:remove', // (id: string) => PluginInfo[]
+  pluginsReadCode: 'plugins:readCode', // (id: string) => string  仅启用插件可读
+  pluginsOpenDir: 'plugins:openDir', // () => void  打开插件目录
   appSelectImage: 'app:selectImage', // () => string | null  选择图片文件（png/jpg/webp）
   appearanceImportBackground: 'appearance:importBackground', // () => Settings | null  导入受管背景并保存
   appearanceResetBackground: 'appearance:resetBackground', // () => Settings  恢复默认并清理旧受管背景
@@ -633,6 +648,7 @@ export const IPC = {
   // 服务器（SLP 协议 ping）
   serversList: 'servers:list', // () => ServerEntry[]
   serversAdd: 'servers:add', // (name: string, address: string) => ServerEntry[]
+  serversEdit: 'servers:edit', // (id: string, name: string, address: string) => ServerEntry[]
   serversRemove: 'servers:remove', // (id: string) => ServerEntry[]
   serversPing: 'servers:ping', // (address: string) => ServerPingResult  6 秒超时
   serversBind: 'servers:bind', // (id: string, versionId: string, folder?: string) => ServerEntry[]  绑定/解绑具体实例
@@ -648,6 +664,19 @@ export const IPC = {
   modsInstall: 'mods:install', // (files: string[], targetVersionId: string) => ModInstallResult[]  装入目标版本 mods 目录（遵循版本隔离）
   modsDuplicates: 'mods:duplicates', // (versionId: string) => ModDuplicateGroup[]  单版本查重
   modsCrossDuplicates: 'mods:crossDuplicates', // (versionIds: string[]) => ModCrossDuplicate[]  跨版本查重
+  modsCheckUpdates: 'mods:checkUpdates', // (versionId: string) => ModUpdateReport  按 sha1 反查 Modrinth 可更新项
+  modsApplyUpdates: 'mods:applyUpdates', // (versionId: string, items: ModUpdateTarget[]) => { fileName, ok, error? }[]
+  // 默认按键（启动时同步进实例 options.txt）
+  keysGetDefault: 'keys:getDefault', // () => Record<string, string>
+  keysSetDefault: 'keys:setDefault', // (id: string, bind: string) => Record<string, string>
+  keysReset: 'keys:reset', // () => Record<string, string>  全部恢复 MC 原版默认
+  // 桥接 MOD 实时配置面板（游戏目录 .kamucl-bridge.json 发现 + token 校验，仅本机）
+  bridgeStatus: 'bridge:status', // (versionId: string) => BridgeStatus
+  bridgeManifest: 'bridge:manifest', // (versionId: string) => { protocol, params: BridgeParam[] }
+  bridgeSet: 'bridge:set', // (versionId: string, id: string, value: unknown) => { ok, value?, notice?, error? }
+  bridgeReset: 'bridge:reset', // (versionId: string, id?: string) => { ok, error? }
+  bridgeInstall: 'bridge:install', // (versionId: string) => { ok, already?, error? }  内置桥接 MOD 装入实例 mods
+  bridgeInstalled: 'bridge:installed', // (versionId: string) => boolean
 
   // 整合包
   modpackProbe: 'modpack:probe', // (filePath: string) => ModpackInfo  只解析不安装（供导入确认弹窗）
@@ -672,6 +701,7 @@ export const IPC = {
   skinCape: 'skin:cape', // (capeId: string | null) => ProfileSkins  激活/卸下披风
   skinHistory: 'skin:history', // () => SkinHistoryEntry[]  历史皮肤（含 dataUrl 缩略）
   skinHistoryDelete: 'skin:historyDelete', // (id: string) => SkinHistoryEntry[]
+  skinHistoryRename: 'skin:historyRename', // (id: string, name: string) => SkinHistoryEntry[]  重命名显示名
   skinUploadHistory: 'skin:uploadHistory', // (id: string) => ProfileSkins  用历史记录快速换回
   skinAvatar: 'skin:avatar', // (accountId?) => string | null  账户缓存中的完整皮肤 dataURL，renderer 统一裁剪头部
 
@@ -727,6 +757,8 @@ export interface CommunityResult {
   projectId: string
   slug: string
   title: string
+  /** 源站原始名称，不包含启动器追加的中文译名。 */
+  originalTitle?: string
   author: string
   description: string
   iconUrl: string
@@ -782,6 +814,8 @@ export interface ModpackInfo {
   downloadBytes: number
   hasOverrides: boolean
   hasClientOverrides: boolean
+  /** 包内 overrides 含 options.txt（作者预设键位/设置） */
+  hasPresetKeys?: boolean
   existingInstances: Array<{
     id: string
     folder: string
@@ -800,6 +834,8 @@ export interface ModpackInstallRequest {
   existingId?: string
   /** 更新/覆盖涉及既有实例时，必须由确认页显式置 true。 */
   confirmReplace?: boolean
+  /** 导入时用启动器默认键位替换整合包 options.txt 中的 key_* 预设（默认关闭=保留作者预设） */
+  keySyncOverride?: boolean
 }
 
 export type WorldVersionConfidence = 'exact' | 'approximate' | 'unknown'
@@ -953,6 +989,80 @@ export interface ModCrossDuplicate {
   name: string
   /** 出现该 MOD 的版本列表（版本 id + 文件名） */
   presentIn: Array<{ versionId: string; fileName: string }>
+}
+
+/** MOD 更新检测：单个已安装 MOD 的检测结果 */
+export interface ModUpdateEntry {
+  fileName: string
+  name: string
+  modId: string
+  currentVersion: string
+  sha1: string
+  /** null = 未在 Modrinth 匹配到来源（可能来自 CurseForge 或手动安装） */
+  source: 'modrinth' | null
+  alreadyLatest: boolean
+  update: null | {
+    projectId: string
+    versionId: string
+    versionNumber: string
+    fileName: string
+    url: string
+    sha1?: string
+    size?: number
+  }
+}
+
+export interface ModUpdateReport {
+  mcVersion: string
+  loader: string
+  entries: ModUpdateEntry[]
+}
+
+/** 应用更新的单项：旧文件 + 新文件下载信息 */
+export interface ModUpdateTarget {
+  fileName: string
+  url: string
+  targetName: string
+  sha1?: string
+  size?: number
+}
+
+/** 插件信息（plugin.json 元数据 + 启用状态） */
+export interface PluginInfo {
+  id: string
+  name: string
+  version: string
+  author: string
+  description: string
+  enabled: boolean
+  hasCode: boolean
+}
+
+/** 桥接 MOD 连接状态 */
+export interface BridgeStatus {
+  connected: boolean
+  reason?: string
+  modVersion?: string
+  protocol?: number
+}
+
+/** 桥接 MOD 参数定义（MOD 声明元数据，面板自动生成控件） */
+export interface BridgeParam {
+  id: string
+  modId: string
+  label: string
+  description: string
+  group: string
+  kind: 'SWITCH' | 'SLIDER' | 'TEXT' | 'SELECT'
+  apply: 'INSTANT' | 'RELOAD_RESOURCES' | 'REJOIN_WORLD' | 'RESTART_GAME'
+  scope: 'CLIENT' | 'SERVER'
+  defaultValue: unknown
+  value: unknown
+  min?: number
+  max?: number
+  step?: number
+  options?: string[]
+  visible: boolean
 }
 
 export interface ServerPingResult {

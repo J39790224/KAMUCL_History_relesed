@@ -127,8 +127,8 @@ export const installVersion = (id: string, opts?: InstallOptions) =>
 export const removeVersion = (id: string) => invoke<void>(IPC.versionsRemove, id)
 export const renameVersion = (id: string, newName: string) =>
   invoke<void>(IPC.versionsRename, id, newName)
-export const setVersionJava = (id: string, javaPath: string) =>
-  invoke<void>(IPC.versionsSetJava, id, javaPath)
+export const setVersionJava = (id: string, javaPath: string, automatic = false, folder?: string) =>
+  invoke<void>(IPC.versionsSetJava, id, javaPath, automatic, folder)
 export const setVersionResolution = (id: string, resolution: GameResolution | null) =>
   invoke<void>(IPC.versionsSetResolution, id, resolution)
 export const cleanupPartialInstall = (id: string) =>
@@ -222,6 +222,8 @@ export const getSkinHistory = () => invoke<SkinHistoryEntry[]>(IPC.skinHistory)
 /** 删除一条历史，返回最新列表 */
 export const deleteSkinHistory = (id: string) =>
   invoke<SkinHistoryEntry[]>(IPC.skinHistoryDelete, id)
+export const renameSkinHistory = (id: string, name: string) =>
+  invoke<SkinHistoryEntry[]>(IPC.skinHistoryRename, id, name)
 /** 用历史记录快速换回，返回最新档案 */
 export const uploadSkinFromHistory = (id: string) =>
   invoke<ProfileSkins>(IPC.skinUploadHistory, id)
@@ -247,6 +249,8 @@ export const listServers = () => invoke<ServerEntry[]>(IPC.serversList)
 export const addServer = (name: string, address: string) =>
   invoke<ServerEntry[]>(IPC.serversAdd, name, address)
 export const removeServer = (id: string) => invoke<ServerEntry[]>(IPC.serversRemove, id)
+export const editServer = (id: string, name: string, address: string) =>
+  invoke<ServerEntry[]>(IPC.serversEdit, id, name, address)
 export const pingServer = (address: string) =>
   invoke<ServerPingResult>(IPC.serversPing, address)
 export const bindServer = (id: string, versionId: string, folder?: string) =>
@@ -266,6 +270,38 @@ export const installMods = (files: string[], targetVersionId: string, folder?: s
   invoke<ModInstallResult[]>(IPC.modsInstall, files, targetVersionId, folder)
 export const findModDuplicates = (versionId: string) =>
   invoke<ModDuplicateGroup[]>(IPC.modsDuplicates, versionId)
+export const checkModUpdates = (versionId: string, folder?: string) =>
+  invoke<import('@shared/types').ModUpdateReport>(IPC.modsCheckUpdates, versionId, folder)
+export const applyModUpdates = (versionId: string, items: import('@shared/types').ModUpdateTarget[], folder?: string) =>
+  invoke<Array<{ fileName: string; ok: boolean; error?: string }>>(IPC.modsApplyUpdates, versionId, items, folder)
+
+// ---------------- 插件系统 ----------------
+export const listPlugins = () => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsList)
+export const installPlugin = () => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsInstall)
+export const setPluginEnabled = (id: string, enabled: boolean) =>
+  invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsSetEnabled, id, enabled)
+export const removePlugin = (id: string) => invoke<import('@shared/types').PluginInfo[]>(IPC.pluginsRemove, id)
+export const readPluginCode = (id: string) => invoke<string>(IPC.pluginsReadCode, id)
+export const openPluginsDir = () => invoke<void>(IPC.pluginsOpenDir)
+
+// ---------------- 默认按键 ----------------
+export const getDefaultKeys = () => invoke<Record<string, string>>(IPC.keysGetDefault)
+export const setDefaultKey = (id: string, bind: string) =>
+  invoke<Record<string, string>>(IPC.keysSetDefault, id, bind)
+export const resetDefaultKeys = () => invoke<Record<string, string>>(IPC.keysReset)
+
+// ---------------- 桥接 MOD 实时配置面板 ----------------
+export const bridgeStatus = (versionId: string) =>
+  invoke<import('@shared/types').BridgeStatus>(IPC.bridgeStatus, versionId)
+export const bridgeManifest = (versionId: string) =>
+  invoke<{ protocol: number; params: import('@shared/types').BridgeParam[] }>(IPC.bridgeManifest, versionId)
+export const bridgeSet = (versionId: string, id: string, value: unknown) =>
+  invoke<{ ok: boolean; value?: unknown; notice?: string; error?: string }>(IPC.bridgeSet, versionId, id, value)
+export const bridgeReset = (versionId: string, id?: string) =>
+  invoke<{ ok: boolean; error?: string }>(IPC.bridgeReset, versionId, id)
+export const bridgeInstalled = (versionId: string) => invoke<boolean>(IPC.bridgeInstalled, versionId)
+export const bridgeInstall = (versionId: string) =>
+  invoke<{ ok: boolean; already?: boolean; error?: string }>(IPC.bridgeInstall, versionId)
 export const findModCrossDuplicates = (versionIds: string[]) =>
   invoke<ModCrossDuplicate[]>(IPC.modsCrossDuplicates, versionIds)
 

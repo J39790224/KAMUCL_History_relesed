@@ -30,6 +30,11 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'kamucl-asset',
     // 仅供 <img>/CSS 读取，不开放 renderer fetch，缩小本地资源协议的攻击面。
     privileges: { standard: true, secure: true, stream: true }
+  },
+  {
+    scheme: 'kamucl-plugin',
+    // 插件脚本协议：仅服务已启用插件的 main.js（见 core/plugins.ts registerPluginProtocol）。
+    privileges: { standard: true, secure: true, stream: true }
   }
 ])
 
@@ -54,24 +59,23 @@ function createWindow(startup?: ReturnType<typeof createStartupSplash>): void {
       backgroundThrottling: false
     }
   })
-  if (windowState?.maximized) win.maximize()
-
-  // Electron 33 会把 backgroundMaterial 交给 DWM；显式重设一次可覆盖部分
-  // Windows 恢复窗口状态时丢失材质的情况。旧版 Windows 会安全忽略该调用。
-  if (process.platform === 'win32') {
-    try {
-      win.setBackgroundMaterial('acrylic')
-    } catch (error) {
-      launcherLog(
-        `Acrylic material unavailable, using translucent fallback: ${error instanceof Error ? error.message : String(error)}`
-      )
-    }
-  }
-
   if (startup) startup.attach(win)
   else   win.on('ready-to-show', () => win?.show())
   applyNativeAppearance(win, getSettings())
+  if (windowState?.maximized) win.maximize()
   trackWindowState(win)
+  const mainWindow = win
+  if (process.platform === 'win32') {
+    // Native draggable regions do not dispatch DOM clicks. Observe, never consume.
+    mainWindow.hookWindowMessage(0x00A1, (wParam) => {
+      if (wParam.readUInt32LE(0) === 2 && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('window:caption-pointerdown')
+      }
+    })
+  }
+  mainWindow.on('will-move', () => {
+    if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('window:caption-pointerdown')
+  })
   // 渲染进程崩溃/无响应取证（25h2 GPU 崩溃常见前兆），现有 splash 处理只覆盖初始化期
   win.webContents.on('render-process-gone', (_event, details) => {
     try {
@@ -125,6 +129,8 @@ app.whenReady().then(async () => {
       return new Response('Not Found', { status: 404 })
     }
   })
+  const { registerPluginProtocol } = await import('./core/plugins')
+  registerPluginProtocol()
   registerIpc(() => win)
 
   // 存量实例自包含迁移（老式 inheritsFrom 继承 → 合并进实例，幂等）：基础版本改名/删除不再波及已装实例

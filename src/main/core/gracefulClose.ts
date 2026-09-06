@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 
@@ -13,28 +14,19 @@ export function requestGameWindowClose(child: ChildProcess): Promise<void> {
   })
 }
 
-/** QuickPlay 直达场景（创建世界/进服）：游戏窗口出现后拉到前台，避免进入世界时鼠标被锁在未聚焦窗口内 */
+/** QuickPlay 直达场景：仅激活本次启动的 JVM，确认前台结果，退出时取消等待。 */
 export function focusGameWindow(child: ChildProcess, timeoutMs = 90000): Promise<void> {
   const pid = child.pid
-  if (!Number.isSafeInteger(pid) || !pid || child.exitCode !== null) return Promise.resolve()
+  if (!Number.isSafeInteger(pid) || !pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   if (process.platform !== 'win32') return Promise.resolve()
-  const script = [
-    `$deadline=(Get-Date).AddMilliseconds(${timeoutMs})`,
-    `while ((Get-Date) -lt $deadline) {`,
-    `  try { $p=[System.Diagnostics.Process]::GetProcessById(${pid}) } catch { break }`,
-    `  $h=$p.MainWindowHandle`,
-    `  if ($h -and $h -ne [IntPtr]::Zero) {`,
-    `    Add-Type -TypeDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hWnd); [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int pid); [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);' -Name U32Focus -ErrorAction SilentlyContinue`,
-    `    [U32Focus]::AllowSetForegroundWindow(${pid}) | Out-Null`,
-    `    [U32Focus]::ShowWindow($h, 9) | Out-Null`,
-    `    [U32Focus]::SetForegroundWindow($h) | Out-Null`,
-    `    break`,
-    `  }`,
-    `  Start-Sleep -Milliseconds 800`,
-    `}`
-  ].join('; ')
-  return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: timeoutMs + 5000 }, () => resolve())
+  const helper = join(__dirname, 'GameWindowFocus.exe').replace('app.asar', 'app.asar.unpacked')
+  return new Promise((resolve, reject) => {
+    const worker = execFile(helper, [String(pid), String(timeoutMs)], { windowsHide: true, timeout: timeoutMs + 2000 }, (error, _stdout, stderr) => {
+      child.off('exit', cancel)
+      if (child.exitCode !== null || child.signalCode !== null) return resolve()
+      error ? reject(new Error(stderr.trim() || '游戏窗口前台激活失败或超时')) : resolve()
+    })
+    const cancel = () => { worker.kill() } // Only our helper, never the game.
+    child.once('exit', cancel)
   })
 }
-

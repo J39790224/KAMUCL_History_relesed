@@ -16,6 +16,7 @@ import { parseNbt } from './nbt'
 import { listAllInstalled } from './versions'
 import { setActiveGameFolder } from './gameFolders'
 import { canonicalPath, pathIdentity } from './folderPaths'
+import { editedServers } from './serverEditing'
 import {
   parseServerAddress,
   serverAssociationKey,
@@ -106,6 +107,13 @@ export function addServer(name: string, address: string): ServerEntry[] {
 
 export function removeServer(id: string): ServerEntry[] {
   const list = listServers().filter((s) => s.id !== id)
+  persist(list)
+  return list
+}
+
+/** 只编辑启动器记录，不写入用户游戏的 servers.dat。 */
+export function editServer(id: string, name: string, address: string): ServerEntry[] {
+  const list = editedServers(listServers(), id, name, address)
   persist(list)
   return list
 }

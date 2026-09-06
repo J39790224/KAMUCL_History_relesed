@@ -232,7 +232,7 @@ export async function uploadSkin(filePath: string, variant: SkinVariant): Promis
     signal: AbortSignal.timeout(60000)
   })
   if (!res.ok) throw await apiError(res, '皮肤上传失败')
-  saveHistory(buf, variant)
+  saveHistory(buf, variant, path.basename(String(filePath ?? '')) || undefined)
   return await getProfile(true)
 }
 
@@ -289,8 +289,29 @@ function persistHistory(): void {
   }
 }
 
-/** 上传成功后保存副本：时间戳+随机 id，上限 30 条，超出删最旧 */
-function saveHistory(buf: Buffer, variant: SkinVariant): void {
+/** 上传成功后保存副本：按内容哈希去重（同一皮肤重复上传只保留一条并移到最前），上限 30 条，超出删最旧 */
+function saveHistory(buf: Buffer, variant: SkinVariant, sourceName?: string): void {
+  const hash = crypto.createHash('sha1').update(buf).digest('hex')
+  const list = loadHistory()
+  // 已有记录缺 hash 时补算（旧版本数据迁移）
+  for (const item of list) {
+    if (!item.hash) {
+      try {
+        item.hash = crypto.createHash('sha1').update(fs.readFileSync(path.join(skinsDir(), `${path.basename(item.id)}.png`))).digest('hex')
+      } catch { /* 文件缺失则下次被跳过 */ }
+    }
+  }
+  const existing = list.find((i) => i.hash === hash)
+  if (existing) {
+    // 重复使用同一皮肤：不重复入库，更新时间与变体后移到最前
+    existing.time = Date.now()
+    existing.variant = variant
+    if (!existing.name && sourceName) existing.name = sourceName
+    list.splice(list.indexOf(existing), 1)
+    list.unshift(existing)
+    persistHistory()
+    return
+  }
   const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`
   try {
     fs.mkdirSync(skinsDir(), { recursive: true })
@@ -299,8 +320,7 @@ function saveHistory(buf: Buffer, variant: SkinVariant): void {
     console.error('[KAMUCL] 皮肤历史保存失败:', e)
     return
   }
-  const list = loadHistory()
-  list.unshift({ id, variant, time: Date.now() })
+  list.unshift({ id, variant, time: Date.now(), name: sourceName || undefined, hash })
   while (list.length > HISTORY_LIMIT) {
     const removed = list.pop()
     if (removed) {
@@ -341,6 +361,20 @@ export async function historyDelete(id: string): Promise<SkinHistoryEntry[]> {
     fs.rmSync(path.join(skinsDir(), `${safe}.png`), { force: true })
   } catch {
     /* 忽略 */
+  }
+  return history()
+}
+
+/** 重命名历史记录（仅改显示名，不动文件），返回最新历史列表 */
+export async function historyRename(id: string, name: string): Promise<SkinHistoryEntry[]> {
+  const safe = path.basename(String(id ?? ''))
+  const trimmed = String(name ?? '').trim().slice(0, 80)
+  const list = loadHistory()
+  const item = list.find((i) => i.id === safe)
+  if (item) {
+    if (trimmed) item.name = trimmed
+    else delete item.name
+    persistHistory()
   }
   return history()
 }

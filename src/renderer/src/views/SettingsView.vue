@@ -5,14 +5,19 @@ import {
   cancelJavaScan,
   errText,
   hideJava,
+  installPlugin,
   listJava,
+  listPlugins,
   onProgress,
+  openPluginsDir,
   pickAddJava,
-  refreshJava
+  refreshJava,
+  removePlugin,
+  setPluginEnabled
 } from '../api'
 import { enterEditMode, store, toast } from '../store'
 import { DEFAULT_CUSTOM_THEME, THEME_PRESETS } from '@shared/types'
-import type { Settings, ThemeName } from '@shared/types'
+import type { PluginInfo, Settings, ThemeName } from '@shared/types'
 import HomeLayoutEditor from '../components/HomeLayoutEditor.vue'
 import { updateSettings } from '../settingsUpdates'
 
@@ -43,9 +48,11 @@ const featureToggles = [
   { key: 'mods', label: '模组（资源管理）' },
   { key: 'packs', label: '资源包' },
   { key: 'shaders', label: '光影包' },
+  { key: 'keys', label: '默认按键' },
+  { key: 'bridge', label: 'MOD 面板' },
   { key: 'servers', label: '服务器' },
   { key: 'friends', label: '好友直连' },
-  { key: 'skins', label: '皮肤与披风' },
+  { key: 'skins', label: '皮肤管理' },
   { key: 'community', label: '社区资源' }
 ]
 
@@ -216,6 +223,61 @@ function saveResolution() {
   resolutionError.value = ''
   s.resolution.fullscreen = s.resolution.mode === 'fullscreen'
   void save({ resolution: { ...s.resolution } })
+}
+
+// ---------------- 插件系统 ----------------
+const plugins = ref<PluginInfo[]>([])
+const pluginBusy = ref(false)
+/** 有插件变更（启停/安装/删除）后需重载生效 */
+const pluginDirty = ref(false)
+const pluginConfirmRemove = ref('')
+
+onMounted(async () => {
+  try {
+    plugins.value = await listPlugins()
+  } catch { /* 插件列表失败不阻塞设置页 */ }
+})
+
+async function onInstallPlugin() {
+  if (pluginBusy.value) return
+  pluginBusy.value = true
+  try {
+    const before = plugins.value.length
+    plugins.value = await installPlugin()
+    if (plugins.value.length > before) {
+      pluginDirty.value = true
+      toast('插件已安装，重载启动器后生效', 'success')
+    }
+  } catch (e) {
+    toast('安装失败：' + errText(e), 'error')
+  } finally {
+    pluginBusy.value = false
+  }
+}
+
+async function onTogglePlugin(p: PluginInfo, enabled: boolean) {
+  try {
+    plugins.value = await setPluginEnabled(p.id, enabled)
+    pluginDirty.value = true
+  } catch (e) {
+    toast('操作失败：' + errText(e), 'error')
+  }
+}
+
+async function onRemovePlugin(p: PluginInfo) {
+  if (pluginConfirmRemove.value !== p.id) {
+    pluginConfirmRemove.value = p.id
+    setTimeout(() => { if (pluginConfirmRemove.value === p.id) pluginConfirmRemove.value = '' }, 3000)
+    return
+  }
+  pluginConfirmRemove.value = ''
+  try {
+    plugins.value = await removePlugin(p.id)
+    pluginDirty.value = true
+    toast(`已删除插件 ${p.name}`, 'success')
+  } catch (e) {
+    toast('删除失败：' + errText(e), 'error')
+  }
 }
 </script>
 
@@ -581,12 +643,55 @@ function saveResolution() {
           <span class="switch-ui"></span>
         </label>
       </div>
+
+      <!-- 插件系统 -->
+      <div class="card group">
+        <h3 class="group-title">插件</h3>
+        <p class="muted group-hint">
+          JS 插件可更改界面、新增功能（启动器版 Mod）。插件拥有界面完全控制权，请只安装可信来源。
+        </p>
+        <div v-if="plugins.length" class="plugin-list">
+          <div v-for="p in plugins" :key="p.id" class="plugin-row">
+            <div class="plugin-info">
+              <span class="plugin-name">
+                {{ p.name }}
+                <span v-if="p.version" class="muted">v{{ p.version }}</span>
+              </span>
+              <span class="muted plugin-meta">{{ [p.author, p.description].filter(Boolean).join(' · ') || p.id }}</span>
+            </div>
+            <button
+              class="btn btn-sm"
+              :class="pluginConfirmRemove === p.id ? 'btn-danger' : 'btn-ghost'"
+              @click="onRemovePlugin(p)"
+            >{{ pluginConfirmRemove === p.id ? '确认删除' : '删除' }}</button>
+            <label class="switch" :title="p.enabled ? '停用插件' : '启用插件'">
+              <input type="checkbox" :checked="p.enabled" @change="onTogglePlugin(p, ($event.target as HTMLInputElement).checked)" />
+              <span class="switch-ui"></span>
+            </label>
+          </div>
+        </div>
+        <p v-else class="muted group-hint">还没有安装插件</p>
+        <div class="plugin-actions">
+          <button class="btn btn-ghost btn-sm" :disabled="pluginBusy" @click="onInstallPlugin">
+            <span v-if="pluginBusy" class="spin"></span>
+            安装插件（.js）
+          </button>
+          <button class="btn btn-ghost btn-sm" @click="openPluginsDir">打开插件目录</button>
+          <button v-if="pluginDirty" class="btn btn-gold btn-sm" @click="($event.target as HTMLButtonElement).blur(); location.reload()">重载启动器生效</button>
+        </div>
+      </div>
     </template>
 
   </div>
 </template>
 
 <style scoped>
+.plugin-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; }
+.plugin-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.plugin-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.plugin-name { font-weight: 600; }
+.plugin-meta { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .download-setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 12px 0; }
 .download-setting .input { width: 160px; }
 .setting-target { scroll-margin-top: 20px; }

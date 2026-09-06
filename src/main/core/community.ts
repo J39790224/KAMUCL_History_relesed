@@ -320,11 +320,12 @@ function zhKeywordToSlugs(keyword: string): string[] {
 /** 给搜索结果标题加中文名前缀（slug 命中映射表时） */
 function withZhTitle(list: CommunityResult[]): CommunityResult[] {
   return list.map((r) => {
+    const originalTitle = r.originalTitle ?? r.title
     const zh = MOD_ZH[r.slug]
     if (zh && !r.title.startsWith(zh)) {
-      return { ...r, title: `${zh} | ${r.title}` }
+      return { ...r, originalTitle, title: `${zh} | ${r.title}` }
     }
-    return r
+    return { ...r, originalTitle }
   })
 }
 

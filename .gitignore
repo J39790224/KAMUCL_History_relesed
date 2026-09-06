@@ -7,3 +7,6 @@ builder-*.log
 *.part
 .DS_Store
 *-installer.jar.log
+*.log
+bridge/build/
+bridge/dist/

@@ -36,6 +36,10 @@ import * as servers from './core/servers'
 import { scanModTargets, selectModTarget, copyCompatibleMods } from './core/modTargets'
 import { prepareModInstall, executeModPlan, discardModPlan } from './core/modInstallPlan'
 import * as modinfo from './core/modinfo'
+import * as modUpdates from './core/modUpdates'
+import * as plugins from './core/plugins'
+import * as keybindings from './core/keybindings'
+import * as modBridge from './core/modBridge'
 import * as gamedir from './core/gamedir'
 import { folderOfVersion, instanceIconsDir, withGameFolder } from './core/paths'
 import * as modpacks from './core/modpacks'
@@ -357,8 +361,8 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     const error = await shell.openPath(target.path)
     if (error) throw new Error(error)
   })
-  ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string) =>
-    versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''))
+  ipcMain.handle(IPC.versionsSetJava, (_e, id: string, javaPath: string, automatic?: boolean, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(id ?? '')), () => versions.setVersionJava(String(id ?? ''), String(javaPath ?? ''), automatic === true))
   )
   ipcMain.handle(
     IPC.versionsSetResolution,
@@ -642,6 +646,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.skinHistoryDelete, (_e, id: string) =>
     skins.historyDelete(String(id ?? ''))
   )
+  ipcMain.handle(IPC.skinHistoryRename, (_e, id: string, name: string) =>
+    skins.historyRename(String(id ?? ''), String(name ?? ''))
+  )
   ipcMain.handle(IPC.skinUploadHistory, (_e, id: string) =>
     skins.uploadHistory(String(id ?? ''))
   )
@@ -704,6 +711,9 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
     servers.addServer(String(name ?? ''), String(address ?? ''))
   )
   ipcMain.handle(IPC.serversRemove, (_e, id: string) => servers.removeServer(String(id ?? '')))
+  ipcMain.handle(IPC.serversEdit, (_e, id: string, name: string, address: string) =>
+    servers.editServer(String(id ?? ''), String(name ?? ''), String(address ?? ''))
+  )
   ipcMain.handle(IPC.serversPing, (_e, address: string) =>
     servers.pingServer(String(address ?? ''))
   )
@@ -754,6 +764,60 @@ export function registerIpc(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modsCrossDuplicates, (_e, versionIds: string[]) =>
     modinfo.findCrossDuplicates(Array.isArray(versionIds) ? versionIds.map(String) : [])
   )
+  ipcMain.handle(IPC.modsCheckUpdates, (_e, versionId: string, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(versionId ?? '')), () =>
+      modUpdates.checkModUpdates(String(versionId ?? ''))
+    )
+  )
+  ipcMain.handle(IPC.modsApplyUpdates, (_e, versionId: string, items: unknown, folder?: string) =>
+    withGameFolder(folder || folderOfVersion(String(versionId ?? '')), () =>
+      modUpdates.applyModUpdates(String(versionId ?? ''), Array.isArray(items) ? items : [])
+    )
+  )
+
+  // ---------------- 插件系统 ----------------
+  ipcMain.handle(IPC.pluginsList, () => plugins.listPlugins())
+  ipcMain.handle(IPC.pluginsInstall, async () => {
+    const win = getWin()
+    const opts = {
+      properties: ['openFile' as const],
+      title: '选择插件（.js 文件）',
+      filters: [{ name: 'KAMUCL 插件', extensions: ['js'] }]
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths[0]) return plugins.listPlugins()
+    plugins.installPlugin(r.filePaths[0])
+    return plugins.listPlugins()
+  })
+  ipcMain.handle(IPC.pluginsSetEnabled, (_e, id: string, enabled: boolean) =>
+    plugins.setPluginEnabled(String(id ?? ''), enabled === true)
+  )
+  ipcMain.handle(IPC.pluginsRemove, (_e, id: string) => plugins.removePlugin(String(id ?? '')))
+  ipcMain.handle(IPC.pluginsReadCode, (_e, id: string) => plugins.readPluginCode(String(id ?? '')))
+  ipcMain.handle(IPC.pluginsOpenDir, () => {
+    const dir = plugins.pluginsRoot()
+    fs.mkdirSync(dir, { recursive: true })
+    void shell.openPath(dir)
+  })
+
+  // ---------------- 默认按键 ----------------
+  ipcMain.handle(IPC.keysGetDefault, () => keybindings.getDefaultKeys())
+  ipcMain.handle(IPC.keysSetDefault, (_e, id: string, bind: string) =>
+    keybindings.setDefaultKey(String(id ?? ''), String(bind ?? ''))
+  )
+  ipcMain.handle(IPC.keysReset, () => keybindings.resetDefaultKeys())
+
+  // ---------------- 桥接 MOD 实时配置面板 ----------------
+  ipcMain.handle(IPC.bridgeStatus, (_e, versionId: string) => modBridge.bridgeStatus(String(versionId ?? '')))
+  ipcMain.handle(IPC.bridgeManifest, (_e, versionId: string) => modBridge.bridgeManifest(String(versionId ?? '')))
+  ipcMain.handle(IPC.bridgeSet, (_e, versionId: string, id: string, value: unknown) =>
+    modBridge.bridgeSet(String(versionId ?? ''), String(id ?? ''), value)
+  )
+  ipcMain.handle(IPC.bridgeReset, (_e, versionId: string, id?: string) =>
+    modBridge.bridgeReset(String(versionId ?? ''), id ? String(id) : undefined)
+  )
+  ipcMain.handle(IPC.bridgeInstalled, (_e, versionId: string) => modBridge.bridgeInstalled(String(versionId ?? '')))
+  ipcMain.handle(IPC.bridgeInstall, (_e, versionId: string) => modBridge.installBridge(String(versionId ?? '')))
 
   const modTargets = () => scanModTargets(settings.getSettings().folders.map(f => f.path), versions.scanInstalledFolder)
   ipcMain.handle(IPC.modsTargets, () => modTargets())

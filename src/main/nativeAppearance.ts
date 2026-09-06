@@ -1,6 +1,8 @@
 import { nativeTheme, type BrowserWindow } from 'electron'
 import type { Settings } from '../shared/types'
 import { launcherLog } from './core/launcherLog'
+import { trackMaterialLifecycle } from './materialLifecycle'
+import { createDwmFrameRestorer } from './dwmFrame'
 const appliedMaterial = new WeakSet<BrowserWindow>()
 
 /** DWM 的染色也要跟随应用主题，否则浅色系统会在暗色页面下叠一层白灰色。 */
@@ -14,7 +16,11 @@ export function applyNativeAppearance(window: BrowserWindow | null, settings: Se
   if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme
   if (!window || window.isDestroyed()) return
   if (process.platform === 'win32' && !appliedMaterial.has(window)) {
-    try { window.setBackgroundMaterial('acrylic'); appliedMaterial.add(window) }
+    try {
+      window.setBackgroundMaterial('acrylic')
+      appliedMaterial.add(window)
+      trackMaterialLifecycle(window, launcherLog, createDwmFrameRestorer(window))
+    }
     catch (error) { launcherLog(`Desktop acrylic unavailable: ${String(error)}`) }
   }
 }

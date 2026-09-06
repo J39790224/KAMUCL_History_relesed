@@ -860,6 +860,11 @@ export async function probeModpack(filePath: string): Promise<ModpackInfo> {
     hasClientOverrides:
       !!meta.clientOverridesPrefix &&
       zip.getEntries().some((entry) => normEntry(entry.entryName).startsWith(`${meta.clientOverridesPrefix}/`)),
+    hasPresetKeys: zip.getEntries().some((entry) => {
+      const name = normEntry(entry.entryName)
+      return name === `${meta.overridesPrefix}/options.txt` ||
+        (!!meta.clientOverridesPrefix && name === `${meta.clientOverridesPrefix}/options.txt`)
+    }),
     existingInstances: existingPackInstances(meta, fileName)
   }
 }
@@ -1041,6 +1046,18 @@ async function installModpackInFolder(filePath: string, emit: ProgressEmit, opts
       instDir,
       opts?.signal
     )
+
+    // 默认按键替换：用户选择时用启动器默认键位覆盖整合包 options.txt 的 key_* 项
+    if (opts?.keySyncOverride) {
+      try {
+        const { mergeKeysIntoOptions, getDefaultKeys } = await import('./keybindings')
+        const optionsFile = path.join(instDir, 'options.txt')
+        const before = fs.existsSync(optionsFile) ? fs.readFileSync(optionsFile, 'utf-8') : ''
+        fs.writeFileSync(optionsFile, mergeKeysIntoOptions(before, getDefaultKeys()), 'utf-8')
+      } catch (error) {
+        console.warn('[KAMUCL] 整合包键位替换失败（不影响安装）:', error)
+      }
+    }
 
     if (backupDir) {
       report({ stage: 'modpack', progress: 0.985, text: '恢复存档、配置和用户文件…' })

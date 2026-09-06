@@ -1,0 +1,209 @@
+<script setup lang="ts">
+/**
+ * 默认按键：启动器级默认键位表。开启同步后，启动任何版本时会把这里的键位
+ * 写入该实例 options.txt 的 key_* 项（整合包导入时可选择不替换作者预设）。
+ */
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { errText, getDefaultKeys, resetDefaultKeys, setDefaultKey } from '../api'
+import { store, toast } from '../store'
+import { updateSettings } from '../settingsUpdates'
+import { KEYBIND_CATEGORIES, VANILLA_KEYBINDS, codeToMcKey, mcKeyLabel, mouseButtonToMcKey } from '@shared/keybindings'
+
+const keys = ref<Record<string, string>>({})
+const loading = ref(true)
+const search = ref('')
+/** 正在捕获按键的键位 id */
+const capturing = ref('')
+
+const keySync = computed(() => store.settings?.keySync === true)
+
+async function toggleKeySync(on: boolean) {
+  try {
+    await updateSettings({ keySync: on })
+    store.settings = { ...store.settings!, keySync: on }
+    toast(on ? '已开启默认按键同步：启动任意版本时自动写入' : '已关闭默认按键同步', 'success')
+  } catch (e) {
+    toast('保存失败：' + errText(e), 'error')
+  }
+}
+
+const grouped = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  const match = (id: string, label: string, bind: string) =>
+    !kw || label.toLowerCase().includes(kw) || id.toLowerCase().includes(kw) || mcKeyLabel(bind).toLowerCase().includes(kw)
+  return KEYBIND_CATEGORIES.map((cat) => ({
+    category: cat,
+    items: VANILLA_KEYBINDS.filter((d) => d.category === cat && match(d.id, d.label, keys.value[d.id] ?? d.defaultBind))
+  })).filter((g) => g.items.length)
+})
+
+const modifiedCount = computed(() =>
+  VANILLA_KEYBINDS.filter((d) => (keys.value[d.id] ?? d.defaultBind) !== d.defaultBind).length
+)
+
+function startCapture(id: string) {
+  capturing.value = id
+  addEventListener('keydown', onCaptureKey, true)
+  addEventListener('mousedown', onCaptureMouse, true)
+}
+function stopCapture() {
+  capturing.value = ''
+  removeEventListener('keydown', onCaptureKey, true)
+  removeEventListener('mousedown', onCaptureMouse, true)
+}
+async function onCaptureKey(e: KeyboardEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  if (e.key === 'Escape') { stopCapture(); return }
+  const bind = codeToMcKey(e.code)
+  if (!bind) return
+  const id = capturing.value
+  stopCapture()
+  await applyKey(id, bind)
+}
+async function onCaptureMouse(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  const bind = mouseButtonToMcKey(e.button)
+  if (!bind) return
+  const id = capturing.value
+  stopCapture()
+  await applyKey(id, bind)
+}
+async function applyKey(id: string, bind: string) {
+  try {
+    keys.value = await setDefaultKey(id, bind)
+    toast('已更新默认按键', 'success')
+  } catch (e) {
+    toast('设置失败：' + errText(e), 'error')
+  }
+}
+async function resetOne(id: string) {
+  const def = VANILLA_KEYBINDS.find((d) => d.id === id)
+  if (!def) return
+  await applyKey(id, def.defaultBind)
+}
+async function resetAll() {
+  try {
+    keys.value = await resetDefaultKeys()
+    toast('已全部恢复为 MC 原版默认按键', 'success')
+  } catch (e) {
+    toast('重置失败：' + errText(e), 'error')
+  }
+}
+
+onMounted(async () => {
+  try {
+    keys.value = await getDefaultKeys()
+  } catch (e) {
+    toast('读取默认按键失败：' + errText(e), 'error')
+  } finally {
+    loading.value = false
+  }
+})
+onUnmounted(stopCapture)
+</script>
+
+<template>
+  <div class="page keys-page">
+    <div class="page-head">
+      <h1 class="page-title">默认按键</h1>
+      <p class="page-sub">启动任意游戏版本时自动同步这里的键位到该实例的 options.txt</p>
+    </div>
+
+    <div class="card group-inline keys-master">
+      <div>
+        <h3 class="group-title">同步默认按键到所有版本</h3>
+        <p class="muted group-hint">
+          开启后，启动任何版本都会用这里的键位覆盖该实例 options.txt 中的同名键位；在游戏内修改的键位会在下次启动时被同步回来。
+        </p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" :checked="keySync" @change="toggleKeySync(($event.target as HTMLInputElement).checked)" />
+        <span class="switch-ui"></span>
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="keys-toolbar">
+        <input v-model="search" class="input keys-search" placeholder="搜索按键名称…" />
+        <span class="muted keys-modified" v-if="modifiedCount">已自定义 {{ modifiedCount }} 项</span>
+        <span class="keys-spacer"></span>
+        <button class="btn btn-ghost btn-sm" :disabled="!modifiedCount" @click="resetAll">全部恢复默认</button>
+      </div>
+      <div v-if="loading" class="empty"><span class="spin"></span></div>
+      <template v-else>
+        <div v-for="group in grouped" :key="group.category" class="keys-group">
+          <h4 class="keys-cat">{{ group.category }}</h4>
+          <div v-for="item in group.items" :key="item.id" class="keys-row">
+            <span class="keys-label" :title="item.id">{{ item.label }}</span>
+            <button
+              class="keys-bind"
+              :class="{ capturing: capturing === item.id, modified: (keys[item.id] ?? item.defaultBind) !== item.defaultBind }"
+              :title="capturing === item.id ? '按任意键设置，Esc 取消' : '点击后按任意键修改'"
+              @click="startCapture(item.id)"
+            >
+              {{ capturing === item.id ? '按任意键…' : mcKeyLabel(keys[item.id] ?? item.defaultBind) }}
+            </button>
+            <button
+              class="keys-reset"
+              :class="{ invisible: (keys[item.id] ?? item.defaultBind) === item.defaultBind }"
+              title="恢复此项默认"
+              @click="resetOne(item.id)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div v-if="!grouped.length" class="empty"><span>没有匹配「{{ search }}」的按键</span></div>
+      </template>
+    </div>
+
+    <div v-if="capturing" class="menu-overlay keys-capture-mask" @click="stopCapture"></div>
+  </div>
+</template>
+
+<style scoped>
+.keys-page { max-width: 860px; }
+.keys-master { align-items: flex-start; }
+.keys-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.keys-search { width: 220px; }
+.keys-modified { font-size: 12px; }
+.keys-spacer { flex: 1; }
+.keys-group { margin-top: 14px; }
+.keys-cat { font-size: 13px; color: var(--text-dim); margin: 0 0 6px; font-weight: 650; }
+.keys-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 8px; }
+.keys-row:hover { background: var(--card-2); }
+.keys-label { flex: 1; min-width: 0; font-size: 13px; }
+.keys-bind {
+  min-width: 130px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.keys-bind:hover { border-color: var(--accent); }
+.keys-bind.modified { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--accent-soft); }
+.keys-bind.capturing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); color: var(--accent-2); }
+.keys-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.keys-reset:hover { color: var(--accent-2); background: var(--hover); }
+.keys-reset svg { width: 13px; height: 13px; }
+.keys-reset.invisible { visibility: hidden; }
+.keys-capture-mask { z-index: 9000; }
+</style>

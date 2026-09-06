@@ -18,6 +18,8 @@ export type ViewName =
   | 'mods'
   | 'packs'
   | 'shaders'
+  | 'keys'
+  | 'bridge'
   | 'skins'
   | 'community'
   | 'servers'

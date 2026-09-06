@@ -32,6 +32,7 @@ import {
 import { displayVersionName, displayVersionSub, fmtLastPlayed, isFavorite, progressMono, refreshInstalled, renameLastPlayed, sortWithFavorite, store, toast, toggleFavorite, versionIconUrl } from '../store'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import IconPickerModal from '../components/IconPickerModal.vue'
+import SelectMenu from '../components/SelectMenu.vue'
 import ThumbnailPickerModal from '../components/ThumbnailPickerModal.vue'
 import type {
   FabricApiVersion,
@@ -111,10 +112,6 @@ async function loadFolderState() {
   }
 }
 
-async function chooseFolder(event: Event) {
-  const selected = (event.target as HTMLSelectElement).value
-  await chooseFolderPath(selected)
-}
 async function chooseFolderPath(selected: string) {
   if (!selected || selected === activeFolder.value || folderBusy.value) return
   folderBusy.value = true
@@ -773,16 +770,13 @@ async function confirmIsolation() {
       <div class="folder-manager-main">
         <div class="folder-select-wrap">
           <span class="folder-caption">当前游戏文件夹</span>
-          <select
-            class="select folder-select"
-            :value="activeFolder"
+          <SelectMenu
+            class="folder-select"
+            :model-value="activeFolder"
+            :options="folders.map(f => ({ value: f.path, label: f.name + (f.isDefault ? '（默认）' : '') }))"
             :disabled="folderBusy || !folders.length"
-            @change="chooseFolder"
-          >
-            <option v-for="folder in folders" :key="folder.path" :value="folder.path">
-              {{ folder.name }}{{ folder.isDefault ? '（默认）' : '' }}
-            </option>
-          </select>
+            @change="chooseFolderPath"
+          />
           <span class="muted folder-current-path" :title="activeFolder">{{ activeFolder }}</span>
         </div>
         <div class="folder-manager-actions">
@@ -1063,8 +1057,8 @@ async function confirmIsolation() {
             @click="openManageMenu($event, v.id)"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 21v-7a8 8 0 0 1 16 0v7" />
-              <path d="M12 3v3M5.6 5.6l2.2 2.2M18.4 5.6l-2.2 2.2M3 13h3M18 13h3" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
           <button

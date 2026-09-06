@@ -291,6 +291,16 @@ async function launchOwned(
     /* 写入失败不影响启动 */
   }
 
+  // 默认按键同步（总开关开启时覆盖实例 options.txt 的 key_* 项，其余行原样保留）
+  if (settings.keySync) {
+    try {
+      const { syncKeysToGameDir } = await import('./keybindings')
+      if (syncKeysToGameDir(effectiveGameDir)) log('[KAMUCL] 已同步默认按键到 options.txt')
+    } catch (error) {
+      log(`[KAMUCL] 默认按键同步失败（不影响启动）：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   // a) 版本链合并
   emit({ stage: 'launch', progress: 0, text: '解析版本信息' })
   const { merged, baseId } = resolveChain(versionId)
@@ -335,7 +345,9 @@ async function launchOwned(
   emit({ stage: 'java', progress: 0, text: '检查 Java 环境' })
   let javaPath: string
   const versionJava = instanceConfig._javaPath
-  if (versionJava) {
+  if (instanceConfig._javaAuto === true) {
+    javaPath = await ensureJava(merged, emit)
+  } else if (versionJava) {
     if (!fs.existsSync(versionJava)) {
       throw new Error(`该版本指定的 Java 不存在（${versionJava}），请在版本设置中重新选择`)
     }
@@ -552,7 +564,7 @@ async function launchOwned(
   proc.once('spawn', () => onState({ status: 'running', text: '游戏进程已启动' }))
   // QuickPlay 直达（创建命令世界/进服）：游戏窗口出现后拉到前台，避免鼠标被锁在未聚焦窗口里
   if (options.singleplayerWorld || serverAddress) {
-    void focusGameWindow(proc).catch(() => undefined)
+    void focusGameWindow(proc).then(() => log('[KAMUCL] 游戏窗口已聚焦')).catch(error => log(`[KAMUCL] 自动聚焦未完成：${error.message}；请点击任务栏中的 Minecraft 窗口`))
   }
 
   const pushStdout = makeLinePusher((line) => {

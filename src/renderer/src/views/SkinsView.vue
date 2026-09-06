@@ -6,6 +6,7 @@ import {
   errText,
   getSkinHistory,
   getSkinProfile,
+  renameSkinHistory,
   uploadSkin,
   uploadSkinFromHistory
 } from '../api'
@@ -18,6 +19,9 @@ import type { CapeInfo, ProfileSkins, SkinHistoryEntry, SkinVariant } from '@sha
 const isMs = computed(() => store.selectedAccount?.type === 'microsoft')
 const isExternal = computed(() => store.selectedAccount?.type === 'yggdrasil')
 const canViewProfile = computed(() => isMs.value || isExternal.value)
+
+/** 历史皮肤重命名输入框自动聚焦 */
+const vFocus = { mounted: (el: HTMLElement) => el.focus() }
 
 // ---------------- 档案 ----------------
 const profile = ref<ProfileSkins | null>(null)
@@ -73,6 +77,46 @@ const historyList = ref<SkinHistoryEntry[]>([])
 const historyRenders = ref<Record<string, string>>({})
 const loadingHistory = ref(false)
 const historyBusy = ref<string | null>(null)
+
+/** 历史皮肤搜索（即时过滤：按显示名或记录 id） */
+const historySearch = ref('')
+const filteredHistory = computed(() => {
+  const kw = historySearch.value.trim().toLowerCase()
+  if (!kw) return historyList.value
+  return historyList.value.filter((item) =>
+    (item.name || '').toLowerCase().includes(kw) || item.id.toLowerCase().includes(kw)
+  )
+})
+
+/** 历史皮肤重命名（点击文件名进入编辑，回车/失焦保存，Esc 取消） */
+const historyRenaming = ref('')
+const historyRenameText = ref('')
+
+function startHistoryRename(item: SkinHistoryEntry) {
+  historyRenaming.value = item.id
+  historyRenameText.value = item.name || ''
+}
+function cancelHistoryRename() {
+  historyRenaming.value = ''
+  historyRenameText.value = ''
+}
+async function commitHistoryRename(item: SkinHistoryEntry) {
+  const name = historyRenameText.value.trim()
+  const old = item.name || ''
+  cancelHistoryRename()
+  if (name === old) return
+  try {
+    historyList.value = await renameSkinHistory(item.id, name)
+    toast(name ? `已重命名为「${name}」` : '已恢复默认名称', 'success')
+  } catch (e) {
+    toast('重命名失败：' + errText(e), 'error')
+  }
+}
+
+/** 历史记录的显示名：优先自定义名/源文件名，回退记录 id */
+function historyDisplayName(item: SkinHistoryEntry): string {
+  return item.name || `${item.id}.png`
+}
 
 async function loadHistory() {
   loadingHistory.value = true
@@ -387,13 +431,25 @@ watch(
 
       <!-- ============ 历史皮肤 ============ -->
       <div v-if="isMs" class="card">
-        <h3 class="section-title">历史皮肤（{{ historyList.length }}）</h3>
+        <div class="history-head">
+          <h3 class="section-title history-title">历史皮肤（{{ historyList.length }}）</h3>
+          <input
+            v-if="historyList.length"
+            v-model="historySearch"
+            class="input history-search"
+            placeholder="搜索文件名…"
+            title="按文件名即时筛选历史皮肤"
+          />
+        </div>
         <div v-if="loadingHistory" class="empty cape-loading"><span class="spin"></span></div>
         <div v-else-if="!historyList.length" class="empty history-empty">
           <span>暂无历史皮肤，上传皮肤后会自动保存到这里，方便随时换回</span>
         </div>
+        <div v-else-if="!filteredHistory.length" class="empty history-empty">
+          <span>没有匹配「{{ historySearch }}」的历史皮肤</span>
+        </div>
         <div v-else class="history-grid">
-          <div v-for="item in historyList" :key="item.id" class="history-item">
+          <div v-for="item in filteredHistory" :key="item.id" class="history-item">
             <div class="history-preview">
               <img
                 :src="historyRenders[item.id] || item.dataUrl"
@@ -422,6 +478,24 @@ watch(
                 {{ item.variant === 'slim' ? '纤细' : '经典' }}
               </span>
               <span class="muted history-time">{{ fmtTime(item.time) }}</span>
+            </div>
+            <div class="history-name-row">
+              <input
+                v-if="historyRenaming === item.id"
+                v-model="historyRenameText"
+                class="input history-name-input"
+                :placeholder="item.id + '.png'"
+                @keydown.enter="commitHistoryRename(item)"
+                @keydown.esc="cancelHistoryRename"
+                @blur="commitHistoryRename(item)"
+                v-focus
+              />
+              <span
+                v-else
+                class="history-name"
+                :title="`${historyDisplayName(item)}（点击重命名）`"
+                @click="startHistoryRename(item)"
+              >{{ historyDisplayName(item) }}</span>
             </div>
           </div>
         </div>
@@ -740,5 +814,44 @@ watch(
 .history-time {
   font-size: 11px;
   white-space: nowrap;
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.history-head .history-title {
+  margin-bottom: 0;
+}
+.history-search {
+  width: 180px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.history-name-row {
+  margin-top: 4px;
+}
+.history-name {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  border-radius: 4px;
+  padding: 1px 3px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.history-name:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.history-name-input {
+  width: 100%;
+  padding: 2px 6px;
+  font-size: 11px;
 }
 </style>

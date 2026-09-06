@@ -4,6 +4,7 @@ import { communityDownload, communityFiles, communitySearch, errText, getManifes
 import { store, toast } from '../store'
 import { instanceKey } from '@shared/modCompatibility'
 import { communityFileMatchesInstance } from '@shared/communityPolicy'
+import { mcmodSearchUrl } from '@shared/communityLinks'
 import MarqueeText from '../components/MarqueeText.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import type {
@@ -31,9 +32,10 @@ function sourceUrl(r: CommunityResult): string {
   return `https://www.curseforge.com/minecraft/${CF_KIND_SEGMENT[query.kind] ?? 'mc-mods'}/${r.slug || r.projectId}`
 }
 
-/** MC 百科搜索介绍页（按资源名检索） */
-function mcmodUrl(title: string): string {
-  return `https://search.mcmod.cn/s?key=${encodeURIComponent(title)}`
+function openMcmod(item: CommunityResult) {
+  const url = mcmodSearchUrl(item)
+  if (url) openExternal(url)
+  else toast('该项目没有可用于检索的英文名称', 'error')
 }
 
 function openExternal(url: string) {
@@ -516,7 +518,7 @@ async function confirmDownload() {
               <button
                 class="icon-btn"
                 title="在 MC 百科查看介绍与教程"
-                @click="openExternal(mcmodUrl(r.title))"
+                @click="openMcmod(r)"
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
               </button>
@@ -550,7 +552,7 @@ async function confirmDownload() {
             <button class="btn btn-ghost btn-sm" @click="openExternal(sourceUrl(modal.item))">
               {{ modal.item.source === 'modrinth' ? 'Modrinth 源页面' : 'CurseForge 源页面' }}
             </button>
-            <button class="btn btn-ghost btn-sm" @click="openExternal(mcmodUrl(modal.item.title))">
+            <button class="btn btn-ghost btn-sm" @click="openMcmod(modal.item)">
               MC 百科介绍
             </button>
           </div>
