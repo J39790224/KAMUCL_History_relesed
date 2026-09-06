@@ -191,34 +191,6 @@ watch([navHoverKey, () => store.currentView, resourceExpanded, visibleNavItems, 
   nextTick(updateNavBlob)
 )
 
-// ---- 导航水滴：单一高亮块随指针在按钮间弹性滑动（iOS 液态感） ----
-const navEl = ref<HTMLElement | null>(null)
-const navHoverKey = ref('')
-const navBlob = reactive({ top: 0, height: 0, on: false, stretch: false })
-let blobStretchTimer: ReturnType<typeof setTimeout> | undefined
-const navBlobStyle = computed(() => ({
-  height: navBlob.height + 'px',
-  transform: `translateY(${navBlob.top}px) scale(${navBlob.stretch ? '0.96, 1.12' : '1, 1'})`
-}))
-function updateNavBlob() {
-  const root = navEl.value
-  if (!root) { navBlob.on = false; return }
-  const key = navHoverKey.value || store.currentView
-  let target = root.querySelector<HTMLElement>(`[data-nav="${key}"]`)
-  // 资源子项在子菜单折叠时不可见（v-show），回退到父级「资源管理」
-  if (target && target.offsetHeight === 0) target = root.querySelector<HTMLElement>('[data-nav="resources"]')
-  if (!target) { navBlob.on = false; return }
-  navBlob.top = target.offsetTop
-  navBlob.height = target.offsetHeight
-  navBlob.on = true
-  navBlob.stretch = true
-  clearTimeout(blobStretchTimer)
-  blobStretchTimer = setTimeout(() => { navBlob.stretch = false }, 430)
-}
-watch([navHoverKey, () => store.currentView, resourceExpanded, visibleNavItems, visibleResourceSubItems], () =>
-  nextTick(updateNavBlob)
-)
-
 const win = (action: 'minimize' | 'maximize' | 'close') => {
   window.kamucl.send(`window:${action}`)
 }
